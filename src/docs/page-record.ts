@@ -20,6 +20,7 @@ export interface PageWrite {
   section?: { heading: string; body: string } | undefined
   body?: string | undefined
   frontMatter?: Record<string, string> | undefined
+  dropSections?: readonly string[] | undefined
 }
 
 export interface RecordedPage {
@@ -63,6 +64,10 @@ export async function recordPageDoc(
     }
     if (write.section) {
       doc = upsertSection(doc, write.section.heading, write.section.body).doc
+    }
+    if (write.dropSections && write.dropSections.length > 0) {
+      const dropped = new Set(write.dropSections)
+      doc = { ...doc, sections: doc.sections.filter((section) => !dropped.has(section.heading)) }
     }
     if (doc.title !== page.title) doc = { ...doc, title: page.title }
     if (doc.frontMatterValid || raw === null) {

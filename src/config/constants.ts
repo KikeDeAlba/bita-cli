@@ -44,6 +44,10 @@ export const LEGACY_ENTRY_DOC_SECTIONS_REQUIRED: readonly string[] = ['Contexto'
 
 export const DID_MAX = 280
 
+export const PAGE_SPLIT_SECTIONS = 6
+
+export const PAGE_SPLIT_BYTES = 12 * 1024
+
 export const DOC_LOCK_TIMEOUT_MS = 2_000
 export const DOC_LOCK_STALE_MS = 30_000
 

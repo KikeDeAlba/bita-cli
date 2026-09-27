@@ -213,6 +213,31 @@ const PAGE_REFS: readonly string[] = [
   `CREATE UNIQUE INDEX page_refs_entry_url ON page_refs (entry_id, url) WHERE entry_id IS NOT NULL`,
 ]
 
+const BACKLOG_ITEMS: readonly string[] = [
+  `CREATE TABLE backlog_items (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     project_id INTEGER REFERENCES projects (id) ON DELETE RESTRICT,
+     page_id INTEGER REFERENCES doc_pages (id) ON DELETE SET NULL,
+     entry_id INTEGER REFERENCES entries (id) ON DELETE SET NULL,
+     kind TEXT NOT NULL,
+     title TEXT NOT NULL,
+     body TEXT NOT NULL DEFAULT '',
+     status TEXT NOT NULL DEFAULT 'open',
+     resolution TEXT NOT NULL DEFAULT '',
+     source TEXT NOT NULL DEFAULT 'manual',
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL,
+     resolved_at TEXT,
+     CHECK (kind IN ('pending', 'finding')),
+     CHECK (status IN ('open', 'resolved')),
+     CHECK (source IN ('manual', 'extracted')),
+     CHECK (title <> ''),
+     CHECK ((status = 'resolved') = (resolved_at IS NOT NULL))
+   )`,
+  `CREATE INDEX backlog_items_project ON backlog_items (project_id, status, kind)`,
+  `CREATE INDEX backlog_items_page ON backlog_items (page_id)`,
+]
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, statements: INITIAL_SCHEMA },
   { version: 2, statements: ENTRY_TOUCHES },
@@ -220,6 +245,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 4, statements: DOC_PAGES },
   { version: 5, statements: MERGED_ENTRIES },
   { version: 6, statements: PAGE_REFS },
+  { version: 7, statements: BACKLOG_ITEMS },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(
