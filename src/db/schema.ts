@@ -193,12 +193,33 @@ const MERGED_ENTRIES: readonly string[] = [
   `CREATE INDEX page_entries_entry ON page_entries (entry_id)`,
 ]
 
+const PAGE_REFS: readonly string[] = [
+  `CREATE TABLE page_refs (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     page_id INTEGER REFERENCES doc_pages (id) ON DELETE CASCADE,
+     entry_id INTEGER REFERENCES entries (id) ON DELETE CASCADE,
+     url TEXT NOT NULL,
+     title TEXT NOT NULL DEFAULT '',
+     kind TEXT NOT NULL DEFAULT 'link',
+     source TEXT NOT NULL DEFAULT 'manual',
+     first_seen_at TEXT NOT NULL,
+     last_seen_at TEXT NOT NULL,
+     CHECK ((page_id IS NULL) <> (entry_id IS NULL)),
+     CHECK (kind IN ('confluence', 'jira', 'drive', 'link')),
+     CHECK (source IN ('manual', 'hook')),
+     CHECK (url LIKE 'http://%' OR url LIKE 'https://%')
+   )`,
+  `CREATE UNIQUE INDEX page_refs_page_url ON page_refs (page_id, url) WHERE page_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX page_refs_entry_url ON page_refs (entry_id, url) WHERE entry_id IS NOT NULL`,
+]
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, statements: INITIAL_SCHEMA },
   { version: 2, statements: ENTRY_TOUCHES },
   { version: 3, statements: ENTRY_DOCS },
   { version: 4, statements: DOC_PAGES },
   { version: 5, statements: MERGED_ENTRIES },
+  { version: 6, statements: PAGE_REFS },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

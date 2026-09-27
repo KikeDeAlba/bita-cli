@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { queryAll, queryOne } from './query.ts'
+import { queryAll } from './query.ts'
+import { adoptEntryRefs } from './page-refs.ts'
 
 export type PageIssueRole = 'epic' | 'story' | 'task' | 'subtask'
 export type StatusCategory = '' | 'new' | 'indeterminate' | 'done'
@@ -73,6 +74,7 @@ export function linkEntryToPage(
      ON CONFLICT (page_id, entry_id) DO UPDATE SET
        summary = CASE WHEN excluded.summary = '' THEN page_entries.summary ELSE excluded.summary END`,
   ).run(pageId, entryId, summary, now)
+  adoptEntryRefs(db, entryId, pageId)
 }
 
 export function unlinkEntryFromPage(db: DatabaseSync, pageId: number, entryId: number): void {

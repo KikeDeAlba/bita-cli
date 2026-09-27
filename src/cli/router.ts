@@ -55,6 +55,8 @@ Documents:
   docs page move <id> [--parent <id|->] [--position N]
   docs page link <id>        Tie entries or Jira issues to the page
   docs page unlink <id>      Untie them
+  docs page ref add <id>     Record a link the page relates to (--url, --title, --kind)
+  docs page ref ls|rm <id>   List the page's links, or drop one (--url)
   docs page rm <id>          Forget the page; the .md stays on disk
   docs migrate [--yes]       Turn every entry document into a page
   docs migrate --undo        Put the corpus back as it was

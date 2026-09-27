@@ -56,11 +56,17 @@ const TOUCHED_HOOK = {
   ],
 }
 
+const REF_HOOK = {
+  matcher: 'mcp__.*Atlassian.*|mcp__.*Google_Drive.*',
+  hooks: [{ type: 'command', command: 'bita hook ref', timeout: 10 }],
+}
+
 const EVENT_HOOKS = [
   ['SessionStart', SESSION_START_HOOK],
   ['UserPromptSubmit', PROMPT_SUBMIT_HOOK],
   ['UserPromptSubmit', CHECKPOINT_HOOK],
   ['PostToolUse', TOUCHED_HOOK],
+  ['PostToolUse', REF_HOOK],
 ]
 
 function hooksByEvent() {

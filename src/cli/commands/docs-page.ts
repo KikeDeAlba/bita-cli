@@ -45,8 +45,10 @@ import { BASE_OPTIONS, parseCommandArgs, readBoolean, readInteger, readString, t
 import { createLocalContext, type LocalContext } from '../local-context.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { resolveProjectArg } from '../project-arg.ts'
+import { addRefToPage, refsOfPage, removeRefFromPage, REF_KINDS, type RefKind } from '../../db/page-refs.ts'
+import { classifyUrl } from '../../domain/refs.ts'
 
-const SUBCOMMANDS = new Set(['ls', 'show', 'new', 'write', 'rename', 'move', 'link', 'unlink', 'rm'])
+const SUBCOMMANDS = new Set(['ls', 'show', 'new', 'write', 'rename', 'move', 'link', 'unlink', 'rm', 'ref'])
 
 const OPTIONS = {
   project: { type: 'string' as const },
@@ -64,6 +66,8 @@ const OPTIONS = {
   status: { type: 'string' as const },
   'status-category': { type: 'string' as const },
   url: { type: 'string' as const },
+  title: { type: 'string' as const },
+  kind: { type: 'string' as const },
   'from-entries': { type: 'boolean' as const, default: false },
   'from-entry': { type: 'string' as const },
   recursive: { type: 'boolean' as const, default: false },
@@ -106,6 +110,7 @@ export async function runDocsPage(argv: string[]): Promise<number> {
     if (first === 'move') return await runMove(ctx, args, positional, json)
     if (first === 'link') return await runLink(ctx, args, positional, json)
     if (first === 'unlink') return await runUnlink(ctx, args, positional, json)
+    if (first === 'ref') return await runRef(ctx, args, positional, json)
     return await runRemove(ctx, args, positional, json)
   } finally {
     ctx.db.close()
@@ -340,6 +345,7 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
     },
     entries,
     worklogIssues: worklogIssuesOfPage(ctx.db, page.id),
+    refs: refViews(ctx, page.id),
   }
 
   if (json) {
@@ -356,6 +362,76 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
   writeOut(`#${page.id}  ${page.title}`)
   writeOut(page.relPath)
   if (headings.length > 0) writeOut(headings.map((heading) => `  ${'  '.repeat(heading.level - 2)}${heading.heading}`).join('\n'))
+  return 0
+}
+
+function refViews(ctx: PageContext, pageId: number) {
+  return refsOfPage(ctx.db, pageId).map((ref) => ({
+    url: ref.url,
+    title: ref.title,
+    kind: ref.kind,
+    source: ref.source,
+    firstSeenAt: ref.firstSeenAt,
+    lastSeenAt: ref.lastSeenAt,
+  }))
+}
+
+const REF_ACTIONS = new Set(['add', 'ls', 'rm'])
+
+function readRefUrl(args: ParsedArgs): string {
+  const url = readString(args, 'url')?.trim()
+  if (url === undefined || url.length === 0) throw new UsageError('Pass --url <https://...>.')
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new UsageError(`"${url}" is not a URL.`)
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new UsageError(`"${url}" is not an http(s) URL.`)
+  }
+  return url
+}
+
+async function runRef(ctx: PageContext, args: ParsedArgs, positional: string[], json: boolean): Promise<number> {
+  const [action, ...rest] = positional
+  if (action === undefined || !REF_ACTIONS.has(action)) {
+    throw new UsageError('Usage: bita docs page ref <add|ls|rm> <pageId> [--url U] [--title T] [--kind K]')
+  }
+  const page = pageIdArg(rest, args, ctx)
+
+  if (action === 'add') {
+    const url = readRefUrl(args)
+    const kindRaw = readString(args, 'kind')
+    if (kindRaw !== undefined && !REF_KINDS.includes(kindRaw as RefKind)) {
+      throw new UsageError(`Unknown kind "${kindRaw}". Use one of ${REF_KINDS.join(', ')}.`)
+    }
+    const kind = (kindRaw as RefKind | undefined) ?? classifyUrl(url) ?? 'link'
+    addRefToPage(ctx.db, page.id, {
+      url,
+      title: readString(args, 'title')?.trim() ?? '',
+      kind,
+      source: 'manual',
+      now: ctx.now.toISOString(),
+    })
+  }
+
+  let removed = false
+  if (action === 'rm') removed = removeRefFromPage(ctx.db, page.id, readRefUrl(args))
+
+  const refs = refViews(ctx, page.id)
+  if (json) {
+    writeJson(
+      successEnvelope(`docs page ref ${action}`, { pageId: page.id, title: page.title, refs, ...(action === 'rm' ? { removed } : {}) }),
+    )
+    return 0
+  }
+  if (action === 'rm' && !removed) writeOut('That link was not on the page.')
+  if (refs.length === 0) {
+    writeOut(`#${page.id} ${page.title} has no links.`)
+    return 0
+  }
+  for (const ref of refs) writeOut(`${ref.kind.padEnd(10)} ${ref.title ? `${ref.title}  ` : ''}${ref.url}`)
   return 0
 }
 
