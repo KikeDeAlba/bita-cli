@@ -516,8 +516,8 @@ de cada grupo, este orden, sin paralelismo:
      - Lo que queda fuera, si evita una confusión probable.
 
      ## Criterios de aceptación
-     - [ ] Condición verificable 1
-     - [ ] Condición verificable 2
+     1. Condición verificable
+     2. Condición verificable
      ```
 
      Sale del título del grupo, de las páginas (`pages[]`) y de los `--did` de
@@ -525,7 +525,9 @@ de cada grupo, este orden, sin paralelismo:
      L4» es resultado; «Migrar la búsqueda por imagen a la instancia L4 para
      bajar el costo de inferencia» es requerimiento. Los criterios son los que
      el resultado cumple, así que quien lea el comentario de resultados puede
-     marcarlos uno por uno.
+     cotejarlos uno por uno. Van **numerados**, no como casillas: el conector
+     escapa `- [ ]` y en Jira se ve el texto literal `[ ]`. La Verificación del
+     comentario sigue la misma numeración.
      **Antes de enviarla, pásale la prueba de olfato**: es el texto que verán
      otros.
 
