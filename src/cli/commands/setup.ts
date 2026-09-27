@@ -8,12 +8,14 @@ import { promisify } from 'node:util'
 import { UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString } from '../args.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
+import { ensureDrawio, type SetupStep } from '../../setup/drawio.ts'
 
 const run = promisify(execFile)
 
 const OPTIONS = {
   'claude-dir': { type: 'string' as const },
   'no-settings': { type: 'boolean' as const, default: false },
+  'no-drawio': { type: 'boolean' as const, default: false },
 }
 
 export function packageRoot(): string {
@@ -62,14 +64,17 @@ export async function runSetup(argv: string[]): Promise<number> {
     }
   }
 
+  const drawio: SetupStep[] = readBoolean(args, 'no-drawio') ? [] : await ensureDrawio()
+
   if (json) {
-    writeJson(successEnvelope('setup', { root, claudeDir, linked, settings }))
+    writeJson(successEnvelope('setup', { root, claudeDir, linked, settings, drawio }))
     return 0
   }
 
   writeOut(`Skill and commands linked into ${claudeDir}.`)
   writeOut(`They point at ${root}, so updating bita updates them.`)
   if (settings !== null) writeOut(`Permissions and the SessionStart hook merged into ${settings}.`)
+  for (const step of drawio) writeOut(`${step.state === 'failed' || step.state === 'unavailable' ? '!' : '-'} ${step.detail}`)
   writeOut('')
   writeOut('Next:')
   writeOut('  bita project add "<name>"     create a project')

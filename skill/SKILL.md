@@ -772,7 +772,8 @@ Dos herramientas, según lo que haga falta dibujar:
 
 | Qué | Con qué |
 |---|---|
-| Flowchart, secuencia, estados, un flujo de pocos pasos | **mermaid**, en un bloque ```` ```mermaid ```` dentro de la página |
+| Flowchart, estados, un flujo de pocos pasos | **mermaid**, en un bloque ```` ```mermaid ```` dentro de la página |
+| **Diagrama de secuencia, siempre** | **mermaid** (`sequenceDiagram`), sin excepción, por elaborado que sea |
 | Arquitectura, red, infraestructura, cualquier diagrama con muchos grupos, iconos de servicios o una disposición cuidada | **draw.io**, con el MCP de draw.io |
 
 Un diagrama de draw.io es un archivo `.drawio` junto a la página, no texto en ella:
