@@ -567,9 +567,17 @@ de cada grupo, este orden, sin paralelismo:
    viñeta, en el mismo orden que la descripción.
 
    ## Referencias
-   - Página de bita / Confluence, MR, hojas de estimación: los `pages[].refs`
-     que aporten y la MR si la hay.
+   - [Título de la página de Confluence](https://…/wiki/spaces/…) — espacio X.
+   - MR: [repo !3](https://…/-/merge_requests/3), [!4](https://…/-/merge_requests/4).
    ```
+
+   **Toda referencia lleva su enlace**, también las MR que se citan en
+   Resultado: `[texto](url)`, nunca un título suelto que obliga a buscarlo. Las
+   URLs salen de `pages[].refs`. Si una referencia no está ahí, se busca antes de
+   escribir —`searchConfluenceUsingCql` por título para Confluence, la API del
+   GitLab del repo para una MR (confirmando que existe)— y se registra en la
+   página con `bita docs page ref add` para que la próxima corrida ya la tenga.
+   Lo que no tiene URL que se pueda confirmar no se cita.
 
    Sale de las páginas del grupo y de los `--did`. Lo que el requerimiento pedía
    y **no** quedó hecho no se escribe como tarea para nadie: se dice en
