@@ -105,9 +105,11 @@ nada, así que consulta las veces que haga falta.
    sin `parent`: una subtarea huérfana es inenrutable.
 9. **No calcules fechas ni duraciones.** El CLI ya entrega `startedJira`,
    `timeSpent` y `totalHuman` listos. Cópialos literalmente.
-10. **Nada de lo que se publica delata la conversación.** Los documentos y las
-    descripciones de Jira se escriben como documentación técnica, no como el
-    acta de un chat. Ver "Cómo se escribe lo que se publica".
+10. **Nada de lo que se publica delata la conversación ni reparte el trabajo.**
+    Las páginas, los issues, los comentarios de Jira y las páginas de
+    Confluence se escriben como documentación técnica de quien tiene asignada
+    la tarea, no como el acta de un chat ni como un reparto entre una persona y
+    un asistente. Ver "Cómo se escribe lo que se publica".
 11. **Toda pregunta de opción cerrada va por `AskUserQuestion`.** Nunca escribas
     un menú numerado en la respuesta para que el usuario conteste "1", "2" o "3":
     la interfaz ya tiene ese menú y elegir en él es un clic, no teclear un número
@@ -118,11 +120,12 @@ nada, así que consulta las veces que haga falta.
 
 ## Cómo se escribe lo que se publica
 
-El documento de la entrada y la descripción del issue los va a leer gente que no
-estuvo aquí, meses después, buscando por qué algo está como está. Tienen que
-leerse como la bitácora técnica de quien hizo el trabajo. **Nada en el texto
-puede delatar que hubo una conversación, ni quién pidió qué, ni que lo escribió
-un asistente.**
+La página, el issue, sus comentarios y lo que se publica en Confluence los va a
+leer gente que no estuvo aquí, meses después, buscando por qué algo está como
+está. Tienen que leerse como el trabajo de quien tiene asignada la tarea.
+**Nada en el texto puede delatar que hubo una conversación, ni quién pidió qué,
+ni que lo escribió un asistente, ni que el trabajo se repartió entre alguien que
+lo hizo y alguien que tiene que terminarlo.**
 
 ### Lista negra
 
@@ -145,6 +148,11 @@ entera, no suavizarla:
   "agente", y cualquier nombre de herramienta del agente.
 - **Narración del tanteo**: "se intentó varias veces", "después de varios
   intentos", "tras probar distintas opciones".
+- **Reparto del trabajo**: "yo hice", "hice esto", "esto lo ejecutas tú", "te
+  toca", "queda de tu lado", "tú debes", "tienes que", "lo corrí por ti", "lo
+  dejo listo para que lo apliques", "el asistente ejecutó", y **cualquier
+  segunda persona** dirigida al lector o al usuario. Un issue no le habla a
+  nadie: dice qué se necesita y qué quedó.
 
 ### Así no / así sí
 
@@ -156,20 +164,24 @@ entera, no suavizarla:
 | Se procedió a la migración de la tabla de pagos. | La tabla de pagos se migró a `payments_v2`. |
 | Creo que el problema era el token expirado. | El SDK devuelve 200 con cuerpo vacío cuando el token expiró; ese era el fallo. |
 | Después de varios intentos logramos que pasaran las pruebas. | `pnpm test`: 148 pasan, 0 fallan. |
-| El usuario prefirió no tocar el front en esta iteración. | El front queda fuera de alcance; sigue esperando 201 y funciona con 202. Anotado en Pendiente. |
+| El usuario prefirió no tocar el front en esta iteración. | El front queda fuera de alcance; sigue esperando 201 y funciona con 202. |
 | Se analizó el código y se detectaron varios problemas. | `QUEUE_URL` del entorno de dev apunta a la cola de staging desde marzo. |
+| Yo dejé listo el plan; el `terraform apply` lo ejecutas tú. | El plan de `compute` está validado: 0 a crear, 3 a cambiar, 13 a destruir. |
+| Hice los cambios en el pipeline, te toca probar en QA. | El pipeline despliega a QA con el tag `qa-1.4.0`. |
 
 ### Cómo se escribe entonces
 
 - Voz impersonal en pasado ("se migró", "se añadió") o sujeto técnico ("el
-  worker reintenta cinco veces"). Nunca "yo" ni "nosotros".
-- **Una afirmación es un hecho comprobable.** Si no se comprobó, no se atenúa:
-  se va a "Pendiente".
+  worker reintenta cinco veces"). Nunca "yo", "nosotros" ni "tú".
+- **Una afirmación es un hecho comprobable.** Si no se comprobó, no se atenúa
+  ni se escribe: va al backlog (`bita backlog add --kind pending`).
 - **Las decisiones se justifican por su razón técnica, no por su origen.** Si la
   razón real es una preferencia de negocio, se escribe como restricción ("el
   reporte exige bloques de 8 h"), no como autoría.
-- El resultado, no el camino. Excepción: "Hallazgos", donde el camino es el
-  valor, pero escrito como hecho, no como anécdota.
+- El resultado, no el camino.
+- **Lo que falta no es una instrucción para nadie.** No se escribe «falta que
+  alguien aplique X» en una página ni en Jira: es un ítem del backlog. Lo que se
+  publica describe lo que existe.
 
 ### La prueba de olfato
 
@@ -182,6 +194,8 @@ párrafo y pregunta:
    no se pierde nada, esa mitad era relleno o era la conversación.
 3. **¿Queda alguna palabra de la lista negra?** Si sí, reescribe la frase
    completa: cambiarle el sujeto no la arregla.
+4. **¿Alguna frase le habla a alguien o dice quién hizo qué?** Si sí, fuera: el
+   issue es de quien lo tiene asignado, y todo lo que dice es suyo.
 
 ## La ventana que sigue existiendo
 
@@ -482,32 +496,38 @@ de cada grupo, este orden, sin paralelismo:
    `issueTypeName` va por **nombre**, no por id.
    - `summary`: el del grupo, **literal**, sin reescribir. Es la clave de
      agrupación y lo que el usuario reconocerá al buscar.
-   - `description`: sale de **`pages[]`**, el cuerpo de las páginas que documentan
-     el grupo. Ya viene sin front matter y sin H1 —el H1 es el summary y
-     repetirlo es ruido—. Los archivos tocados, si aportan, salen de
-     `touchedFiles` del grupo. **No añadas una tabla de bloques ni los ids de las
-     entradas**: el tiempo ya está en los worklogs y el rastro en su
-     `commentBody`, y repetirlo convierte la descripción en un recibo en vez de
-     en documentación.
+   - `description`: **el requerimiento**, no el informe. Se escribe como se
+     habría escrito la tarea antes de empezar: qué se necesita, por qué y cómo
+     se sabe que está hecha. Nada de resultados, bitácora, tablas de archivos
+     ni el cuerpo de la página pegado. Tres secciones, cortas:
+
+     ```
+     ## Objetivo
+     Uno o dos párrafos: qué se necesita y por qué importa.
+
+     ## Alcance
+     - Lo que entra, en viñetas concretas (servicio, ambiente, componente).
+     - Lo que queda fuera, si evita una confusión probable.
+
+     ## Criterios de aceptación
+     - [ ] Condición verificable 1
+     - [ ] Condición verificable 2
+     ```
+
+     Sale del título del grupo, de las páginas (`pages[]`) y de los `--did` de
+     sus entradas, **reformulado como necesidad**: «Se migró la búsqueda a la
+     L4» es resultado; «Migrar la búsqueda por imagen a la instancia L4 para
+     bajar el costo de inferencia» es requerimiento. Los criterios son los que
+     el resultado cumple, así que quien lea el comentario de resultados puede
+     marcarlos uno por uno.
      **Antes de enviarla, pásale la prueba de olfato**: es el texto que verán
      otros.
 
-     **Con varias páginas en un grupo no las concatenes a ciegas**: van en orden,
-     cada una bajo su título como `##`, y lo que se repita entre ellas se dice
-     una vez.
-
-     `docs[]` sigue llegando para el trabajo anterior a las páginas, que todavía
-     tiene documento por entrada. Si un grupo trae `docs[]` y no `pages[]`, usa
-     aquél: sus secciones en su orden, omitiendo las vacías, y si viene con
-     `markdown: null` y `truncated: true`, léelo de su `path` con Read. Al fundir
-     varios documentos viejos: Contexto el del más antiguo; Qué se hizo,
-     Decisiones y Hallazgos en unión sin duplicados; Verificación, **el último
-     resultado** por comprobación, porque una prueba que falló el martes y pasó
-     el jueves se publica como pasó; Pendiente en unión **menos lo que un
-     documento posterior ya resolvió**. Si dos se contradicen, gana el posterior.
-
-     Un grupo sin página y sin documento, pero con archivos tocados, da solo la
-     lista de lo tocado.
+     El trabajo anterior a las páginas trae `docs[]` en vez de `pages[]`: sirve
+     igual de fuente, y si viene con `markdown: null` y `truncated: true` se lee
+     de su `path` con Read. Sus secciones «Hallazgos» y «Pendiente» no van a
+     Jira: van al backlog con `bita backlog add`. Un grupo sin página y sin
+     documento se describe con su título y sus `--did`.
    - `assignee`: **siempre**, con el `accountId` del paso 0. Es la única pieza
      del payload que Jira no deduce de nada y que nadie echa en falta hasta que
      busca su propio trabajo y no lo encuentra.
@@ -526,12 +546,35 @@ de cada grupo, este orden, sin paralelismo:
 3. `addWorklogToJiraIssue` **una vez por cada entrada de `worklogs[]`**, copiando
    `startedJira` y `timeSpent`. En `commentBody`, el rastro de auditoría:
    `bita · <startLocal> · bita:<entryId>`.
-4. Cierra el issue: `getTransitionsForJiraIssue` y elige **por lo que devuelva**,
+4. `addCommentToJiraIssue` con **los resultados**, un solo comentario por issue
+   y por corrida, en markdown:
+
+   ```
+   ## Resultado
+   Qué existe ahora que no existía, en presente y con nombres concretos
+   (recurso, versión, endpoint, rama, MR).
+
+   ## Verificación
+   El comando o la comprobación y lo que dio. Un criterio de aceptación por
+   viñeta, en el mismo orden que la descripción.
+
+   ## Referencias
+   - Página de bita / Confluence, MR, hojas de estimación: los `pages[].refs`
+     que aporten y la MR si la hay.
+   ```
+
+   Sale de las páginas del grupo y de los `--did`. Lo que el requerimiento pedía
+   y **no** quedó hecho no se escribe como tarea para nadie: se dice en
+   Resultado qué alcance quedó cubierto y el resto va al backlog con
+   `bita backlog add`. Mismas reglas de redacción que la descripción: sin
+   primera persona, sin segunda persona, sin reparto del trabajo. **Pásale la
+   prueba de olfato antes de enviarlo.**
+5. Cierra el issue: `getTransitionsForJiraIssue` y elige **por lo que devuelva**,
    nunca por nombre a ciegas. Ver abajo. Sáltalo solo si el usuario pidió dejarlas
    abiertas.
-5. `bita link <entryIds...> --issue <ISSUE-KEY>`, en una sola llamada por grupo.
+6. `bita link <entryIds...> --issue <ISSUE-KEY>`, en una sola llamada por grupo.
    Es una transacción local: o quedan atadas todas o ninguna.
-6. `bita docs page link <pageId> --issue <ISSUE-KEY> --summary "<el summary del
+7. `bita docs page link <pageId> --issue <ISSUE-KEY> --summary "<el summary del
    issue>" --status "<el estado en que quedó>" --status-category <categoría>`,
    **una llamada por cada página de `pages[]`**. Esto no se pregunta ni se
    pospone: es lo que hace que la página enseñe las tareas que salieron de ella,
@@ -550,7 +593,8 @@ de cada grupo, este orden, sin paralelismo:
    documentar.
 
 Al terminar, una tabla con una fila por tarea y una columna por paso —crear,
-asignar, fechar, estimar, worklog, cerrar, atar las entradas, atar la página—,
+asignar, fechar, estimar, worklog, comentar, cerrar, atar las entradas, atar la
+página—,
 la key enlazada y el total registrado. Debajo, lo que se saltó y por qué. Es el
 único sitio donde se ve que un paso no corrió, así que una casilla vacía se deja
 vacía: no se rellena por simetría.
@@ -655,8 +699,63 @@ debajo.** Una página que acumula «actualización: ya no es así» deja de serv
 para lo que existe. Nada de entradas fechadas en el cuerpo, nada de «hoy hice»:
 para eso está el registro.
 
+**Una página es un documento formal del estado actual, y nada más.** Ni
+«Pendiente», ni «Hallazgos», ni «Lo que falta», ni «Próximos pasos», ni
+bitácora: esas secciones convierten la descripción de un sistema en una lista de
+tareas, y acaban copiadas en Jira y en Confluence. `bita docs page write` avisa
+con `BACKLOG_SECTION_IN_PAGE` si aparece una. Un límite conocido que es parte de
+cómo funciona el sistema hoy («el NAT vive en una sola AZ») sí se describe en la
+página, como hecho; lo que alguien tiene que hacer, no.
+
 GFM plano, más tablas y bloques ```mermaid```. Sin macros ni HTML. El H1 igual al
 título.
+
+### Pendientes y hallazgos: el backlog
+
+Lo que queda por hacer y lo que se descubrió de paso se registra **aparte**, en
+el backlog, que la app enseña como lista entre proyectos:
+
+```
+bita backlog add --kind pending --title "<qué falta, en una línea>" [--md <archivo>]
+bita backlog add --kind finding --title "<el hecho, en una línea>" [--md <archivo>]
+bita backlog ls [--project X] [--page <id>]
+bita backlog resolve <id> --resolution "<cómo quedó>"
+```
+
+Sin `--page` ni `--project`, el ítem cuelga del cronómetro que corre y de su
+página. El título es una frase que se entiende sola en una lista con otros
+proyectos; el detalle, en `--md`. La misma redacción de siempre: sin primera ni
+segunda persona, sin «te toca».
+
+- **Pendiente** es trabajo que falta y alguien tiene que hacer.
+- **Hallazgo** es algo que se descubrió y merece atención —un riesgo, un costo
+  inútil, un residuo— aunque no sea parte del trabajo en curso.
+
+Antes de proponer un ítem nuevo, mira `bita backlog ls --page <id>`: si ya está,
+no se duplica. Cuando el trabajo resuelve uno, `bita backlog resolve` en el
+mismo bloque. Las páginas viejas que todavía traen esas secciones se limpian con
+`bita backlog extract --page <id>` (primero con `--dry-run`).
+
+### Subpáginas
+
+Una página que crece deja de leerse. Cuando pasa de unas **seis secciones**, o
+una sección tiene su propio árbol de `###`, o describe un subsistema que se
+entiende solo (la red, las credenciales, el pipeline), **pártela**: el padre
+queda como visión general con un párrafo por hijo, y cada parte es una página
+hija con `bita docs page new "<título>" --parent <id>`. `docs page write` avisa
+con `PAGE_SHOULD_SPLIT`. Hasta cinco niveles de profundidad; dos o tres suelen
+bastar.
+
+### Enlaces
+
+Lo que se consultó o se tocó fuera del repo —páginas de Confluence, issues de
+Jira, hojas de estimación— queda atado a la página. El hook `ref` registra solo
+lo que pasa por los conectores de Atlassian y Google Drive mientras corre un
+cronómetro. Lo demás se ata a mano:
+
+```
+bita docs page ref add <id> --url <URL> --title "<qué es>" [--kind confluence|jira|drive|link]
+```
 
 ### El registro de trabajo
 
@@ -688,7 +787,8 @@ una verificación —y entonces deja escrito cómo se verifica **ahora**,
 sustituyendo lo que dijera antes—, cuando cambies de enfoque —reescribiendo la
 decisión vigente, con la descartada en una línea si aclara algo— y cuando
 descubras algo no obvio del entorno, que es estado del mundo y por tanto de la
-página.
+página. Si lo que descubriste no describe el sistema sino que pide acción, es un
+hallazgo o un pendiente: `bita backlog add`.
 
 No un encabezado por cada cosa: crea uno nuevo sólo si vas a volver al mismo
 tema tres veces. Y nada de prosa por `argv` —el quoting se rompe y el texto
@@ -709,14 +809,41 @@ todos, pero entonces no se escribe ningún `--did`: un bloque pertenece a un
 trabajo.
 
 Antes de parar, una última pasada por la página: lo que antes era «Verificación»
-se dice en presente, como se verifica hoy; lo que era «Pendiente» se convierte en
-un límite conocido de la página o en un issue de Jira, nunca en un TODO enterrado
-en la prosa. Si la página no se tocó en todo el bloque, escríbela ahora.
+se dice en presente, como se verifica hoy; lo que queda por hacer va al backlog
+con `bita backlog add`, nunca a la página ni como un TODO enterrado en la prosa.
+Si la página no se tocó en todo el bloque, escríbela ahora.
 
-**La página acaba en la descripción de un issue de Jira que verán otros.** Antes
-de guardarla, revisa que no lleve rutas absolutas con nombres internos, secretos
-ni pegotes de log, y pásale la prueba de olfato de «Cómo se escribe lo que se
-publica».
+**La página alimenta el requerimiento y el comentario de resultados en Jira, y
+lo que se publique en Confluence.** Antes de guardarla, revisa que no lleve
+rutas absolutas con nombres internos, secretos ni pegotes de log, y pásale la
+prueba de olfato de «Cómo se escribe lo que se publica».
+
+## Publicar en Confluence
+
+Cuando se publica documentación de bita en Confluence, se publica **el estado
+actual**, como documento formal. Nada de pendientes, hallazgos, bitácora,
+próximos pasos ni referencias a tareas de Jira como trabajo en curso: eso vive
+en el backlog y en Jira.
+
+- **El árbol se refleja.** Una página de bita con hijas es una página de
+  Confluence con subpáginas, en el mismo orden. Si la página de bita todavía es
+  monolítica, pártela primero (ver «Subpáginas»): se publica la estructura, no
+  un documento largo.
+- **La página raíz es un índice con contexto**: qué es el sistema, para quién,
+  un diagrama de conjunto si ayuda, y un párrafo por subpágina con su enlace. No
+  repite lo que dicen las hijas.
+- **Cada subpágina se lee sola**: su propio párrafo de entrada, sin «como se vio
+  arriba».
+- Estructura formal y estable: qué es, cómo está compuesto, cómo funciona, cómo
+  se opera y cómo se verifica, según pida el contenido. Tablas para inventarios,
+  Mermaid para flujos.
+- **Mermaid**: en `createConfluencePage`/`updateConfluencePage` con
+  `contentFormat: "html"`, manda solo `<pre><code class="language-mermaid">…</code></pre>`.
+  El conversor arma la macro; si mandas también el `<div>` de la extensión, sale
+  duplicada.
+- La misma prueba de olfato que para Jira, pregunta 4 incluida.
+- Al crear o actualizar la página, el hook `ref` la ata sola a la página de bita
+  del cronómetro. Si no corría ninguno, átala a mano con `bita docs page ref add`.
 
 ## Manejo de fallos
 
@@ -743,8 +870,8 @@ detecta posibles duplicados. **Avisa, no decide**: es una búsqueda difusa.
 
 ## Resumen final
 
-Una fila por tarea con siete marcas — crear, **asignar**, **fechar**, estimar,
-worklog, cerrar, atar — el enlace al issue y el total. Cualquier inconsistencia
+Una fila por tarea con ocho marcas — crear, **asignar**, **fechar**, estimar,
+worklog, **comentar**, cerrar, atar — el enlace al issue y el total. Cualquier inconsistencia
 va **arriba**, no al final.
 
 ## Reglas de agrupación
@@ -759,6 +886,20 @@ comportamiento.
 - El CLI **no fusiona por similitud**. "Refactor pagos" y "refactor de pagos" son
   dos tareas. Si ves títulos casi iguales, sugiere la fusión en la propuesta y
   deja que decida el usuario.
+- **Unificar contadores.** Cuando varios cronómetros son un mismo trabajo —la
+  misma sesión partida, o títulos distintos para la misma tarea—, se unifican
+  antes de volcar, con confirmación:
+
+  ```
+  bita merge <ids...> --dry-run                  enseña cómo quedaría
+  bita merge <ids...> [--into <id>] [--title "…"] [--project X]
+  ```
+
+  Queda **una entrada** con el título y el proyecto elegidos, sus páginas, sus
+  `--did`, sus archivos y sus enlaces juntos, y **cada bloque original como
+  segmento**: Jira recibe una sola tarea con un worklog por bloque, con sus
+  horas reales. Solo entradas pendientes y paradas. Después se opera sobre la
+  entrada que queda; los ids de los segmentos responden `ENTRY_MERGED`.
 - Cuidado con títulos genéricos ("daily", "junta", "soporte"): pueden colapsar
   semanas en un issue gigante. El rango de fechas por grupo lo hace visible en la
   propuesta.
