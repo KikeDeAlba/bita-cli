@@ -5,6 +5,7 @@ import { resolveTimezone } from '../../db/settings.ts'
 import { listRunning, listRunningDrafts } from '../../db/entries.ts'
 import { runTouched } from '../hooks/touched.ts'
 import { runRefHook } from '../hooks/ref.ts'
+import { pagesOfEntry } from '../../db/page-links.ts'
 import { checkpointStatus } from '../../db/docs.ts'
 import { CHECKPOINT_STALE_MINUTES, CHECKPOINT_TOUCH_THRESHOLD } from '../../config/constants.ts'
 import { formatDuration } from '../../domain/duration.ts'
@@ -21,11 +22,14 @@ const RULE = [
   'No lo propongas para preguntas, lecturas, busquedas ni arreglos de una linea.',
   'Pueden correr varios cronometros a la vez: si empiezas algo distinto, arranca otro en vez de',
   'parar el que hay.',
-  'Cada cronometro tiene su documento en markdown, y se escribe MIENTRAS se trabaja, no al final:',
-  '  bita note path <id> --create   -> la ruta; editala con Read/Edit',
-  '  bita note save <id>            -> registrala cuando la hayas editado',
-  'Escribe un checkpoint al cerrar un paso, al terminar una verificacion, al cambiar de enfoque o',
-  'al encontrar algo no obvio. Al terminar, cierra el documento y para con: bita stop <id>',
+  'Cada cronometro cuelga de una pagina, que documenta el estado actual y se escribe MIENTRAS se',
+  'trabaja, no al final:',
+  '  bita docs page show <pageId>                    -> lo que dice hoy',
+  '  bita docs page write <pageId> --md <archivo>     -> reescribirla',
+  'La pagina es un documento formal: nada de secciones Pendiente, Hallazgos ni Proximos pasos.',
+  'Lo que falta o lo que se descubrio de paso va al backlog:',
+  '  bita backlog add --kind pending|finding --title "<una linea>"',
+  'Al terminar, actualiza la pagina y para con: bita stop <id> --did "<que paso>"',
 ].join('\n')
 
 async function runPromptSubmit(): Promise<number> {
@@ -100,20 +104,29 @@ function runCheckpoint(): number {
     })
 
     const first = stale[0]
+    const firstPage = first === undefined ? undefined : pagesOfEntry(db, first.id)[0]?.pageId
     const additionalContext = [
       'Registro de tiempo (bita): hay trabajo sin documentar en un cronometro que corre.',
       ...lines,
       '',
       'Si acabas de cerrar un paso, terminar una verificacion, cambiar de enfoque o encontrar algo',
-      'no obvio, escribe el checkpoint AHORA en el documento de la entrada:',
-      `  bita note path ${first?.id ?? '<id>'}   -> la ruta del documento`,
-      `  bita note save ${first?.id ?? '<id>'}   -> cuando lo hayas editado`,
+      'no obvio, escribe el checkpoint AHORA en la pagina del cronometro:',
+      ...(firstPage === undefined
+        ? [
+            `  bita note path ${first?.id ?? '<id>'} --create   -> la entrada aun no tiene pagina; su documento`,
+            `  bita note save ${first?.id ?? '<id>'}            -> cuando lo hayas editado`,
+          ]
+        : [
+            `  bita docs page show ${firstPage}                 -> lo que dice hoy`,
+            `  bita docs page write ${firstPage} --md <archivo> -> la pagina reescrita`,
+          ]),
       '',
-      'Una a tres vinetas, y a la seccion que toque: un hallazgo va a Hallazgos, no a Que se hizo.',
+      'A la seccion que toque, describiendo el estado actual. Un pendiente o un hallazgo no va a la',
+      'pagina: bita backlog add --kind pending|finding --title "<una linea>".',
       'Documenta el resultado, no la edicion; los archivos tocados ya se registran solos.',
       'Si no hay nada que valga la pena contar, sigue sin escribir nada.',
       'Escribelo como documentacion tecnica: nada de "se acordo con el usuario", "segun lo',
-      'solicitado" ni primera persona. Esto acaba en un issue de Jira que leeran otros.',
+      'solicitado", primera ni segunda persona. Esto acaba en Jira y Confluence, donde lo leeran otros.',
     ].join('\n')
 
     process.stdout.write(

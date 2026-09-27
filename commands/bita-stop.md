@@ -1,7 +1,7 @@
 ---
 description: Actualiza la documentación del trabajo y después para el cronómetro
 argument-hint: [id, vacío si solo hay uno, o "all"]
-allowed-tools: Bash(bita stop:*), Bash(bita ls:*), Bash(bita docs:*), Bash(bita note:*), Read, Write, Edit
+allowed-tools: Bash(bita stop:*), Bash(bita ls:*), Bash(bita docs:*), Bash(bita note:*), Bash(bita backlog:*), Read, Write, Edit
 ---
 
 Corriendo ahora mismo:
@@ -30,13 +30,28 @@ bita docs page show <pageId>
 bita docs page write <pageId> --md <archivo> [--section "<H2>"]
 ```
 
-La página cuenta **cómo está algo ahora**, en presente. Concretamente:
+La página es un documento formal que cuenta **cómo está algo ahora**, en
+presente. Concretamente:
 
 - Lo que ibas a escribir como «Verificación» se dice como **cómo se verifica
   hoy**, con el comando y el resultado real, sustituyendo lo que dijera antes.
-- Lo que ibas a dejar en «Pendiente» se convierte en un **límite conocido** de la
-  página o en un issue de Jira, nunca en un TODO enterrado en la prosa.
+- **Nada de «Pendiente», «Hallazgos», «Lo que falta» ni «Próximos pasos» en la
+  página.** Lo que queda por hacer y lo que se descubrió de paso van al
+  backlog, un ítem por cosa:
+
+  ```
+  bita backlog ls --page <pageId>
+  bita backlog add --kind pending|finding --title "<una línea>" [--md <archivo>]
+  bita backlog resolve <id> --resolution "<cómo quedó>"
+  ```
+
+  Mira antes si ya existe, y resuelve los que este bloque cerró.
 - Lo que dejó de ser cierto **se reescribe**, no se corrige debajo.
+- Si la página ya pasa de unas seis secciones, o `docs page write` avisa
+  `PAGE_SHOULD_SPLIT`, parte lo que se entiende solo en páginas hijas con
+  `bita docs page new "<título>" --parent <pageId>`.
+- Los enlaces que el hook no vio —una hoja de estimación, una URL externa— se
+  atan con `bita docs page ref add <pageId> --url <URL> --title "<qué es>"`.
 
 Si la página no se tocó en todo el bloque, escríbela ahora: qué es, cómo
 funciona y cómo se verifica. Si el bloque no tiene página todavía, créala:
@@ -51,8 +66,8 @@ cuerpo entra siempre por `--md <archivo>`.
 
 **Relee antes de seguir.** Que no lleve secretos, rutas absolutas con nombres
 internos ni pegotes de log. Y pásale la prueba de olfato de la skill: nada de
-«se acordó con el usuario», «según lo solicitado», «decidimos» ni «creo que».
-Lo van a leer otros en Jira.
+«se acordó con el usuario», «según lo solicitado», «decidimos», «creo que», «yo
+hice» ni «esto lo ejecutas tú». Lo van a leer otros en Jira y en Confluence.
 
 ## 2. Después, parar
 

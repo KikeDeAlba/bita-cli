@@ -221,6 +221,31 @@ Se niega si el proyecto tiene entradas, porque borrarlo las deja sin proyecto en
 vez de borrarlas; `--force` acepta ese resultado y `bita project archive` es la
 alternativa cuando el histórico importa.
 
+### Unificar contadores
+
+Un mismo trabajo acaba a veces repartido en varios contadores: la sesión que se
+partió, el contador que se arrancó con otro título. `bita merge` los junta en
+una sola entrada.
+
+```sh
+bita merge 774 776 --dry-run
+bita merge 774 776 [--into 774] [--title "…"] [--project X]
+```
+
+Sobrevive la más antigua, o la de `--into`, con su título y su proyecto salvo
+que se pasen otros. Hereda las páginas de todas, los `--did` de cada página en
+orden, los archivos tocados, los enlaces y los documentos heredados como
+apéndices. **Cada contador original queda como segmento** con su inicio y su fin
+reales, así que `summary` da una sola tarea con un worklog por bloque y ninguna
+hora se inventa.
+
+Solo se unifican entradas paradas y pendientes: una que ya llegó a Jira dejaría
+de cuadrar con sus worklogs. Después se opera sobre la entrada que quedó: `amend`,
+`delete` y `docs page link` rechazan un segmento con `ENTRY_MERGED`, `link` ata
+la entrada con todos sus segmentos, y borrar la entrada se lleva sus segmentos.
+Desde esta versión una entrada puede estar en varias páginas, y
+`docs page link --entry` añade en vez de mover.
+
 ### Los documentos
 
 Cada entrada tiene un documento en markdown que se escribe **mientras el
@@ -242,10 +267,54 @@ abrir en un editor, indexar o respaldar sin pasar por el CLI, y el árbol entero
 se puede mover sin reescribir nada. Lo que sí guarda la base es el checksum, con
 lo que se nota si un documento cambió por fuera.
 
-Las secciones son fijas —Contexto, Qué se hizo, Decisiones, Hallazgos,
-Verificación, Pendiente, Tocado— porque son la superficie sobre la que se
-construye la descripción del issue de Jira y, más adelante, una página de
-Confluence.
+Los documentos por entrada heredados conservan sus secciones fijas —Contexto,
+Qué se hizo, Decisiones, Hallazgos, Verificación, Pendiente, Tocado—. Las
+páginas, que son la unidad de documentación desde la 0.4, no tienen secciones
+obligatorias: describen el estado actual de algo, como documento formal, y de
+ellas salen el requerimiento del issue de Jira, el comentario con los
+resultados y lo que se publica en Confluence.
+
+### Pendientes y hallazgos
+
+Lo que queda por hacer y lo que se descubrió de paso **no va en las páginas**:
+va al backlog, una fila por ítem, atada a su proyecto y, si la hay, a su página.
+Así la página sigue describiendo lo que existe y la lista de lo que falta se lee
+de un vistazo entre todos los proyectos, que es lo que enseña la app de
+escritorio.
+
+```sh
+bita backlog add --kind pending --title "Rotar el secreto de dev" [--md detalle.md]
+bita backlog add --kind finding --title "El NAT vive en una sola AZ"
+bita backlog ls [--project X] [--page <id>] [--kind pending|finding] [--status open|resolved|all]
+bita backlog resolve <id> --resolution "Rotado en dev y test"
+bita backlog reopen <id>
+bita backlog extract --dry-run         # las secciones Pendiente/Hallazgos de las páginas, a ítems
+```
+
+Sin `--project`, `--page` ni `--entry`, `add` cuelga el ítem del cronómetro que
+corre. `extract` convierte cada viñeta de esas secciones en un ítem —las
+casillas marcadas, en resueltos— y las quita de la página. `docs page write`
+avisa con `BACKLOG_SECTION_IN_PAGE` si una página vuelve a traerlas, y con
+`PAGE_SHOULD_SPLIT` cuando pasa de seis secciones o 12 KB y conviene partirla en
+páginas hijas.
+
+### Enlaces de una página
+
+Cada página guarda los enlaces con los que se relaciona: páginas de Confluence,
+issues de Jira, hojas de estimación.
+
+```sh
+bita docs page ref add <id> --url <URL> --title "Estimación Q4" [--kind confluence|jira|drive|link]
+bita docs page ref ls <id>
+bita docs page ref rm <id> --url <URL>
+```
+
+El hook `bita hook ref`, que `bita setup` instala en `PostToolUse` para los
+conectores de Atlassian y Google Drive, registra solo lo que se lee o se escribe
+mientras corre un cronómetro: un issue, una página, un archivo. Las búsquedas
+no dejan rastro. Si hay varios cronómetros y no se puede saber a cuál pertenece,
+no registra nada. Un enlace visto antes de que la entrada tenga página espera en
+la entrada y pasa a la página cuando se ata.
 
 Si vienes de las notas en NDJSON, `bita notes migrate --dry-run` enseña qué
 documentos se crearían, y sin el flag los crea. El archivo viejo no se toca.
@@ -342,6 +411,12 @@ un issue de Jira. Cada entrada del grupo es un worklog con su hora real.
 La estimación original se redondea **hacia arriba** al siguiente medio punto: 3h
 43m medidas se registran como 4h de estimación con worklogs que suman 3h 43m. Un
 issue admite como máximo 8 horas; lo que se pasa se parte en `(1/n)`, `(2/n)`.
+
+El issue se escribe como **requerimiento** —Objetivo, Alcance, Criterios de
+aceptación— y los **resultados** van en un comentario —Resultado, Verificación,
+Referencias—. Ni uno ni otro reparte el trabajo entre quien lo hizo y quien
+tiene que terminarlo: todo es de quien tiene asignada la tarea, y lo que falte
+va al backlog.
 
 ## Solapes
 

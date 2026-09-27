@@ -1,7 +1,7 @@
 ---
 description: Anota un checkpoint en el documento del cronómetro que está corriendo
 argument-hint: [id, vacío si solo hay uno]
-allowed-tools: Bash(bita ls:*), Bash(bita note:*), Read, Write, Edit
+allowed-tools: Bash(bita ls:*), Bash(bita note:*), Bash(bita docs:*), Bash(bita backlog:*), Read, Write, Edit
 ---
 
 Corriendo ahora mismo:
@@ -24,10 +24,13 @@ equivocado convierte dos páginas en mentira.
   ahora**, con el comando y el resultado real, sustituyendo lo que dijera antes
 - un cambio de enfoque → reescribe la decisión vigente; la descartada cabe en
   una línea si aclara por qué
-- algo no obvio —comportamiento raro, límite del entorno, causa raíz— → es
-  estado del mundo, así que va a la página, donde un lector lo buscaría
-- algo que quedó fuera → al registro, con `--did` al parar, y a la página solo
-  si cambia lo que promete
+- algo no obvio —comportamiento raro, límite del entorno, causa raíz— que
+  describe cómo funciona el sistema → es estado del mundo, así que va a la
+  página, donde un lector lo buscaría
+- algo que pide acción o que se descubrió de paso —un riesgo, un residuo, un
+  paso que falta— → al backlog, no a la página:
+  `bita backlog add --kind pending|finding --title "<una línea>" [--md <archivo>]`
+- un enlace que el hook no vio → `bita docs page ref add <pageId> --url <URL> --title "<qué es>"`
 
 **Qué no entra.** Una edición no es un checkpoint. Los archivos tocados se
 registran solos: **no los escribas a mano**. Y no creas un encabezado nuevo por
@@ -44,7 +47,8 @@ Nada de prosa por `argv`: el quoting se rompe y el texto queda en `ps`.
 
 **Escríbelo como documentación técnica, no como acta.** En presente, contando
 cómo está la cosa. Nada de «se acordó con el usuario», «según lo solicitado»,
-«decidimos» ni «creo que»: esto acaba en un issue de Jira que leerán otros. Si
-no se comprobó, no digas que sí.
+«decidimos», «creo que», «yo hice» ni «esto lo ejecutas tú»: esto acaba en Jira
+y en Confluence, donde lo leerán otros. Si no se comprobó, no digas que sí.
+Nada de secciones «Pendiente» ni «Hallazgos» en la página: eso es backlog.
 
 Responde en una línea: qué cambió en la página. Nada más.
