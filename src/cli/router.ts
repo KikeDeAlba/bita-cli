@@ -18,6 +18,7 @@ import { runHook } from './commands/hook.ts'
 import { runLink } from './commands/link.ts'
 import { runMerge } from './commands/merge.ts'
 import { runBacklog } from './commands/backlog.ts'
+import { runConfluence } from './commands/confluence.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
@@ -48,6 +49,12 @@ Backlog (pending work and findings, kept out of the pages):
   backlog resolve|reopen <id> Close an item (--resolution "...") or open it again
   backlog edit|rm <id>       Change or remove an item
   backlog extract            Move the pending and findings sections out of the pages (--dry-run)
+
+Confluence (REST API, token in the macOS Keychain):
+  confluence login           Save your Atlassian e-mail and API token (run it in a terminal)
+  confluence status|logout   Check the login, or forget the token
+  confluence attach <id> <files...>   Upload or replace attachments on a Confluence page
+  confluence publish-diagrams <pageId> --to <id>   Render a page's diagrams and upload PNG + source
 
 Documents:
   docs tree [--months]       Projects with their document and entry counts
@@ -235,6 +242,8 @@ export async function route(argv: string[]): Promise<number> {
       return runMerge(rest)
     case 'backlog':
       return runBacklog(rest)
+    case 'confluence':
+      return runConfluence(rest)
     case 'start':
       return runStart(rest)
     case 'stop':
