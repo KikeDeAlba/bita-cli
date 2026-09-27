@@ -117,6 +117,11 @@ nada, así que consulta las veces que haga falta.
     confirmación del paso 7, a la elección de transición de cierre y a cualquier
     otra disyuntiva. Lo que sigue en prosa es la lista de candidatos de una
     búsqueda, que puede pasar de cuatro.
+12. **Lo que falta nunca va a Jira.** Los pendientes y hallazgos viven en el
+    backlog **de bita** (`bita backlog add`). No se crean issues, subtareas ni
+    Historias para trabajo que no se hizo, no se dejan criterios de aceptación
+    sin cumplir como tarea para nadie y no se listan pendientes en los
+    comentarios. En Jira solo entra el trabajo medido.
 
 ## Cómo se escribe lo que se publica
 
@@ -180,7 +185,8 @@ entera, no suavizarla:
   reporte exige bloques de 8 h"), no como autoría.
 - El resultado, no el camino.
 - **Lo que falta no es una instrucción para nadie.** No se escribe «falta que
-  alguien aplique X» en una página ni en Jira: es un ítem del backlog. Lo que se
+  alguien aplique X» en una página ni en Jira: es un ítem del backlog de bita
+  (`bita backlog add`). Lo que se
   publica describe lo que existe.
 
 ### La prueba de olfato
@@ -565,8 +571,9 @@ de cada grupo, este orden, sin paralelismo:
 
    Sale de las páginas del grupo y de los `--did`. Lo que el requerimiento pedía
    y **no** quedó hecho no se escribe como tarea para nadie: se dice en
-   Resultado qué alcance quedó cubierto y el resto va al backlog con
-   `bita backlog add`. Mismas reglas de redacción que la descripción: sin
+   Resultado qué alcance quedó cubierto y el resto va al **backlog de bita** con
+   `bita backlog add`: ni un issue nuevo, ni una subtarea, ni una lista de
+   pendientes en el comentario. Mismas reglas de redacción que la descripción: sin
    primera persona, sin segunda persona, sin reparto del trabajo. **Pásale la
    prueba de olfato antes de enviarlo.**
 5. Cierra el issue: `getTransitionsForJiraIssue` y elige **por lo que devuelva**,
@@ -710,10 +717,13 @@ página, como hecho; lo que alguien tiene que hacer, no.
 GFM plano, más tablas y bloques ```mermaid```. Sin macros ni HTML. El H1 igual al
 título.
 
-### Pendientes y hallazgos: el backlog
+### Pendientes y hallazgos: el backlog de bita
 
 Lo que queda por hacer y lo que se descubrió de paso se registra **aparte**, en
-el backlog, que la app enseña como lista entre proyectos:
+el backlog **de bita** —la tabla local que la app de escritorio enseña como
+lista entre proyectos—, **nunca en Jira**. En Jira solo existe el trabajo que se
+hizo y se midió; un pendiente convertido en issue es una tarea que nadie pidió y
+que queda abierta en el tablero de un equipo.
 
 ```
 bita backlog add --kind pending --title "<qué falta, en una línea>" [--md <archivo>]
@@ -810,7 +820,7 @@ trabajo.
 
 Antes de parar, una última pasada por la página: lo que antes era «Verificación»
 se dice en presente, como se verifica hoy; lo que queda por hacer va al backlog
-con `bita backlog add`, nunca a la página ni como un TODO enterrado en la prosa.
+de bita con `bita backlog add`, nunca a la página ni como un TODO enterrado en la prosa.
 Si la página no se tocó en todo el bloque, escríbela ahora.
 
 **La página alimenta el requerimiento y el comentario de resultados en Jira, y
@@ -823,7 +833,7 @@ prueba de olfato de «Cómo se escribe lo que se publica».
 Cuando se publica documentación de bita en Confluence, se publica **el estado
 actual**, como documento formal. Nada de pendientes, hallazgos, bitácora,
 próximos pasos ni referencias a tareas de Jira como trabajo en curso: eso vive
-en el backlog y en Jira.
+en el backlog de bita, y el trabajo hecho, en Jira.
 
 - **El árbol se refleja.** Una página de bita con hijas es una página de
   Confluence con subpáginas, en el mismo orden. Si la página de bita todavía es
