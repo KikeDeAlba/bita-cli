@@ -21,7 +21,7 @@ import { runBacklog } from './commands/backlog.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '0.7.2'
+export const VERSION = '0.7.3'
 
 const HELP = `bita ${VERSION}
 
