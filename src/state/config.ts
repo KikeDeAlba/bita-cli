@@ -49,6 +49,7 @@ export interface JiraConfig {
   cloudId?: string
   siteUrl?: string
   accountId?: string
+  email?: string
 }
 
 export interface AppConfig {

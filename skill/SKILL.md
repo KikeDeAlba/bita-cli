@@ -893,10 +893,16 @@ en el backlog de bita, y el trabajo hecho, en Jira.
 - Estructura formal y estable: qué es, cómo está compuesto, cómo funciona, cómo
   se opera y cómo se verifica, según pida el contenido. Tablas para inventarios,
   Mermaid para flujos.
-- **Mermaid**: en `createConfluencePage`/`updateConfluencePage` con
-  `contentFormat: "html"`, manda solo `<pre><code class="language-mermaid">…</code></pre>`.
-  El conversor arma la macro; si mandas también el `<div>` de la extensión, sale
-  duplicada.
+- **Diagramas: siempre como imagen, nunca como código.** Ni un bloque mermaid ni
+  XML de draw.io en el cuerpo de la página. El orden es:
+  1. Crea o actualiza la página con el texto, dejando cada diagrama en su lugar.
+  2. `bita confluence publish-diagrams <pageId de bita> --to <id de la página de Confluence> --json`
+     renderiza lo que haga falta y sube cada diagrama como PNG 2x más su fuente
+     (`.mmd` o `.drawio`) como adjunto, para poder editarlo después. Devuelve los
+     diagramas en el orden de la página, cada uno con su fragmento listo.
+  3. Coloca cada imagen donde va su diagrama. Ver «Cómo entra la imagen» abajo.
+  Si falla con `CONFLUENCE_LOGIN_REQUIRED` o `CONFLUENCE_AUTH`, **para** y pide al
+  usuario que corra `! bita confluence login`: el token no lo escribes tú.
 - La misma prueba de olfato que para Jira, pregunta 4 incluida.
 - Al crear o actualizar la página, el hook `ref` la ata sola a la página de bita
   del cronómetro. Si no corría ninguno, átala a mano con `bita docs page ref add`.
