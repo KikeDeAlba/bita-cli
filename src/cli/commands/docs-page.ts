@@ -1,4 +1,7 @@
-import { readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { assetRelPath } from '../../docs/diagrams.ts'
 import { findEntryWithProject } from '../../db/entries.ts'
 import {
   ancestorsOf,
@@ -51,7 +54,7 @@ import { resolveProjectArg } from '../project-arg.ts'
 import { addRefToPage, refsOfPage, removeRefFromPage, REF_KINDS, type RefKind } from '../../db/page-refs.ts'
 import { classifyUrl } from '../../domain/refs.ts'
 
-const SUBCOMMANDS = new Set(['ls', 'show', 'new', 'write', 'rename', 'move', 'link', 'unlink', 'rm', 'ref'])
+const SUBCOMMANDS = new Set(['ls', 'show', 'new', 'write', 'rename', 'move', 'link', 'unlink', 'rm', 'ref', 'asset'])
 
 const OPTIONS = {
   project: { type: 'string' as const },
@@ -76,6 +79,7 @@ const OPTIONS = {
   recursive: { type: 'boolean' as const, default: false },
   'keep-doc': { type: 'boolean' as const, default: false },
   'no-markdown': { type: 'boolean' as const, default: false },
+  create: { type: 'boolean' as const, default: false },
   tree: { type: 'boolean' as const, default: false },
 }
 
@@ -114,6 +118,7 @@ export async function runDocsPage(argv: string[]): Promise<number> {
     if (first === 'link') return await runLink(ctx, args, positional, json)
     if (first === 'unlink') return await runUnlink(ctx, args, positional, json)
     if (first === 'ref') return await runRef(ctx, args, positional, json)
+    if (first === 'asset') return await runAsset(ctx, args, positional, json)
     return await runRemove(ctx, args, positional, json)
   } finally {
     ctx.db.close()
@@ -445,6 +450,26 @@ async function runRef(ctx: PageContext, args: ParsedArgs, positional: string[], 
     return 0
   }
   for (const ref of refs) writeOut(`${ref.kind.padEnd(10)} ${ref.title ? `${ref.title}  ` : ''}${ref.url}`)
+  return 0
+}
+
+async function runAsset(ctx: PageContext, args: ParsedArgs, positional: string[], json: boolean): Promise<number> {
+  const [action, ...rest] = positional
+  const name = rest[1]
+  if (action !== 'path' || name === undefined) {
+    throw new UsageError('Usage: bita docs page asset path <pageId> <file> [--create]')
+  }
+  const page = pageIdArg(rest.slice(0, 1), args, ctx)
+  const relPath = assetRelPath(page.relPath, name)
+  const path = resolveDocPath(ctx.docsRoot, relPath)
+  if (readBoolean(args, 'create')) await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+
+  const data = { pageId: page.id, title: page.title, relPath, path, exists: existsSync(path) }
+  if (json) {
+    writeJson(successEnvelope('docs page asset path', data, { root: ctx.docsRoot }))
+    return 0
+  }
+  writeOut(path)
   return 0
 }
 

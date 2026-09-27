@@ -39,6 +39,7 @@ import { resolveProjectArg } from '../project-arg.ts'
 import { copyFile } from 'node:fs/promises'
 import { migratePages, undoMigration } from '../../docs/migrate-pages.ts'
 import { pageTree, runDocsPage } from './docs-page.ts'
+import { runDiagrams } from './diagrams.ts'
 import { readConfig } from '../../state/config.ts'
 
 const OPTIONS = {
@@ -64,7 +65,7 @@ const OPTIONS = {
   'max-scan-bytes': { type: 'string' as const },
 }
 
-const SUBCOMMANDS = new Set(['tree', 'ls', 'show', 'search', 'page', 'migrate'])
+const SUBCOMMANDS = new Set(['tree', 'ls', 'show', 'search', 'page', 'migrate', 'diagrams'])
 
 const DEFAULT_LIST_LIMIT = 50
 const DEFAULT_SEARCH_LIMIT = 30
@@ -77,6 +78,7 @@ export async function runDocs(argv: string[]): Promise<number> {
 
   if (first === 'page') return await runDocsPage(argv.slice(1))
   if (first === 'migrate') return await runMigrate(argv.slice(1))
+  if (first === 'diagrams') return await runDiagrams(argv.slice(1))
 
   const args = parseCommandArgs(argv.slice(1), OPTIONS, { ...BASE_OPTIONS, ...RANGE_OPTIONS })
   const json = readBoolean(args, 'json')

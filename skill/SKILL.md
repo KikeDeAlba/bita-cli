@@ -724,8 +724,8 @@ con `BACKLOG_SECTION_IN_PAGE` si aparece una. Un límite conocido que es parte d
 cómo funciona el sistema hoy («el NAT vive en una sola AZ») sí se describe en la
 página, como hecho; lo que alguien tiene que hacer, no.
 
-GFM plano, más tablas y bloques ```mermaid```. Sin macros ni HTML. El H1 igual al
-título.
+GFM plano, más tablas, bloques ```mermaid``` y bloques ```drawio``` (ver
+«Diagramas»). Sin macros ni HTML. El H1 igual al título.
 
 ### Pendientes y hallazgos: el backlog de bita
 
@@ -765,6 +765,41 @@ queda como visión general con un párrafo por hijo, y cada parte es una página
 hija con `bita docs page new "<título>" --parent <id>`. `docs page write` avisa
 con `PAGE_SHOULD_SPLIT`. Hasta cinco niveles de profundidad; dos o tres suelen
 bastar.
+
+### Diagramas
+
+Dos herramientas, según lo que haga falta dibujar:
+
+| Qué | Con qué |
+|---|---|
+| Flowchart, secuencia, estados, un flujo de pocos pasos | **mermaid**, en un bloque ```` ```mermaid ```` dentro de la página |
+| Arquitectura, red, infraestructura, cualquier diagrama con muchos grupos, iconos de servicios o una disposición cuidada | **draw.io**, con el MCP de draw.io |
+
+Un diagrama de draw.io es un archivo `.drawio` junto a la página, no texto en ella:
+
+```
+bita docs page asset path <pageId> <nombre>.drawio --create   la ruta donde va el XML
+bita docs diagrams render <pageId>                          PNG 2x de cada diagrama de la página
+bita docs diagrams ls <pageId>                              qué hay y si su render está al día
+```
+
+1. Escribe el XML de draw.io (mxGraph) en la ruta que dio el CLI.
+2. Ábrelo con el MCP de draw.io para revisarlo en el editor; si se corrige ahí,
+   guarda el resultado en el mismo archivo.
+3. En la página, donde va el diagrama, un bloque con el nombre del archivo:
+
+   ````
+   ```drawio
+   <nombre>.drawio
+   ```
+   ````
+
+4. `bita docs diagrams render <pageId>`. Sin draw.io Desktop falla con
+   `DRAWIO_MISSING`: `bita setup` lo instala.
+
+El render de mermaid usa `mermaid-cli` con el Chrome instalado; el de draw.io,
+draw.io Desktop. Los dos quedan en `<página>.assets/` en tema claro, y solo se
+vuelve a renderizar lo que cambió. La app de escritorio enseña los dos.
 
 ### Enlaces
 
