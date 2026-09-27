@@ -32,7 +32,10 @@ import { enrichEntry } from '../../domain/enrich.ts'
 import { issueUrl } from '../../domain/jira.ts'
 import { inspectDocFile } from '../../docs/inspect.ts'
 import { MAX_PAGE_DEPTH, pageRelPath } from '../../docs/layout.ts'
-import { outline, parseDocument, type DocHeading } from '../../docs/markdown.ts'
+import { outline, parseDocument, type DocHeading, type ParsedDocument } from '../../docs/markdown.ts'
+import { backlogHeadings } from '../../docs/backlog-extract.ts'
+import { listBacklogItems } from '../../db/backlog.ts'
+import { PAGE_SPLIT_BYTES, PAGE_SPLIT_SECTIONS } from '../../config/constants.ts'
 import { recordPageDoc, movePageFile } from '../../docs/page-record.ts'
 import { resolveDocPath } from '../../docs/paths.ts'
 import { projectSlug, titleSlug } from '../../docs/slug.ts'
@@ -43,7 +46,7 @@ import { assertNotSegment } from '../resolve-entry.ts'
 import { enrichLogical } from '../logical-entry.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readInteger, readString, type ParsedArgs } from '../args.ts'
 import { createLocalContext, type LocalContext } from '../local-context.ts'
-import { successEnvelope, writeJson, writeOut } from '../output.ts'
+import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { resolveProjectArg } from '../project-arg.ts'
 import { addRefToPage, refsOfPage, removeRefFromPage, REF_KINDS, type RefKind } from '../../db/page-refs.ts'
 import { classifyUrl } from '../../domain/refs.ts'
@@ -346,6 +349,16 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
     entries,
     worklogIssues: worklogIssuesOfPage(ctx.db, page.id),
     refs: refViews(ctx, page.id),
+    backlog: listBacklogItems(ctx.db, { pageId: page.id, status: 'all' }).map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      status: item.status,
+      title: item.title,
+      body: item.body,
+      resolution: item.resolution,
+      createdAt: item.createdAt,
+      resolvedAt: item.resolvedAt,
+    })),
   }
 
   if (json) {
@@ -488,11 +501,34 @@ async function runWrite(ctx: PageContext, args: ParsedArgs, positional: string[]
   const heading = readString(args, 'section')
   const write = heading === undefined ? { body } : { section: { heading, body } }
   const recorded = await recordPageDoc(ctx, page, write)
+  const written = await readRaw(recorded.path)
+  const warnings = written === null ? [] : pageWarnings(parseDocument(written), Buffer.byteLength(written))
 
+  if (!json) for (const warning of warnings) writeErr(`Warning: ${warning.message}`)
   return report(ctx, 'docs page write', requirePage(ctx.db, page.id), json, {
     path: recorded.path,
     changed: recorded.changed,
+    warnings,
   })
+}
+
+export function pageWarnings(doc: ParsedDocument, bytes: number): { code: string; message: string }[] {
+  const warnings: { code: string; message: string }[] = []
+  const backlog = backlogHeadings(doc)
+  if (backlog.length > 0) {
+    warnings.push({
+      code: 'BACKLOG_SECTION_IN_PAGE',
+      message: `The page carries ${backlog.map((heading) => `"${heading}"`).join(', ')}. A page describes the current state only: move those items with "bita backlog add" (or "bita backlog extract --page <id>").`,
+    })
+  }
+  const sections = doc.sections.filter((section) => section.body.trim().length > 0).length
+  if (sections > PAGE_SPLIT_SECTIONS || bytes > PAGE_SPLIT_BYTES) {
+    warnings.push({
+      code: 'PAGE_SHOULD_SPLIT',
+      message: `The page has ${sections} sections and ${Math.round(bytes / 1024)} KB. Split the parts that stand on their own into child pages with "bita docs page new --parent <id>" and leave this one as the overview.`,
+    })
+  }
+  return warnings
 }
 
 async function runRename(ctx: PageContext, args: ParsedArgs, positional: string[], json: boolean): Promise<number> {

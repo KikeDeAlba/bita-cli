@@ -17,6 +17,7 @@ import { runNotes } from './commands/notes.ts'
 import { runHook } from './commands/hook.ts'
 import { runLink } from './commands/link.ts'
 import { runMerge } from './commands/merge.ts'
+import { runBacklog } from './commands/backlog.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
@@ -40,6 +41,13 @@ Tracking:
   note get|ls <id>           Read the document, or list the ones an entry has
   notes migrate              Turn the legacy NDJSON notes into documents
   link <ids...> --issue K    Mark entries as registered in a Jira issue
+
+Backlog (pending work and findings, kept out of the pages):
+  backlog ls                 Open items across projects (--project, --page, --kind, --status)
+  backlog add --kind K       Record a pending item or a finding (--title, --md, --page, --entry)
+  backlog resolve|reopen <id> Close an item (--resolution "...") or open it again
+  backlog edit|rm <id>       Change or remove an item
+  backlog extract            Move the pending and findings sections out of the pages (--dry-run)
 
 Documents:
   docs tree [--months]       Projects with their document and entry counts
@@ -222,6 +230,8 @@ export async function route(argv: string[]): Promise<number> {
       return runLink(rest)
     case 'merge':
       return runMerge(rest)
+    case 'backlog':
+      return runBacklog(rest)
     case 'start':
       return runStart(rest)
     case 'stop':
