@@ -902,7 +902,21 @@ en el backlog de bita, y el trabajo hecho, en Jira.
      diagramas en el orden de la página, cada uno con su fragmento listo.
   3. Coloca cada imagen donde va su diagrama. Ver «Cómo entra la imagen» abajo.
   Si falla con `CONFLUENCE_LOGIN_REQUIRED` o `CONFLUENCE_AUTH`, **para** y pide al
-  usuario que corra `! bita confluence login`: el token no lo escribes tú.
+  usuario que corra `bita confluence login` en una terminal (o, desde Claude
+  Code, `! pbpaste | bita confluence login --token-stdin --email <correo>` con el
+  token copiado): el token no lo escribes tú.
+- **Cómo entra la imagen.** Probado en gruposti: el conector acepta ADF y
+  Confluence convierte cada nodo `media` en un `<ac:image>` ligado a su adjunto.
+  1. Al escribir el texto deja, donde va cada diagrama, un párrafo marcador
+     (`DIAGRAMA-1`, `DIAGRAMA-2`…) en el orden de la página de bita.
+  2. Después de `publish-diagrams`, lee la página con `getConfluencePage` en
+     `contentFormat: "adf"`, sustituye cada párrafo marcador por el `image.adf`
+     del diagrama con el mismo `index` (un nodo `mediaSingle`, ya con su
+     `fileId`, su `collection` y el tamaño a la mitad del PNG 2x), y guárdala con
+     `updateConfluencePage` en `contentFormat: "adf"`.
+  3. Vuelve a leerla y confirma que no quedó ningún marcador.
+  Volver a publicar reemplaza los adjuntos con el mismo nombre, así que una
+  página actualizada no acumula imágenes viejas.
 - La misma prueba de olfato que para Jira, pregunta 4 incluida.
 - Al crear o actualizar la página, el hook `ref` la ata sola a la página de bita
   del cronómetro. Si no corría ninguno, átala a mano con `bita docs page ref add`.
