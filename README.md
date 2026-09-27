@@ -53,8 +53,12 @@ bita app install
 `bita setup` enlaza la skill y los comandos de barra en `~/.claude` apuntando al
 paquete instalado, y mete los permisos y el hook `SessionStart` en tu
 `settings.json`. Al actualizar el paquete se actualizan con él, porque son
-symlinks. `bita app install` descarga la última release del escritorio y la deja
-en `/Applications`.
+symlinks. También deja listo draw.io para los diagramas elaborados:
+- agrega el MCP de draw.io a Claude Code (`claude mcp add --scope user drawio -- npx -y @drawio/mcp`) si no está;
+- instala draw.io Desktop con `brew install --cask drawio` si falta, porque es lo que exporta los `.drawio` a PNG.
+
+`--no-drawio` se salta las dos cosas. `bita app install` descarga la última
+release del escritorio y la deja en `/Applications`.
 
 Node 24 o más nuevo, por `node:sqlite`.
 
