@@ -4,6 +4,7 @@ import { databasePath } from '../../db/paths.ts'
 import { resolveTimezone } from '../../db/settings.ts'
 import { listRunning, listRunningDrafts } from '../../db/entries.ts'
 import { runTouched } from '../hooks/touched.ts'
+import { runRefHook } from '../hooks/ref.ts'
 import { checkpointStatus } from '../../db/docs.ts'
 import { CHECKPOINT_STALE_MINUTES, CHECKPOINT_TOUCH_THRESHOLD } from '../../config/constants.ts'
 import { formatDuration } from '../../domain/duration.ts'
@@ -126,6 +127,13 @@ function runCheckpoint(): number {
   return 0
 }
 
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) return ''
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array))
+  return Buffer.concat(chunks).toString('utf8')
+}
+
 export async function runHook(argv: string[]): Promise<number> {
   const event = argv[0] ?? 'session-start'
 
@@ -150,6 +158,15 @@ export async function runHook(argv: string[]): Promise<number> {
       const flagIndex = argv.indexOf('--file')
       const file = flagIndex === -1 ? undefined : argv[flagIndex + 1]
       if (file) await runTouched(file)
+    } catch {
+      return 0
+    }
+    return 0
+  }
+
+  if (event === 'ref') {
+    try {
+      await runRefHook(await readStdin())
     } catch {
       return 0
     }

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { toUtcIso } from './rows.ts'
 import { queryAll } from './query.ts'
+import { adoptEntryRefs, moveEntryRefs } from './page-refs.ts'
 
 export interface MergeWrite {
   targetId: number
@@ -108,6 +109,9 @@ export function writeMerge(db: DatabaseSync, merge: MergeWrite): MergeWriteOutco
        ON CONFLICT (page_id, entry_id) DO UPDATE SET summary = excluded.summary`,
     ).run(pageId, merge.targetId, joinSummaries(summaries), now)
   }
+
+  moveEntryRefs(db, sources, merge.targetId)
+  for (const pageId of pageIds) adoptEntryRefs(db, merge.targetId, pageId)
 
   const segmentIds = queryAll<{ id: number }>(
     db.prepare('SELECT id FROM entries WHERE merged_into = ? ORDER BY started_at'),

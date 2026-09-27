@@ -70,7 +70,7 @@ export async function runSummary(argv: string[]): Promise<number> {
       )
     }
 
-    const pagesById = skipNotes ? new Map<number, SummaryPage>() : await pagesForEntries(ctx, allEntryIds)
+    const pagesById = skipNotes ? new Map<number, SummaryPage[]>() : await pagesForEntries(ctx, allEntryIds)
 
     const withMapping = groups.map((group) => {
       const mapping =
@@ -85,10 +85,7 @@ export async function runSummary(argv: string[]): Promise<number> {
         pages: [
           ...new Map(
             group.entryIds
-              .flatMap((id) => {
-                const page = pagesById.get(id)
-                return page ? [[page.pageId, page] as const] : []
-              }),
+              .flatMap((id) => (pagesById.get(id) ?? []).map((page) => [page.pageId, page] as const)),
           ).values(),
         ],
         touchedFiles: [
