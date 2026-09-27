@@ -37,7 +37,7 @@ presente. Concretamente:
   hoy**, con el comando y el resultado real, sustituyendo lo que dijera antes.
 - **Nada de «Pendiente», «Hallazgos», «Lo que falta» ni «Próximos pasos» en la
   página.** Lo que queda por hacer y lo que se descubrió de paso van al
-  backlog, un ítem por cosa:
+  backlog de bita —no a Jira—, un ítem por cosa:
 
   ```
   bita backlog ls --page <pageId>

@@ -28,7 +28,7 @@ equivocado convierte dos páginas en mentira.
   describe cómo funciona el sistema → es estado del mundo, así que va a la
   página, donde un lector lo buscaría
 - algo que pide acción o que se descubrió de paso —un riesgo, un residuo, un
-  paso que falta— → al backlog, no a la página:
+  paso que falta— → al backlog de bita (no a Jira), no a la página:
   `bita backlog add --kind pending|finding --title "<una línea>" [--md <archivo>]`
 - un enlace que el hook no vio → `bita docs page ref add <pageId> --url <URL> --title "<qué es>"`
 
@@ -49,6 +49,6 @@ Nada de prosa por `argv`: el quoting se rompe y el texto queda en `ps`.
 cómo está la cosa. Nada de «se acordó con el usuario», «según lo solicitado»,
 «decidimos», «creo que», «yo hice» ni «esto lo ejecutas tú»: esto acaba en Jira
 y en Confluence, donde lo leerán otros. Si no se comprobó, no digas que sí.
-Nada de secciones «Pendiente» ni «Hallazgos» en la página: eso es backlog.
+Nada de secciones «Pendiente» ni «Hallazgos» en la página: eso es el backlog de bita, no Jira.
 
 Responde en una línea: qué cambió en la página. Nada más.

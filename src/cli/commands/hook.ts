@@ -27,7 +27,7 @@ const RULE = [
   '  bita docs page show <pageId>                    -> lo que dice hoy',
   '  bita docs page write <pageId> --md <archivo>     -> reescribirla',
   'La pagina es un documento formal: nada de secciones Pendiente, Hallazgos ni Proximos pasos.',
-  'Lo que falta o lo que se descubrio de paso va al backlog:',
+  'Lo que falta o lo que se descubrio de paso va al backlog de bita, nunca a Jira:',
   '  bita backlog add --kind pending|finding --title "<una linea>"',
   'Al terminar, actualiza la pagina y para con: bita stop <id> --did "<que paso>"',
 ].join('\n')

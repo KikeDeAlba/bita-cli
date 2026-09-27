@@ -277,7 +277,7 @@ resultados y lo que se publica en Confluence.
 ### Pendientes y hallazgos
 
 Lo que queda por hacer y lo que se descubrió de paso **no va en las páginas**:
-va al backlog, una fila por ítem, atada a su proyecto y, si la hay, a su página.
+va al backlog de bita —no a Jira—, una fila por ítem, atada a su proyecto y, si la hay, a su página.
 Así la página sigue describiendo lo que existe y la lista de lo que falta se lee
 de un vistazo entre todos los proyectos, que es lo que enseña la app de
 escritorio.
@@ -416,7 +416,7 @@ El issue se escribe como **requerimiento** —Objetivo, Alcance, Criterios de
 aceptación— y los **resultados** van en un comentario —Resultado, Verificación,
 Referencias—. Ni uno ni otro reparte el trabajo entre quien lo hizo y quien
 tiene que terminarlo: todo es de quien tiene asignada la tarea, y lo que falte
-va al backlog.
+va al backlog de bita, no a Jira.
 
 ## Solapes
 
