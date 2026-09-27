@@ -7,6 +7,7 @@ import { findEntryById, findEntryWithProject, listRunningDrafts, updateEntry } f
 import { findProjectById, findProjectByName } from '../../db/projects.ts'
 import { recordEntryDoc } from '../../docs/record.ts'
 import { currentRepoIdentity } from './repo.ts'
+import { assertNotSegment } from '../resolve-entry.ts'
 
 const OPTIONS = {
   draft: { type: 'boolean' as const, default: false },
@@ -90,6 +91,7 @@ export async function runAmend(argv: string[]): Promise<number> {
     const id = resolveTarget(ctx, args)
     const entry = findEntryById(ctx.db, id)
     if (!entry) throw new UsageError(`No entry with id ${id}.`)
+    assertNotSegment(entry)
 
     const project = rawProject === undefined ? null : resolveProject(ctx, rawProject)
 

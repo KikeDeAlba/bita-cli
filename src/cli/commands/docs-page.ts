@@ -39,6 +39,8 @@ import { projectSlug, titleSlug } from '../../docs/slug.ts'
 import { readRaw } from '../../docs/store.ts'
 import { readConfig } from '../../state/config.ts'
 import { NotFoundError, UsageError } from '../../errors.ts'
+import { assertNotSegment } from '../resolve-entry.ts'
+import { enrichLogical } from '../logical-entry.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readInteger, readString, type ParsedArgs } from '../args.ts'
 import { createLocalContext, type LocalContext } from '../local-context.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
@@ -295,7 +297,7 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
   const entries = entriesOfPage(ctx.db, page.id).flatMap((link) => {
     const entry = findEntryWithProject(ctx.db, link.entryId)
     if (!entry) return []
-    const rich = enrichEntry(entry, ctx.timezone, ctx.now)
+    const rich = enrichLogical(ctx.db, entry, ctx.timezone, ctx.now)
     return [
       {
         entryId: entry.id,
@@ -308,6 +310,7 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
         running: rich.running,
         registered: rich.registered,
         issueKey: rich.issueKey,
+        segments: rich.segments,
       },
     ]
   })
@@ -460,7 +463,9 @@ async function runLink(ctx: PageContext, args: ParsedArgs, positional: string[],
     for (const token of entryRaw.split(',')) {
       const id = Number(token.trim())
       if (!Number.isInteger(id) || id <= 0) throw new UsageError(`"${token}" is not an entry id.`)
-      if (!findEntryWithProject(ctx.db, id)) throw new NotFoundError(`No entry #${id}.`, 'ENTRY_NOT_FOUND')
+      const entry = findEntryWithProject(ctx.db, id)
+      if (!entry) throw new NotFoundError(`No entry #${id}.`, 'ENTRY_NOT_FOUND')
+      assertNotSegment(entry)
       linkEntryToPage(ctx.db, page.id, id, readString(args, 'summary') ?? '', now)
     }
   }

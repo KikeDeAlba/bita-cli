@@ -1,4 +1,5 @@
-import { UsageError } from '../errors.ts'
+import { ConflictError, UsageError } from '../errors.ts'
+import type { EntryRow } from '../db/rows.ts'
 import { listRunningDrafts } from '../db/entries.ts'
 import { readBoolean, type ParsedArgs } from './args.ts'
 import type { LocalContext } from './local-context.ts'
@@ -19,4 +20,13 @@ export function resolveEntryId(ctx: LocalContext, args: ParsedArgs, usage: strin
   const id = Number(raw)
   if (!Number.isInteger(id) || id <= 0) throw new UsageError(usage)
   return id
+}
+
+export function assertNotSegment(entry: EntryRow): void {
+  if (entry.mergedInto === null) return
+  throw new ConflictError(
+    `#${entry.id} is a block of the merged entry #${entry.mergedInto}.`,
+    'ENTRY_MERGED',
+    `Use #${entry.mergedInto}; the merged entry speaks for all its blocks.`,
+  )
 }

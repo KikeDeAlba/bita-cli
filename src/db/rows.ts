@@ -18,6 +18,7 @@ export interface EntryRow {
   billable: boolean
   source: EntrySource
   externalId: number | null
+  mergedInto: number | null
   createdAt: string
   updatedAt: string
 }

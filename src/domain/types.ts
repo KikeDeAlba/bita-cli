@@ -17,6 +17,7 @@ export interface EnrichedTimeEntry {
   durationHours: number
   startedJira: string
   running: boolean
+  mergedInto: number | null
 }
 
 export interface WorklogSlice {
