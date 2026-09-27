@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs'
 import { DOC_SCHEMA_VERSION } from '../config/constants.ts'
+import { assetsRelDir } from './diagrams.ts'
 import { ancestorsOf, recordPageFile, repointPage, type DocPageRow } from '../db/pages.ts'
 import { issuesOfPage } from '../db/page-links.ts'
 import type { DocsContext } from './record.ts'
@@ -104,6 +106,11 @@ export async function movePageFile(ctx: DocsContext, page: DocPageRow, toRelPath
   const to = resolveDocPath(ctx.docsRoot, toRelPath)
   const moved = await renameDocument(from, to)
   if (!moved) return false
+
+  const fromAssets = resolveDocPath(ctx.docsRoot, assetsRelDir(page.relPath))
+  if (existsSync(fromAssets)) {
+    await renameDocument(fromAssets, resolveDocPath(ctx.docsRoot, assetsRelDir(toRelPath)))
+  }
 
   repointPage(ctx.db, page.id, toRelPath)
   return true

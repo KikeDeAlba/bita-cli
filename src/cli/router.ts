@@ -65,6 +65,9 @@ Documents:
   docs page unlink <id>      Untie them
   docs page ref add <id>     Record a link the page relates to (--url, --title, --kind)
   docs page ref ls|rm <id>   List the page's links, or drop one (--url)
+  docs page asset path <id> <file>  Where a page's asset lives (--create makes the folder)
+  docs diagrams ls <id>      The page's mermaid and draw.io diagrams, and whether they are rendered
+  docs diagrams render <id>  Render them to PNG next to the page (--force redraws all)
   docs page rm <id>          Forget the page; the .md stays on disk
   docs migrate [--yes]       Turn every entry document into a page
   docs migrate --undo        Put the corpus back as it was

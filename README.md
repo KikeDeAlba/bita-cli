@@ -246,6 +246,24 @@ la entrada con todos sus segmentos, y borrar la entrada se lleva sus segmentos.
 Desde esta versión una entrada puede estar en varias páginas, y
 `docs page link --entry` añade en vez de mover.
 
+### Diagramas
+
+Una página lleva diagramas de dos tipos: bloques ```` ```mermaid ```` para
+flowcharts y secuencias, y bloques ```` ```drawio ```` que nombran un archivo
+`.drawio` guardado junto a ella, para arquitectura e infraestructura. Los
+archivos de una página viven en `<página>.assets/`, y se mueven con ella.
+
+```sh
+bita docs page asset path <pageId> red.drawio --create   # dónde escribir el .drawio
+bita docs diagrams ls <pageId>                         # qué diagramas hay y si están renderizados
+bita docs diagrams render <pageId> [--force]           # PNG 2x, fondo blanco, en los assets
+```
+
+Mermaid se renderiza con `@mermaid-js/mermaid-cli` vía `npx`, usando Google
+Chrome si está instalado para no descargar otro navegador; draw.io, con el CLI de
+draw.io Desktop. El nombre de cada render de mermaid lleva el hash de su fuente,
+así que solo se vuelve a dibujar lo que cambió, y los renders viejos se borran.
+
 ### Los documentos
 
 Cada entrada tiene un documento en markdown que se escribe **mientras el
