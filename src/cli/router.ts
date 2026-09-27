@@ -16,6 +16,7 @@ import { runNote } from './commands/note.ts'
 import { runNotes } from './commands/notes.ts'
 import { runHook } from './commands/hook.ts'
 import { runLink } from './commands/link.ts'
+import { runMerge } from './commands/merge.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
@@ -33,6 +34,7 @@ Tracking:
   log "<title>"              Record a block that already happened
   amend <id|--draft>         Fill in the title, project or document of an entry
   delete <ids...>            Remove entries that should never have been recorded
+  merge <ids...>             Fold several pending entries into one, keeping every block
   note path <id> --create    Where the entry's document lives, creating it
   note save <id>             Record the document after editing it
   note get|ls <id>           Read the document, or list the ones an entry has
@@ -117,6 +119,12 @@ Project options:
   --all                      With "projects", include archived ones
   --force                    With "project delete", accept leaving its entries orphaned
   --yes / --dry-run          With "project delete", as in delete
+
+Merge options:
+  --into ID                  The entry that survives (default: the oldest)
+  --title "..."              Title of the merged entry (default: the survivor's)
+  --project ID|NAME          Project of the merged entry, required when they differ
+  --dry-run                  Show what would be merged, without writing
 
 Amend options:
   --draft                    Target the single running draft
@@ -210,6 +218,8 @@ export async function route(argv: string[]): Promise<number> {
       return runHook(rest)
     case 'link':
       return runLink(rest)
+    case 'merge':
+      return runMerge(rest)
     case 'start':
       return runStart(rest)
     case 'stop':

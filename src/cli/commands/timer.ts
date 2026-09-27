@@ -31,7 +31,7 @@ import { findEntryWithProject } from '../../db/entries.ts'
 import { recordEntryDoc } from '../../docs/record.ts'
 import { recordTouch } from '../../db/touches.ts'
 import { insertPage, requirePage, uniqueSiblingSlug } from '../../db/pages.ts'
-import { linkEntryToPage, pageOfEntry } from '../../db/page-links.ts'
+import { linkEntryToPage, pagesOfEntry } from '../../db/page-links.ts'
 import { pageRelPath } from '../../docs/layout.ts'
 import { titleSlug } from '../../docs/slug.ts'
 import { DID_MAX } from '../../config/constants.ts'
@@ -68,15 +68,16 @@ function recordDid(ctx: LocalContext, entryId: number, args: ParsedArgs): void {
   const did = readString(args, 'did')
   if (did === undefined) return
 
-  const link = pageOfEntry(ctx.db, entryId)
-  if (!link) {
+  const links = pagesOfEntry(ctx.db, entryId)
+  if (links.length === 0) {
     throw new ConflictError(
       `Entry #${entryId} does not belong to a page yet.`,
       'ENTRY_WITHOUT_PAGE',
       'bita docs page link <pageId> --entry ' + String(entryId),
     )
   }
-  linkEntryToPage(ctx.db, link.pageId, entryId, did.trim().slice(0, DID_MAX), ctx.now.toISOString())
+  const summary = did.trim().slice(0, DID_MAX)
+  for (const link of links) linkEntryToPage(ctx.db, link.pageId, entryId, summary, ctx.now.toISOString())
 }
 
 async function attachToPage(ctx: LocalContext, entryId: number, args: ParsedArgs): Promise<number | null> {

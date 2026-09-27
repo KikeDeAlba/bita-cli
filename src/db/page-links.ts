@@ -67,7 +67,6 @@ export function linkEntryToPage(
   summary: string,
   now: string,
 ): void {
-  db.prepare(`DELETE FROM page_entries WHERE entry_id = ? AND page_id <> ?`).run(entryId, pageId)
   db.prepare(
     `INSERT INTO page_entries (page_id, entry_id, summary, linked_at)
      VALUES (?, ?, ?, ?)
@@ -80,12 +79,18 @@ export function unlinkEntryFromPage(db: DatabaseSync, pageId: number, entryId: n
   db.prepare(`DELETE FROM page_entries WHERE page_id = ? AND entry_id = ?`).run(pageId, entryId)
 }
 
-export function pageOfEntry(db: DatabaseSync, entryId: number): PageEntryRow | undefined {
-  const row = queryOne<EntryLink>(
-    db.prepare(`SELECT page_id, entry_id, summary, linked_at FROM page_entries WHERE entry_id = ?`),
+export function pagesOfEntry(db: DatabaseSync, entryId: number): PageEntryRow[] {
+  return queryAll<EntryLink>(
+    db.prepare(
+      `SELECT page_id, entry_id, summary, linked_at FROM page_entries
+       WHERE entry_id = ? ORDER BY linked_at, page_id`,
+    ),
     entryId,
-  )
-  return row ? toEntry(row) : undefined
+  ).map(toEntry)
+}
+
+export function pageOfEntry(db: DatabaseSync, entryId: number): PageEntryRow | undefined {
+  return pagesOfEntry(db, entryId)[0]
 }
 
 export function entriesOfPage(db: DatabaseSync, pageId: number): PageEntryRow[] {
@@ -157,7 +162,9 @@ export function worklogIssuesOfPage(db: DatabaseSync, pageId: number): string[] 
   return queryAll<{ issue_key: string }>(
     db.prepare(
       `SELECT DISTINCT jl.issue_key
-       FROM page_entries pe JOIN jira_links jl ON jl.entry_id = pe.entry_id
+       FROM page_entries pe
+       JOIN entries e ON e.id = pe.entry_id OR e.merged_into = pe.entry_id
+       JOIN jira_links jl ON jl.entry_id = e.id
        WHERE pe.page_id = ?
        ORDER BY jl.issue_key`,
     ),
@@ -180,13 +187,13 @@ export function talliesByPage(db: DatabaseSync): Map<number, PageTally> {
   }>(
     db.prepare(
       `SELECT pe.page_id,
-              COUNT(*) AS entry_count,
+              COUNT(DISTINCT pe.entry_id) AS entry_count,
               SUM(
                 CASE WHEN e.stopped_at IS NULL THEN 0
                 ELSE CAST((julianday(e.stopped_at) - julianday(e.started_at)) * 86400 AS INTEGER)
                 END
               ) AS duration_seconds
-       FROM page_entries pe JOIN entries e ON e.id = pe.entry_id
+       FROM page_entries pe JOIN entries e ON e.id = pe.entry_id OR e.merged_into = pe.entry_id
        GROUP BY pe.page_id`,
     ),
   )

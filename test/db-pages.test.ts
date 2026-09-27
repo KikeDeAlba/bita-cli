@@ -17,6 +17,7 @@ import {
   linkEntryToPage,
   linkIssueToPage,
   pageOfEntry,
+  pagesOfEntry,
   worklogIssuesOfPage,
 } from '../src/db/page-links.ts'
 
@@ -143,7 +144,7 @@ test('two root pages of the same project cannot share a slug either', () => {
   db.close()
 })
 
-test('an entry belongs to one page, and moving it leaves no trace behind', () => {
+test('an entry can belong to several pages, each with its own summary', () => {
   const db = openMemoryDatabase()
   seedProject(db, 1, 'Pharma STI')
   seedEntry(db, 10, 1)
@@ -155,9 +156,15 @@ test('an entry belongs to one page, and moving it leaves no trace behind', () =>
   assert.equal(pageOfEntry(db, 10)?.pageId, first)
   assert.equal(entriesOfPage(db, first)[0]?.summary, 'Se movieron las credenciales.')
 
-  linkEntryToPage(db, second, 10, '', NOW)
-  assert.equal(pageOfEntry(db, 10)?.pageId, second)
-  assert.equal(entriesOfPage(db, first).length, 0)
+  linkEntryToPage(db, second, 10, 'Se desplegó.', NOW)
+  assert.deepEqual(
+    pagesOfEntry(db, 10).map((row) => [row.pageId, row.summary]),
+    [
+      [first, 'Se movieron las credenciales.'],
+      [second, 'Se desplegó.'],
+    ],
+  )
+  assert.equal(entriesOfPage(db, first).length, 1)
   db.close()
 })
 

@@ -39,6 +39,7 @@ export function enrichEntry(
     durationHours: toDecimalHours(durationSeconds),
     startedJira: toJiraStarted(row.startedAt, timezone),
     running: row.stoppedAt === null,
+    mergedInto: row.mergedInto,
   }
 }
 

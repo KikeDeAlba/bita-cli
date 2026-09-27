@@ -3,7 +3,7 @@ import { parseCommandArgs, readBoolean, readString } from '../args.ts'
 import { withLocalContext } from '../local-context.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { inTransaction } from '../../db/open.ts'
-import { findEntryById } from '../../db/entries.ts'
+import { findEntryById, listSegments } from '../../db/entries.ts'
 import { findLink, linkEntry, unlinkEntry } from '../../db/jira-links.ts'
 
 const ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9_]+-\d+$/
@@ -51,6 +51,11 @@ export function runLink(argv: string[]): number {
     const missing = ids.filter((id) => findEntryById(ctx.db, id) === undefined)
     if (missing.length > 0) {
       throw new UsageError(`No entry with id ${missing.join(', ')}.`)
+    }
+    for (const id of [...ids]) {
+      for (const segment of listSegments(ctx.db, id)) {
+        if (!ids.includes(segment.id)) ids.push(segment.id)
+      }
     }
 
     const alreadyLinked = unlink

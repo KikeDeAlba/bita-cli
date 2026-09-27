@@ -12,6 +12,7 @@ interface RawEntry {
   billable: number
   source: string
   external_id: number | null
+  merged_into: number | null
   created_at: string
   updated_at: string
 }
@@ -44,6 +45,7 @@ function toEntry(raw: RawEntry): EntryRow {
     billable: toBoolean(raw.billable),
     source: raw.source as EntrySource,
     externalId: raw.external_id,
+    mergedInto: raw.merged_into ?? null,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   }
@@ -193,7 +195,28 @@ export function updateEntry(
   sets.push('updated_at = ?')
   values.push(toUtcIso(now), id)
   const result = db.prepare(`UPDATE entries SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+  if (result.changes > 0 && (fields.description !== undefined || fields.projectId !== undefined)) {
+    propagateToSegments(db, id, now)
+  }
   return result.changes > 0
+}
+
+function propagateToSegments(db: DatabaseSync, id: number, now: string): void {
+  db.prepare(
+    `UPDATE entries
+     SET description = (SELECT description FROM entries WHERE id = ?),
+         project_id = (SELECT project_id FROM entries WHERE id = ?),
+         updated_at = ?
+     WHERE merged_into = ?`,
+  ).run(id, id, toUtcIso(now), id)
+}
+
+export function listSegments(db: DatabaseSync, targetId: number): EntryWithProjectRow[] {
+  const raws = queryAll<RawEntryWithProject>(
+    db.prepare(`${SELECT_WITH_PROJECT} WHERE e.merged_into = ? ORDER BY e.started_at`),
+    targetId,
+  )
+  return raws.map(toEntryWithProject)
 }
 
 export function deleteEntry(db: DatabaseSync, id: number): boolean {

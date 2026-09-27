@@ -186,11 +186,19 @@ const DOC_PAGES: readonly string[] = [
   `CREATE INDEX page_issues_issue ON page_issues (issue_key)`,
 ]
 
+const MERGED_ENTRIES: readonly string[] = [
+  `ALTER TABLE entries ADD COLUMN merged_into INTEGER REFERENCES entries (id) ON DELETE CASCADE`,
+  `CREATE INDEX entries_merged_into ON entries (merged_into) WHERE merged_into IS NOT NULL`,
+  `DROP INDEX page_entries_one_page`,
+  `CREATE INDEX page_entries_entry ON page_entries (entry_id)`,
+]
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, statements: INITIAL_SCHEMA },
   { version: 2, statements: ENTRY_TOUCHES },
   { version: 3, statements: ENTRY_DOCS },
   { version: 4, statements: DOC_PAGES },
+  { version: 5, statements: MERGED_ENTRIES },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

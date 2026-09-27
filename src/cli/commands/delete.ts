@@ -6,7 +6,7 @@ import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { renderTable } from '../table.ts'
 import { promptConfirm } from '../prompt.ts'
 import { inTransaction } from '../../db/open.ts'
-import { deleteEntry, findEntryWithProject, listEntriesForProject } from '../../db/entries.ts'
+import { deleteEntry, findEntryWithProject, listEntriesForProject, listSegments } from '../../db/entries.ts'
 import { deleteProject, findProjectById, findProjectByName } from '../../db/projects.ts'
 import {
   CONFIG_PATH,
@@ -20,6 +20,7 @@ import { listTouches } from '../../db/touches.ts'
 import { resolveDocPath } from '../../docs/paths.ts'
 import { removeDocument } from '../../docs/store.ts'
 import { enrichEntry } from '../../domain/enrich.ts'
+import { formatDuration } from '../../domain/duration.ts'
 
 const OPTIONS = {
   ids: { type: 'string' as const },
@@ -54,6 +55,7 @@ export interface DeletionPlan {
   missing: number[]
   running: number[]
   registered: DeletionTarget[]
+  merged: { id: number; mergedInto: number }[]
 }
 
 export interface DeletionOutcome {
@@ -86,11 +88,16 @@ export function planDeletions(ctx: PlanContext, ids: number[], force: boolean): 
   const missing: number[] = []
   const running: number[] = []
   const registered: DeletionTarget[] = []
+  const merged: { id: number; mergedInto: number }[] = []
 
   for (const id of ids) {
     const row = findEntryWithProject(ctx.db, id)
     if (!row) {
       missing.push(id)
+      continue
+    }
+    if (row.mergedInto !== null) {
+      merged.push({ id, mergedInto: row.mergedInto })
       continue
     }
     if (row.stoppedAt === null) {
@@ -99,6 +106,11 @@ export function planDeletions(ctx: PlanContext, ids: number[], force: boolean): 
     }
 
     const enriched = enrichEntry(row, ctx.timezone, ctx.now)
+    const segmentSeconds = listSegments(ctx.db, row.id).reduce(
+      (sum, segment) => sum + enrichEntry(segment, ctx.timezone, ctx.now).durationSeconds,
+      0,
+    )
+    const durationSeconds = enriched.durationSeconds + segmentSeconds
     const target: DeletionTarget = {
       id: row.id,
       description: enriched.description,
@@ -106,8 +118,8 @@ export function planDeletions(ctx: PlanContext, ids: number[], force: boolean): 
       issueKey: row.issueKey,
       registered: row.registered,
       localDay: enriched.localDay,
-      durationSeconds: enriched.durationSeconds,
-      durationHuman: enriched.durationHuman,
+      durationSeconds,
+      durationHuman: formatDuration(durationSeconds),
       docPaths: listDocsForEntry(ctx.db, row.id).map((doc) =>
         resolveDocPath(ctx.docsRoot, doc.relPath),
       ),
@@ -121,12 +133,21 @@ export function planDeletions(ctx: PlanContext, ids: number[], force: boolean): 
     targets.push(target)
   }
 
-  return { targets, missing, running, registered }
+  return { targets, missing, running, registered, merged }
 }
 
 export function assertPlanIsSafe(plan: DeletionPlan): void {
   if (plan.missing.length > 0) {
     throw new UsageError(`No entry with id ${plan.missing.join(', ')}.`)
+  }
+  const [firstMerged] = plan.merged
+  if (firstMerged) {
+    const ids = plan.merged.map((entry) => `#${entry.id}`).join(', ')
+    throw new ConflictError(
+      `${ids} ${plan.merged.length === 1 ? 'is a block' : 'are blocks'} of a merged entry.`,
+      'ENTRY_MERGED',
+      `Delete #${firstMerged.mergedInto} to remove the whole entry.`,
+    )
   }
   if (plan.running.length > 0) {
     const ids = plan.running.map((id) => `#${id}`).join(', ')

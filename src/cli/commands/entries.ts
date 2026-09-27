@@ -4,6 +4,7 @@ import { collectEntries } from '../collect.ts'
 import { renderTable } from '../table.ts'
 import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { formatDuration } from '../../domain/duration.ts'
+import { collapseSegments } from '../logical-entry.ts'
 
 export function runEntries(argv: string[]): number {
   const args = parseCommandArgs(argv, {})
@@ -15,14 +16,15 @@ export function runEntries(argv: string[]): number {
       requireProject: false,
     })
 
-    const totalSeconds = result.selected.reduce((sum, entry) => sum + entry.durationSeconds, 0)
+    const selected = collapseSegments(result.selected)
+    const totalSeconds = selected.reduce((sum, entry) => sum + entry.durationSeconds, 0)
 
     if (readBoolean(args, 'json')) {
       writeJson(
-        successEnvelope('entries', result.selected, {
+        successEnvelope('entries', selected, {
           range: { fromDay: result.range.fromDay, toDay: result.range.toDay, timezone: ctx.timezone },
           filter: result.filter,
-          entryCount: result.selected.length,
+          entryCount: selected.length,
           totalSeconds,
           totalHuman: formatDuration(totalSeconds),
           excluded: result.excluded,
@@ -46,19 +48,23 @@ export function runEntries(argv: string[]): number {
           { header: 'STATE' },
           { header: 'TIME', align: 'right' },
         ],
-        result.selected.map((entry) => [
+        selected.map((entry) => [
           String(entry.id),
           entry.localDay,
           entry.startLocal.slice(11, 16),
           entry.projectName ?? '(no project)',
           entry.description || '(no description)',
           entry.registered ? (entry.issueKey ?? 'registered') : 'pending',
-          entry.running ? `${entry.durationHuman} (running)` : entry.durationHuman,
+          entry.running
+            ? `${entry.durationHuman} (running)`
+            : entry.segments.length > 0
+              ? `${entry.durationHuman} (${entry.segments.length} blocks)`
+              : entry.durationHuman,
         ]),
       ),
     )
     writeOut('')
-    writeOut(`${result.selected.length} entries, ${formatDuration(totalSeconds)} total.`)
+    writeOut(`${selected.length} entries, ${formatDuration(totalSeconds)} total.`)
     for (const warning of result.warnings) writeErr(`Warning: ${warning}`)
     return 0
   })
