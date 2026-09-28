@@ -356,6 +356,7 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
     refs: refViews(ctx, page.id),
     backlog: listBacklogItems(ctx.db, { pageId: page.id, status: 'all' }).map((item) => ({
       id: item.id,
+      key: item.key,
       kind: item.kind,
       status: item.status,
       title: item.title,

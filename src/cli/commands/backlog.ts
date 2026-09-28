@@ -13,8 +13,9 @@ import {
   BACKLOG_KINDS,
   deleteBacklogItem,
   editBacklogItem,
-  findBacklogItem,
+  findBacklogItemByRef,
   insertBacklogItem,
+  isBacklogRef,
   listBacklogItems,
   setBacklogStatus,
   type BacklogItemRow,
@@ -84,9 +85,14 @@ async function readBody(args: ParsedArgs): Promise<string | undefined> {
   return readString(args, 'body')
 }
 
-function requireItem(ctx: LocalContext, id: number): BacklogItemRow {
-  const item = findBacklogItem(ctx.db, id)
-  if (!item) throw new NotFoundError(`No backlog item #${id}.`, 'BACKLOG_ITEM_NOT_FOUND')
+function requireItem(ctx: LocalContext, ref: string | undefined): BacklogItemRow {
+  if (ref === undefined || !isBacklogRef(ref)) {
+    throw new UsageError('Name the item by its key, like STI-14 (or by its numeric id).')
+  }
+  const item = findBacklogItemByRef(ctx.db, ref)
+  if (!item) {
+    throw new NotFoundError(`No backlog item ${ref}.`, 'BACKLOG_ITEM_NOT_FOUND', 'Run "bita backlog ls" to see the keys.')
+  }
   return item
 }
 
@@ -146,12 +152,14 @@ function placementFor(ctx: LocalContext, args: ParsedArgs): Placement {
 function itemView(item: BacklogItemRow) {
   return {
     id: item.id,
+    key: item.key,
     kind: item.kind,
     status: item.status,
     title: item.title,
     body: item.body,
     resolution: item.resolution,
     projectId: item.projectId,
+    projectKey: item.projectKey,
     projectName: item.projectName,
     pageId: item.pageId,
     pageTitle: item.pageTitle,
@@ -166,7 +174,7 @@ function itemView(item: BacklogItemRow) {
 function renderItems(items: BacklogItemRow[]): string {
   return renderTable(
     [
-      { header: 'ID', align: 'right' },
+      { header: 'KEY' },
       { header: 'KIND' },
       { header: 'STATE' },
       { header: 'PROJECT' },
@@ -174,7 +182,7 @@ function renderItems(items: BacklogItemRow[]): string {
       { header: 'TITLE' },
     ],
     items.map((item) => [
-      String(item.id),
+      item.key,
       KIND_LABEL[item.kind],
       item.status === 'open' ? 'abierto' : 'resuelto',
       item.projectName ?? '(no project)',
@@ -189,7 +197,7 @@ function reportItem(command: string, item: BacklogItemRow, json: boolean, verb: 
     writeJson(successEnvelope(command, itemView(item)))
     return 0
   }
-  writeOut(`${verb} #${item.id} (${KIND_LABEL[item.kind]}): ${item.title}`)
+  writeOut(`${verb} ${item.key} (${KIND_LABEL[item.kind]}): ${item.title}`)
   return 0
 }
 
@@ -248,16 +256,14 @@ async function runAdd(ctx: LocalContext, args: ParsedArgs, json: boolean): Promi
 }
 
 function runStatus(ctx: LocalContext, args: ParsedArgs, positional: string[], json: boolean, status: BacklogStatus): number {
-  const id = readPositiveId(positional[0], 'item')
-  requireItem(ctx, id)
+  const { id } = requireItem(ctx, positional[0])
   setBacklogStatus(ctx.db, id, status, readString(args, 'resolution'), ctx.now.toISOString())
-  const item = requireItem(ctx, id)
+  const item = requireItem(ctx, String(id))
   return reportItem(`backlog ${status === 'resolved' ? 'resolve' : 'reopen'}`, item, json, status === 'resolved' ? 'Resolved' : 'Reopened')
 }
 
 async function runEdit(ctx: LocalContext, args: ParsedArgs, positional: string[], json: boolean): Promise<number> {
-  const id = readPositiveId(positional[0], 'item')
-  requireItem(ctx, id)
+  const { id } = requireItem(ctx, positional[0])
   const rawPage = readString(args, 'page')
   const title = readString(args, 'title')
   if (title !== undefined && title.trim().length === 0) throw new UsageError('The title cannot be empty.')
@@ -273,18 +279,17 @@ async function runEdit(ctx: LocalContext, args: ParsedArgs, positional: string[]
     ctx.now.toISOString(),
   )
   if (!changed) throw new UsageError('Nothing to edit. Pass --title, --md, --body, --kind or --page.')
-  return reportItem('backlog edit', requireItem(ctx, id), json, 'Edited')
+  return reportItem('backlog edit', requireItem(ctx, String(id)), json, 'Edited')
 }
 
 function runRemove(ctx: LocalContext, positional: string[], json: boolean): number {
-  const id = readPositiveId(positional[0], 'item')
-  const item = requireItem(ctx, id)
-  deleteBacklogItem(ctx.db, id)
+  const item = requireItem(ctx, positional[0])
+  deleteBacklogItem(ctx.db, item.id)
   if (json) {
     writeJson(successEnvelope('backlog rm', { removed: itemView(item) }))
     return 0
   }
-  writeOut(`Removed #${id}: ${item.title}`)
+  writeOut(`Removed ${item.key}: ${item.title}`)
   return 0
 }
 

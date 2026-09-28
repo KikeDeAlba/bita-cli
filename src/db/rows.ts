@@ -3,6 +3,7 @@ export type EntrySource = 'timer' | 'manual' | 'import'
 export interface ProjectRow {
   id: number
   name: string
+  key: string | null
   clientName: string | null
   active: boolean
   externalId: number | null

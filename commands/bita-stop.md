@@ -42,7 +42,7 @@ presente. Concretamente:
   ```
   bita backlog ls --page <pageId>
   bita backlog add --kind pending|finding --title "<una línea>" [--md <archivo>]
-  bita backlog resolve <id> --resolution "<cómo quedó>"
+  bita backlog resolve <CLAVE> --resolution "<cómo quedó>"   # la clave de ls, como STI-14
   ```
 
   Mira antes si ya existe, y resuelve los que este bloque cerró.

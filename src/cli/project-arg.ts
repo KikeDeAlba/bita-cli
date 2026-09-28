@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { ProjectRow } from '../db/rows.ts'
-import { findProjectById, findProjectByName } from '../db/projects.ts'
+import { findProjectById, findProjectByKey, findProjectByName } from '../db/projects.ts'
 import { NotFoundError } from '../errors.ts'
 
 export function resolveProjectArg(db: DatabaseSync, raw: string): ProjectRow {
@@ -15,7 +15,7 @@ export function resolveProjectArg(db: DatabaseSync, raw: string): ProjectRow {
     )
   }
 
-  const byName = findProjectByName(db, raw)
+  const byName = findProjectByName(db, raw) ?? findProjectByKey(db, raw)
   if (byName) return byName
-  throw new NotFoundError(`No project named "${raw}".`, 'PROJECT_NOT_FOUND', 'Run "bita projects" to see them.')
+  throw new NotFoundError(`No project named or keyed "${raw}".`, 'PROJECT_NOT_FOUND', 'Run "bita projects" to see them.')
 }

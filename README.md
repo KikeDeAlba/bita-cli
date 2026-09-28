@@ -308,11 +308,16 @@ escritorio.
 bita backlog add --kind pending --title "Rotar el secreto de dev" [--md detalle.md]
 bita backlog add --kind finding --title "El NAT vive en una sola AZ"
 bita backlog ls [--project X] [--page <id>] [--kind pending|finding] [--status open|resolved|all]
-bita backlog resolve <id> --resolution "Rotado en dev y test"
-bita backlog reopen <id>
+bita backlog resolve STI-14 --resolution "Rotado en dev y test"
+bita backlog reopen STI-14
+bita project key "Pharma STI" PSTI     # cambia el prefijo de las claves del proyecto
 bita backlog extract --dry-run         # las secciones Pendiente/Hallazgos de las páginas, a ítems
 ```
 
+Cada ítem se nombra con una clave corta al estilo Jira: la clave del proyecto
+—derivada de su nombre al crearlo, y editable con `bita project key`— y un
+correlativo por proyecto (`STI-14`). `resolve`, `reopen`, `edit` y `rm` la
+aceptan, igual que el id numérico. Los ítems sin proyecto usan el prefijo `BL`.
 Sin `--project`, `--page` ni `--entry`, `add` cuelga el ítem del cronómetro que
 corre. `extract` convierte cada viñeta de esas secciones en un ítem —las
 casillas marcadas, en resueltos— y las quita de la página. `docs page write`

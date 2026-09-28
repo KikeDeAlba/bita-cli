@@ -13,6 +13,7 @@ export async function runProjects(argv: string[]): Promise<number> {
     const config = await readConfig()
     const projects = listProjects(ctx.db, readBoolean(args, 'all')).map((project) => ({
       id: project.id,
+      key: project.key,
       name: project.name,
       active: project.active,
       clientName: project.clientName,
@@ -28,6 +29,7 @@ export async function runProjects(argv: string[]): Promise<number> {
       renderTable(
         [
           { header: 'ID', align: 'right' },
+          { header: 'KEY' },
           { header: 'PROJECT' },
           { header: 'CLIENT' },
           { header: 'ACTIVE' },
@@ -35,6 +37,7 @@ export async function runProjects(argv: string[]): Promise<number> {
         ],
         projects.map((project) => [
           String(project.id),
+          project.key ?? '',
           project.name,
           project.clientName ?? '',
           project.active ? 'yes' : 'no',

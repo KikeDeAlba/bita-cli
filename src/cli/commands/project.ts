@@ -5,11 +5,15 @@ import { runProjectDelete } from './delete.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import {
   findProjectById,
+  findProjectByKey,
   findProjectByName,
   insertProject,
   renameProject,
   setProjectActive,
+  setProjectKey,
 } from '../../db/projects.ts'
+import { PROJECT_KEY_PATTERN, UNASSIGNED_KEY } from '../../db/project-keys.ts'
+import { resolveProjectArg } from '../project-arg.ts'
 
 const OPTIONS = {
   client: { type: 'string' as const },
@@ -55,7 +59,7 @@ export async function runProject(argv: string[]): Promise<number> {
       if (json) {
         writeJson(successEnvelope('project add', created))
       } else {
-        writeOut(`Created project ${created.id}: ${created.name}`)
+        writeOut(`Created project ${created.id}: ${created.name} (key ${created.key ?? '-'})`)
         writeOut('')
         writeOut('To track time for a repository against it, from inside that repository:')
         writeOut(`  bita repo set . ${created.id}`)
@@ -85,6 +89,32 @@ export async function runProject(argv: string[]): Promise<number> {
     })
   }
 
+  if (subcommand === 'key') {
+    const usage = 'Usage: bita project key <id|name|key> <KEY>  (2 to 6 letters or digits, starting with a letter)'
+    const target = rest[0]
+    const key = rest[1]?.trim().toUpperCase()
+    if (target === undefined || key === undefined || rest.length > 2) throw new UsageError(usage)
+    if (!PROJECT_KEY_PATTERN.test(key) || key === UNASSIGNED_KEY) {
+      throw new UsageError(`"${rest[1]}" is not a valid key. ${usage.replace('Usage: ', 'Use: ')}`)
+    }
+
+    return withLocalContext(args, (ctx) => {
+      const project = resolveProjectArg(ctx.db, target)
+      const clash = findProjectByKey(ctx.db, key)
+      if (clash && clash.id !== project.id) {
+        throw new UsageError(`The key ${key} already belongs to "${clash.name}" (id ${clash.id}).`)
+      }
+
+      setProjectKey(ctx.db, project.id, key)
+      if (json) writeJson(successEnvelope('project key', { id: project.id, from: project.key, to: key }))
+      else {
+        writeOut(`Key of ${project.name}: ${project.key ?? '-'} -> ${key}`)
+        writeOut(`Its backlog items are now ${key}-1, ${key}-2, ...`)
+      }
+      return 0
+    })
+  }
+
   if (subcommand === 'archive') {
     const id = requireProjectId(rest[0])
     const activate = readBoolean(args, 'activate')
@@ -101,6 +131,6 @@ export async function runProject(argv: string[]): Promise<number> {
   }
 
   throw new UsageError(
-    'Usage: bita project add|rename|archive|delete. To list them, run "bita projects".',
+    'Usage: bita project add|rename|key|archive|delete. To list them, run "bita projects".',
   )
 }

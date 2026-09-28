@@ -46,8 +46,8 @@ Tracking:
 Backlog (pending work and findings, kept out of the pages):
   backlog ls                 Open items across projects (--project, --page, --kind, --status)
   backlog add --kind K       Record a pending item or a finding (--title, --md, --page, --entry)
-  backlog resolve|reopen <id> Close an item (--resolution "...") or open it again
-  backlog edit|rm <id>       Change or remove an item
+  backlog resolve|reopen <key> Close an item, like STI-14 (--resolution "..."), or open it again
+  backlog edit|rm <key>      Change or remove an item
   backlog extract            Move the pending and findings sections out of the pages (--dry-run)
 
 Confluence (REST API, token in the macOS Keychain):
@@ -88,6 +88,7 @@ Reporting:
   summary [preset]           Group entries into Jira-ready tasks
   projects                   List projects and their Jira mapping
   project add "<name>"       Create a project (also rename, archive, delete)
+  project key <project> <KEY>  Change the short key that prefixes its backlog items
 
 Configuration:
   map list|set|unset|story   Map projects to Jira projects, parents and stories
