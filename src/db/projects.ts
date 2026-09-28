@@ -3,10 +3,12 @@ import type { ProjectRow } from './rows.ts'
 import { fromBoolean, toBoolean } from './rows.ts'
 import { LOCAL_PROJECT_ID_CEILING } from './schema.ts'
 import { queryAll, queryOne } from './query.ts'
+import { ensureProjectKey } from './project-keys.ts'
 
 interface RawProject {
   id: number
   name: string
+  key: string | null
   client_name: string | null
   active: number
   external_id: number | null
@@ -17,6 +19,7 @@ function toProject(raw: RawProject): ProjectRow {
   return {
     id: raw.id,
     name: raw.name,
+    key: raw.key,
     clientName: raw.client_name,
     active: toBoolean(raw.active),
     externalId: raw.external_id,
@@ -54,6 +57,7 @@ export function insertProject(db: DatabaseSync, project: NewProject): ProjectRow
     project.externalId ?? null,
     project.createdAt,
   )
+  ensureProjectKey(db, id)
   const created = findProjectById(db, id)
   if (!created) throw new Error(`project ${id} vanished right after being inserted`)
   return created
@@ -70,6 +74,18 @@ export function findProjectByName(db: DatabaseSync, name: string): ProjectRow | 
     name,
   )
   return raw ? toProject(raw) : undefined
+}
+
+export function findProjectByKey(db: DatabaseSync, key: string): ProjectRow | undefined {
+  const raw = queryOne<RawProject>(
+    db.prepare('SELECT * FROM projects WHERE key = ? COLLATE NOCASE'),
+    key,
+  )
+  return raw ? toProject(raw) : undefined
+}
+
+export function setProjectKey(db: DatabaseSync, id: number, key: string): void {
+  db.prepare('UPDATE projects SET key = ? WHERE id = ?').run(key.toUpperCase(), id)
 }
 
 export function listProjects(db: DatabaseSync, includeInactive = false): ProjectRow[] {

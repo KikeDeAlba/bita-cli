@@ -16,6 +16,7 @@ export function migrate(db: DatabaseSync): number {
     db.exec('BEGIN')
     try {
       for (const statement of migration.statements) db.exec(statement)
+      migration.run?.(db)
       db.exec(`PRAGMA user_version = ${migration.version}`)
       db.exec('COMMIT')
     } catch (error) {

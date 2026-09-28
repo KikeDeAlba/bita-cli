@@ -1,8 +1,12 @@
+import type { DatabaseSync } from 'node:sqlite'
+import { backfillBacklogSequence, backfillProjectKeys } from './project-keys.ts'
+
 export const LOCAL_PROJECT_ID_CEILING = 100_000_000
 
 export interface Migration {
   readonly version: number
   readonly statements: readonly string[]
+  readonly run?: (db: DatabaseSync) => void
 }
 
 const INITIAL_SCHEMA: readonly string[] = [
@@ -238,6 +242,18 @@ const BACKLOG_ITEMS: readonly string[] = [
   `CREATE INDEX backlog_items_page ON backlog_items (page_id)`,
 ]
 
+const BACKLOG_KEYS: readonly string[] = [
+  `ALTER TABLE projects ADD COLUMN key TEXT`,
+  `ALTER TABLE backlog_items ADD COLUMN seq INTEGER`,
+]
+
+function backfillBacklogKeys(db: DatabaseSync): void {
+  backfillProjectKeys(db)
+  backfillBacklogSequence(db)
+  db.exec('CREATE UNIQUE INDEX projects_key ON projects (key COLLATE NOCASE)')
+  db.exec('CREATE UNIQUE INDEX backlog_items_seq ON backlog_items (project_id, seq)')
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, statements: INITIAL_SCHEMA },
   { version: 2, statements: ENTRY_TOUCHES },
@@ -246,6 +262,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 5, statements: MERGED_ENTRIES },
   { version: 6, statements: PAGE_REFS },
   { version: 7, statements: BACKLOG_ITEMS },
+  { version: 8, statements: BACKLOG_KEYS, run: backfillBacklogKeys },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(
