@@ -739,8 +739,18 @@ que queda abierta en el tablero de un equipo.
 bita backlog add --kind pending --title "<qué falta, en una línea>" [--md <archivo>]
 bita backlog add --kind finding --title "<el hecho, en una línea>" [--md <archivo>]
 bita backlog ls [--project X] [--page <id>]
-bita backlog resolve <id> --resolution "<cómo quedó>"
+bita backlog resolve <CLAVE> --resolution "<cómo quedó>"
 ```
+
+Cada ítem tiene una **clave** corta: la clave del proyecto y un correlativo,
+como `STI-14` (`bita backlog ls` la enseña en la primera columna y la app de
+escritorio la deja copiar). Esa es la forma de nombrarlo. Cuando el usuario dice
+«cierra STI-14», «resuelve DPO-3» o pega la clave sola con esa intención, es
+`bita backlog resolve STI-14 --resolution "<cómo quedó>"` —la resolución sale de
+lo que se hizo en la sesión; si no hay de dónde sacarla, se pregunta—. Esas
+claves son de bita, **no son issues de Jira** aunque se parezcan: nunca se buscan
+ni se cierran en Jira. La clave del proyecto se cambia con
+`bita project key <proyecto> <CLAVE>`.
 
 Sin `--page` ni `--project`, el ítem cuelga del cronómetro que corre y de su
 página. El título es una frase que se entiende sola en una lista con otros
@@ -752,8 +762,8 @@ segunda persona, sin «te toca».
   inútil, un residuo— aunque no sea parte del trabajo en curso.
 
 Antes de proponer un ítem nuevo, mira `bita backlog ls --page <id>`: si ya está,
-no se duplica. Cuando el trabajo resuelve uno, `bita backlog resolve` en el
-mismo bloque. Las páginas viejas que todavía traen esas secciones se limpian con
+no se duplica. Cuando el trabajo resuelve uno, `bita backlog resolve <CLAVE>` en
+el mismo bloque. Las páginas viejas que todavía traen esas secciones se limpian con
 `bita backlog extract --page <id>` (primero con `--dry-run`).
 
 ### Subpáginas
