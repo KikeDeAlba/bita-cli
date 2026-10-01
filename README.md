@@ -1,8 +1,9 @@
 # bita
 
-Registro de tiempo local, en SQLite, pensado para que Claude Code lo lea y lo
-escriba. Mide el trabajo mientras ocurre y después lo vuelca a Jira: un issue por
-título y proyecto, un worklog por cada bloque medido, con estimación y cierre.
+Registro de tiempo local, en SQLite, pensado para que los agentes de código lo
+lean y lo escriban. Mide el trabajo mientras ocurre y después lo vuelca a Jira:
+un issue por título y proyecto, un worklog por cada bloque medido, con estimación
+y cierre.
 
 El nombre viene de bitácora.
 
@@ -50,9 +51,23 @@ bita setup
 bita app install
 ```
 
-`bita setup` enlaza la skill y los comandos de barra en `~/.claude` apuntando al
-paquete instalado, y mete los permisos y el hook `SessionStart` en tu
-`settings.json`. Al actualizar el paquete se actualizan con él, porque son
+`bita setup` instala la integración de Claude por defecto. Para instalar otra
+superficie:
+
+```sh
+bita setup --target opencode
+bita setup --target codex
+bita setup --target all
+```
+
+OpenCode recibe la skill y los comandos en `~/.config/opencode`, además de un
+plugin que conecta los hooks de bita con sus sesiones y herramientas. Codex
+recibe la skill en `~/.agents/skills/bita` y sus hooks en `~/.codex/hooks.json`.
+Codex puede pedir revisar y confiar los hooks desde `/hooks` antes de ejecutarlos.
+
+La instalación de Claude enlaza la skill y los comandos de barra en `~/.claude`
+apuntando al paquete instalado, y mete los permisos y el hook `SessionStart` en
+tu `settings.json`. Al actualizar el paquete se actualizan con él, porque son
 symlinks. También deja listo draw.io para los diagramas elaborados:
 - agrega el MCP de draw.io a Claude Code (`claude mcp add --scope user drawio -- npx -y @drawio/mcp`) si no está;
 - instala draw.io Desktop con `brew install --cask drawio` si falta, porque es lo que exporta los `.drawio` a PNG.
@@ -98,25 +113,32 @@ Las únicas dependencias son TypeScript y `@types/node`, y solo para el
 ### 2. Correr el instalador
 
 ```sh
-./scripts/install.sh
+./scripts/install.sh --target all
 ```
 
-Hace cuatro cosas, y todas son idempotentes: puedes volver a correrlo cuando
+Instala el binario y la integración seleccionada de forma idempotente: puedes volver a correrlo cuando
 quieras.
 
 | Paso | Qué hace |
 |---|---|
 | Binario | Enlaza `bita` en tu directorio de binarios (`$PNPM_HOME/bin`, o `~/.local/bin`) |
-| Skill | `~/.claude/skills/bita` → `skill/` del repo |
-| Comandos | `~/.claude/commands/bita-*.md` → `commands/` del repo |
-| Settings | Añade los permisos y el hook `SessionStart` a `~/.claude/settings.json` |
+| Claude | `~/.claude/skills/bita`, `~/.claude/commands` y `settings.json` |
+| OpenCode | `~/.config/opencode/skills/bita`, `commands` y `plugins/bita.*` |
+| Codex | `~/.agents/skills/bita` y `~/.codex/hooks.json` |
 
-Todo son **symlinks al repo**, a propósito: cuando actualizas el repo, la skill y
-los comandos se actualizan contigo, y un cambio de flag en el CLI viaja en el
-mismo commit que su documentación.
+Las skills, comandos y plugins son **symlinks al repo**, a propósito: cuando
+actualizas el repo se actualizan contigo. Los archivos de configuración se
+fusionan sin duplicar hooks y conservan el resto de sus entradas.
 
 Antes de tocar `settings.json` deja una copia en `settings.json.backup`, y si no
 lo puede parsear no lo escribe: imprime el bloque para que lo pegues a mano.
+
+Para instalar una sola superficie:
+
+```sh
+./scripts/install.sh --target opencode
+./scripts/install.sh --target codex
+```
 
 Si tu directorio de binarios está en otro sitio:
 
@@ -137,7 +159,7 @@ la mueve a otro sitio, que es también la forma de probar cosas sin tocar la rea
 
 ### 4. Dar de alta un repositorio
 
-Esto es lo que enciende la integración con Claude. Un solo comando crea el
+Esto es lo que enciende la integración con el agente. Un solo comando crea el
 proyecto y lo mapea:
 
 ```sh
@@ -158,18 +180,18 @@ bita scope set . <projectId>
 ```
 
 **Mientras un repositorio no esté mapeado, el hook no dice nada.** En cuanto lo
-está, al abrir una sesión de Claude Code en él se inyecta la regla que le pide
+está, al abrir una sesión del agente se inyecta la regla que le pide
 ofrecer el cronómetro cuando el trabajo vaya a dejar un artefacto —un commit, un
 archivo, un despliegue— y callarse cuando solo vayas a leer o preguntar.
 
 El mapeo se guarda por el **slug** del repositorio, que sale del remoto de git
 (`github.com/kikedealba/bita-cli`), así que sobrevive a que muevas la carpeta.
 
-Reabre la sesión de Claude Code para que cargue el hook, la skill y los comandos.
+Reabre la sesión para que cargue el hook, la skill y los comandos.
 
 ### 5. Conectar Jira
 
-Jira no se toca desde el CLI: lo escribe Claude por el conector de Atlassian. Lo
+Jira no se toca desde el CLI: lo escribe el agente por el conector de Atlassian. Lo
 único que se guarda aquí es a qué tablero va cada proyecto, y se pregunta solo la
 primera vez:
 
@@ -397,8 +419,8 @@ no puede llegar a Jira por accidente. Se rellena después, y en buena parte solo
 
 | Qué | Quién lo pone |
 |---|---|
-| Título y descripción | Claude, en cuanto un mensaje dice en qué se va a trabajar |
-| Proyecto | Claude por el prompt, o el hook por el primer archivo que se cambia |
+| Título y descripción | El agente, en cuanto un mensaje dice en qué se va a trabajar |
+| Proyecto | El agente por el prompt, o el hook por el primer archivo que se cambia |
 | Archivos tocados | El hook, en cada edición |
 
 El hook `UserPromptSubmit` recuerda que hay un contador sin nombre y se calla
@@ -456,10 +478,10 @@ Warning: 2026-09-19: 4h 8m tracked over 3h 7m of clock time (1h overlapping)
 
 No lo impide. Solo evita que pase inadvertido.
 
-## Los comandos de Claude Code
+## Los comandos del agente
 
-`commands/` tiene siete slash commands, enlazados por symlink desde
-`~/.claude/commands/`:
+`commands/` tiene siete slash commands. Claude y OpenCode los enlazan por symlink
+desde sus respectivos directorios globales; Codex usa la skill y el CLI:
 
 | Comando | Qué hace |
 |---|---|
@@ -476,10 +498,11 @@ cambian en el mismo commit.
 
 ## La skill
 
-`skill/SKILL.md` es la skill de Claude Code que envuelve el CLI: decide cuándo
+`skill/SKILL.md` es la skill que envuelve el CLI: decide cuándo
 proponer el cronómetro, infiere la Historia de Jira a partir de las notas, y
 maneja la jerarquía Épica → Historia → Subtarea. Está enlazada por symlink desde
-`~/.claude/skills/bita`, para que el procedimiento y los flags cambien en el
+`~/.claude/skills/bita`, `~/.config/opencode/skills/bita` o
+`~/.agents/skills/bita`, para que el procedimiento y los flags cambien en el
 mismo commit.
 
 ## Desarrollo
@@ -499,7 +522,8 @@ src/domain/    lógica pura: agrupación, duraciones, zonas horarias, solapes
 src/cli/       comandos y formato de salida
 src/docs/      los documentos de cada entrada: rutas, markdown y escritura
 src/state/     configuración y notas heredadas en disco
-skill/         la skill de Claude Code
+src/integrations/ adaptadores para OpenCode y otros agentes
+skill/         la skill compartida por los agentes
 commands/      los slash commands
 scripts/       el instalador
 ```

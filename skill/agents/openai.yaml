@@ -1,0 +1,4 @@
+interface:
+  display_name: "bita"
+  short_description: "Registra el tiempo de trabajo y lo prepara para Jira"
+  default_prompt: "Usa bita para medir y documentar este trabajo."
