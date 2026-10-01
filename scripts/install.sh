@@ -2,10 +2,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-SKILLS_DIR="$CLAUDE_DIR/skills"
-COMMANDS_DIR="$CLAUDE_DIR/commands"
-SETTINGS="$CLAUDE_DIR/settings.json"
+TARGET="${BITA_TARGET:-claude}"
+NO_DRAWIO=0
 
 info() { printf '  %s\n' "$1"; }
 warn() { printf '  ! %s\n' "$1" >&2; }
@@ -40,21 +38,27 @@ link() {
   info "linked: $linkname"
 }
 
-echo "bita — installing the Claude Code integration"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --target)
+      [ "$#" -ge 2 ] || { warn "--target needs a value"; exit 2; }
+      TARGET="$2"
+      shift 2
+      ;;
+    --no-drawio)
+      NO_DRAWIO=1
+      shift
+      ;;
+    *)
+      warn "unknown option: $1"
+      exit 2
+      ;;
+  esac
+done
+
+echo "bita — installing the $TARGET integration"
 echo
 require_node
-
-echo
-echo "Skill"
-mkdir -p "$SKILLS_DIR"
-link "$REPO_ROOT/skill" "$SKILLS_DIR/bita"
-
-echo
-echo "Slash commands"
-mkdir -p "$COMMANDS_DIR"
-for file in "$REPO_ROOT"/commands/*.md; do
-  link "$file" "$COMMANDS_DIR/$(basename "$file")"
-done
 
 echo
 echo "Binary"
@@ -84,16 +88,9 @@ else
 fi
 
 echo
-echo "Settings"
-if [ ! -f "$SETTINGS" ]; then
-  warn "no $SETTINGS yet; create it and re-run, or copy the block below by hand"
+echo "Integration"
+SETUP_ARGS=(--target "$TARGET")
+if [ "$NO_DRAWIO" -eq 1 ]; then
+  SETUP_ARGS+=(--no-drawio)
 fi
-node "$REPO_ROOT/scripts/merge-settings.mjs" "$SETTINGS"
-
-echo
-echo "Done. Open a new session, then:"
-echo "  bita project add \"<name>\"     create a project"
-echo "  bita scope set . <projectId>  map this repository to it"
-echo
-echo "Once a repository is mapped, the SessionStart hook tells Claude to offer"
-echo "the timer when work that leaves an artifact begins."
+node "$REPO_ROOT/src/bin/bita.ts" setup "${SETUP_ARGS[@]}"
