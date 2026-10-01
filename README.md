@@ -9,20 +9,19 @@ El nombre viene de bitácora.
 
 ## Por qué existe
 
-Antes esto hablaba con la API de Toggl Track. El plan gratuito tiene un límite
-horario de llamadas que bloqueó el trabajo tres veces en una sola sesión, dos de
-ellas a mitad de una escritura, dejando Jira por delante del registro de tiempo.
+Este proyecto registra el tiempo localmente y deja el volcado a Jira para después,
+sin depender de un servicio externo durante el trabajo. Así el registro de tiempo
+no queda separado de los cambios cuando una sincronización falla a mitad de una
+escritura.
 
-Casi toda la complejidad del CLI servía para rodear ese límite, no para resolver
-el problema: el throttle, los reintentos, la paginación, el caché de 24 horas, el
-espejo del cronómetro en curso y los tags usados como estado porque no había
-dónde guardarlo. Con una base local todo eso desaparece.
+Con una base local desaparecen el throttle, los reintentos, la paginación, el
+caché de 24 horas, el espejo del cronómetro en curso y los tags usados como
+estado porque no había dónde guardarlo.
 
 Quedan dos ventajas que no se buscaban:
 
-- **Varios cronómetros a la vez.** El límite de uno era de Toggl. Aquí un
-  cronómetro corriendo es una fila con `stopped_at` nulo, y puede haber las que
-  hagan falta.
+- **Varios cronómetros a la vez.** Un cronómetro corriendo es una fila con
+  `stopped_at` nulo, y puede haber las que hagan falta.
 - **El estado es una clave foránea.** Una entrada está pendiente mientras no
   tenga fila en `jira_links`. No hay tag que pueda diverger ni retaggeo a medias.
 
