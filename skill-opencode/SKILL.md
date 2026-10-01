@@ -989,3 +989,14 @@ comportamiento.
 - Cuidado con títulos genéricos ("daily", "junta", "soporte"): pueden colapsar
   semanas en un issue gigante. El rango de fechas por grupo lo hace visible en la
   propuesta.
+
+## El conector de Atlassian en OpenCode
+
+Jira y Confluence se operan mediante el MCP oficial de Atlassian. `bita setup`
+lo registra en la configuración global de OpenCode, pero la autenticación se
+hace fuera de `bita` desde `/mcps`.
+
+Las herramientas pueden aparecer con el prefijo `atlassian_` o dentro del grupo
+`tools.atlassian`, según la configuración de Code Mode. Usa la herramienta Jira
+equivalente disponible en el servidor y no inventes una variante por diferencias
+de nombres.

@@ -36,9 +36,11 @@ export async function runSetup(argv: string[]): Promise<number> {
   const target = readTarget(readString(args, 'target') ?? process.env['BITA_TARGET'])
   const root = packageRoot()
   const skillSource = join(root, 'skill')
+  const openCodeSkillSource = join(root, 'skill-opencode')
+  const codexSkillSource = join(root, 'skill-codex')
   const commandsSource = join(root, 'commands')
 
-  if (!existsSync(skillSource) || !existsSync(commandsSource)) {
+  if (!existsSync(skillSource) || !existsSync(openCodeSkillSource) || !existsSync(codexSkillSource) || !existsSync(commandsSource)) {
     throw new UsageError(
       `This copy of bita has no skill to install (looked in ${root}). Install it from npm or from a clone of the repository.`,
     )
@@ -50,9 +52,9 @@ export async function runSetup(argv: string[]): Promise<number> {
     if (current === 'claude') {
       results.push(await setupClaude(root, skillSource, commandsSource, args))
     } else if (current === 'opencode') {
-      results.push(await setupOpenCode(root, skillSource, commandsSource, args))
+      results.push(await setupOpenCode(root, openCodeSkillSource, commandsSource, args))
     } else {
-      results.push(await setupCodex(root, skillSource, args))
+      results.push(await setupCodex(root, codexSkillSource, args))
     }
   }
 

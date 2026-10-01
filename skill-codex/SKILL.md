@@ -989,3 +989,13 @@ comportamiento.
 - Cuidado con títulos genéricos ("daily", "junta", "soporte"): pueden colapsar
   semanas en un issue gigante. El rango de fechas por grupo lo hace visible en la
   propuesta.
+
+## El conector de Atlassian en Codex
+
+Jira y Confluence se operan mediante el MCP oficial de Atlassian. `bita setup`
+lo registra en `~/.codex/config.toml`, pero la autenticación se hace fuera de
+`bita` con `codex mcp login atlassian`.
+
+Codex puede mostrar los nombres de las herramientas sin el prefijo del servidor.
+Usa la herramienta Jira equivalente disponible en el servidor y no inventes una
+variante por diferencias de nombres.

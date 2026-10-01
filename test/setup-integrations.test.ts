@@ -33,7 +33,10 @@ test('installs OpenCode skill, commands, and plugin into a custom directory', as
   try {
     await runSetup(['--target', 'opencode', '--opencode-dir', directory, '--no-drawio', '--no-atlassian'])
 
-    assert.equal(await readlink(join(directory, 'skills', 'bita')), join(packageRoot(), 'skill'))
+    assert.equal(await readlink(join(directory, 'skills', 'bita')), join(packageRoot(), 'skill-opencode'))
+    const skill = await readFile(join(directory, 'skills', 'bita', 'SKILL.md'), 'utf8')
+    assert.match(skill, /El conector de Atlassian en OpenCode/)
+    assert.doesNotMatch(skill, /El conector de Atlassian en Codex/)
     assert.equal(await exists(join(directory, 'commands', 'bita-start.md')), true)
     assert.equal(
       (await exists(join(directory, 'plugins', 'bita.ts'))) || (await exists(join(directory, 'plugins', 'bita.js'))),
@@ -55,7 +58,10 @@ test('installs Codex skill and merges hooks without duplicates', async () => {
     const hooks = JSON.parse(await readFile(join(codex, 'hooks.json'), 'utf8')) as {
       hooks: Record<string, Array<{ hooks?: Array<{ command?: string }> }>>
     }
-    assert.equal(await exists(join(agents, 'skills', 'bita', 'SKILL.md')), true)
+    assert.equal(await readlink(join(agents, 'skills', 'bita')), join(packageRoot(), 'skill-codex'))
+    const skill = await readFile(join(agents, 'skills', 'bita', 'SKILL.md'), 'utf8')
+    assert.match(skill, /El conector de Atlassian en Codex/)
+    assert.doesNotMatch(skill, /El conector de Atlassian en OpenCode/)
     const config = await readFile(join(codex, 'config.toml'), 'utf8')
     assert.match(config, /\[mcp_servers\.atlassian\]/)
     assert.ok(config.includes(`url = "${ATLASSIAN_MCP_URL}"`))
@@ -69,6 +75,13 @@ test('installs Codex skill and merges hooks without duplicates', async () => {
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('keeps Claude on the shared skill without client-specific Atlassian guidance', async () => {
+  const skill = await readFile(join(packageRoot(), 'skill', 'SKILL.md'), 'utf8')
+
+  assert.doesNotMatch(skill, /El conector de Atlassian en OpenCode/)
+  assert.doesNotMatch(skill, /El conector de Atlassian en Codex/)
 })
 
 test('configures OpenCode Atlassian MCP without authenticating', async () => {

@@ -134,8 +134,8 @@ quieras.
 |---|---|
 | Binario | Enlaza `bita` en tu directorio de binarios (`$PNPM_HOME/bin`, o `~/.local/bin`) |
 | Claude | `~/.claude/skills/bita`, `~/.claude/commands` y `settings.json` |
-| OpenCode | `~/.config/opencode/skills/bita`, `commands`, `plugins/bita.*` y MCP de Atlassian |
-| Codex | `~/.agents/skills/bita`, `~/.codex/hooks.json`, `~/.codex/config.toml` y MCP de Atlassian |
+| OpenCode | `~/.config/opencode/skills/bita` con su skill específica, `commands`, `plugins/bita.*` y MCP de Atlassian |
+| Codex | `~/.agents/skills/bita` con su skill específica, `~/.codex/hooks.json`, `~/.codex/config.toml` y MCP de Atlassian |
 
 Las skills, comandos y plugins son **symlinks al repo**, a propósito: cuando
 actualizas el repo se actualizan contigo. Los archivos de configuración se
@@ -520,12 +520,11 @@ cambian en el mismo commit.
 
 ## La skill
 
-`skill/SKILL.md` es la skill que envuelve el CLI: decide cuándo
-proponer el cronómetro, infiere la Historia de Jira a partir de las notas, y
-maneja la jerarquía Épica → Historia → Subtarea. Está enlazada por symlink desde
-`~/.claude/skills/bita`, `~/.config/opencode/skills/bita` o
-`~/.agents/skills/bita`, para que el procedimiento y los flags cambien en el
-mismo commit.
+`skill/SKILL.md` es la skill que recibe Claude. Las variantes
+`skill-opencode/SKILL.md` y `skill-codex/SKILL.md` conservan el procedimiento
+común y añaden únicamente las instrucciones de su cliente. Cada una está
+enlazada por symlink desde la integración correspondiente, para que ningún
+cliente cargue las instrucciones de otro.
 
 ## Desarrollo
 
@@ -545,7 +544,9 @@ src/cli/       comandos y formato de salida
 src/docs/      los documentos de cada entrada: rutas, markdown y escritura
 src/state/     configuración y notas heredadas en disco
 src/integrations/ adaptadores para OpenCode y otros agentes
-skill/         la skill compartida por los agentes
+skill/         la skill de Claude
+skill-opencode/ la skill de OpenCode
+skill-codex/   la skill de Codex
 commands/      los slash commands
 scripts/       el instalador
 ```
