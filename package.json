@@ -34,6 +34,8 @@
   "files": [
     "dist",
     "skill",
+    "skill-opencode",
+    "skill-codex",
     "commands",
     "scripts",
     "README.md",
