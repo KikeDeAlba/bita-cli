@@ -9,6 +9,7 @@ import { UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString } from '../args.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { ensureDrawio, type SetupStep } from '../../setup/drawio.ts'
+import { ensureCodexAtlassianMcp, ensureOpenCodeAtlassianMcp, type AtlassianMcpStep } from '../../setup/atlassian.ts'
 
 const run = promisify(execFile)
 const TARGETS = ['claude', 'opencode', 'codex', 'all'] as const
@@ -22,6 +23,7 @@ const OPTIONS = {
   'agents-home': { type: 'string' as const },
   'no-settings': { type: 'boolean' as const, default: false },
   'no-drawio': { type: 'boolean' as const, default: false },
+  'no-atlassian': { type: 'boolean' as const, default: false },
 }
 
 export function packageRoot(): string {
@@ -82,6 +84,7 @@ export async function runSetup(argv: string[]): Promise<number> {
     for (const path of result.linked) writeOut(`- linked ${path}`)
     if (result.settings !== null) writeOut(`- configuration merged into ${result.settings}`)
     if (result.hooks !== null) writeOut(`- hooks merged into ${result.hooks}`)
+    if (result.mcp !== null) writeOut(`${result.mcp.state === 'failed' || result.mcp.state === 'unavailable' ? '!' : '-'} ${result.mcp.detail}`)
   }
   for (const step of drawio) writeOut(`${step.state === 'failed' || step.state === 'unavailable' ? '!' : '-'} ${step.detail}`)
   writeOut('')
@@ -98,6 +101,7 @@ interface SetupResult {
   linked: string[]
   settings: string | null
   hooks: string | null
+  mcp: AtlassianMcpStep | null
   message: string
 }
 
@@ -134,7 +138,7 @@ async function setupClaude(root: string, skillSource: string, commandsSource: st
     }
   }
 
-  return { target: 'claude', directory: claudeDir, linked, settings, hooks: null, message: `skill and commands linked into ${claudeDir}` }
+  return { target: 'claude', directory: claudeDir, linked, settings, hooks: null, mcp: null, message: `skill and commands linked into ${claudeDir}` }
 }
 
 async function setupOpenCode(root: string, skillSource: string, commandsSource: string, args: ReturnType<typeof parseCommandArgs>): Promise<SetupResult> {
@@ -160,7 +164,8 @@ async function setupOpenCode(root: string, skillSource: string, commandsSource: 
   await link(pluginSource, pluginPath)
   linked.push(pluginPath)
 
-  return { target: 'opencode', directory: configHome, linked, settings: null, hooks: null, message: `skill, commands, and plugin linked into ${configHome}` }
+  const mcp = readBoolean(args, 'no-atlassian') ? null : await ensureOpenCodeAtlassianMcp()
+  return { target: 'opencode', directory: configHome, linked, settings: null, hooks: null, mcp, message: `skill, commands, and plugin linked into ${configHome}` }
 }
 
 async function setupCodex(root: string, skillSource: string, args: ReturnType<typeof parseCommandArgs>): Promise<SetupResult> {
@@ -176,7 +181,8 @@ async function setupCodex(root: string, skillSource: string, args: ReturnType<ty
   await mkdir(codexHome, { recursive: true })
   await run(process.execPath, [merger, hooks])
 
-  return { target: 'codex', directory: codexHome, linked: [skillPath], settings: null, hooks, message: `skill linked into ${skillRoot}` }
+  const mcp = readBoolean(args, 'no-atlassian') ? null : await ensureCodexAtlassianMcp(join(codexHome, 'config.toml'))
+  return { target: 'codex', directory: codexHome, linked: [skillPath], settings: null, hooks, mcp, message: `skill linked into ${skillRoot}` }
 }
 
 function opencodePluginSource(root: string): string {

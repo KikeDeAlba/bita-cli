@@ -6,6 +6,12 @@ import { promisify } from 'node:util'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { packageRoot, runSetup } from '../src/cli/commands/setup.ts'
+import {
+  ATLASSIAN_MCP_URL,
+  ensureCodexAtlassianMcp,
+  ensureOpenCodeAtlassianMcp,
+  type AtlassianMcpEnvironment,
+} from '../src/setup/atlassian.ts'
 
 const run = promisify(execFile)
 
@@ -25,7 +31,7 @@ async function exists(path: string): Promise<boolean> {
 test('installs OpenCode skill, commands, and plugin into a custom directory', async () => {
   const directory = await temporaryDirectory()
   try {
-    await runSetup(['--target', 'opencode', '--opencode-dir', directory, '--no-drawio'])
+    await runSetup(['--target', 'opencode', '--opencode-dir', directory, '--no-drawio', '--no-atlassian'])
 
     assert.equal(await readlink(join(directory, 'skills', 'bita')), join(packageRoot(), 'skill'))
     assert.equal(await exists(join(directory, 'commands', 'bita-start.md')), true)
@@ -50,6 +56,9 @@ test('installs Codex skill and merges hooks without duplicates', async () => {
       hooks: Record<string, Array<{ hooks?: Array<{ command?: string }> }>>
     }
     assert.equal(await exists(join(agents, 'skills', 'bita', 'SKILL.md')), true)
+    const config = await readFile(join(codex, 'config.toml'), 'utf8')
+    assert.match(config, /\[mcp_servers\.atlassian\]/)
+    assert.ok(config.includes(`url = "${ATLASSIAN_MCP_URL}"`))
     const sessionStart = hooks.hooks.SessionStart ?? []
     const promptSubmit = hooks.hooks.UserPromptSubmit ?? []
     const postToolUse = hooks.hooks.PostToolUse ?? []
@@ -57,6 +66,47 @@ test('installs Codex skill and merges hooks without duplicates', async () => {
     assert.equal(promptSubmit.length, 1)
     assert.equal(postToolUse.length, 1)
     assert.equal(sessionStart[0]?.hooks?.[0]?.command, 'bita hook codex')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('configures OpenCode Atlassian MCP without authenticating', async () => {
+  const calls: Array<{ command: string; args: readonly string[] }> = []
+  const environment: AtlassianMcpEnvironment = {
+    which: async () => '/bin/opencode',
+    run: async (command, args) => {
+      calls.push({ command, args })
+    },
+  }
+
+  const result = await ensureOpenCodeAtlassianMcp({}, environment)
+
+  assert.equal(result.state, 'installed')
+  assert.deepEqual(calls, [
+    {
+      command: '/bin/opencode',
+      args: ['mcp', 'add', '--global', 'atlassian', '--url', ATLASSIAN_MCP_URL],
+    },
+  ])
+})
+
+test('preserves an existing Codex config while adding Atlassian MCP', async () => {
+  const directory = await temporaryDirectory()
+  const configPath = join(directory, 'config.toml')
+  try {
+    await writeFile(configPath, '[mcp_servers.context7]\nurl = "https://example.com/mcp"\n')
+
+    const first = await ensureCodexAtlassianMcp(configPath)
+    const second = await ensureCodexAtlassianMcp(configPath)
+    const config = await readFile(configPath, 'utf8')
+
+    assert.equal(first.state, 'installed')
+    assert.equal(second.state, 'present')
+    assert.match(config, /\[mcp_servers\.context7\]/)
+    assert.match(config, /\[mcp_servers\.atlassian\]/)
+    assert.ok(config.includes(`url = "${ATLASSIAN_MCP_URL}"`))
+    assert.equal(await exists(`${configPath}.backup`), true)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

@@ -60,9 +60,21 @@ bita setup --target all
 ```
 
 OpenCode recibe la skill y los comandos en `~/.config/opencode`, además de un
-plugin que conecta los hooks de bita con sus sesiones y herramientas. Codex
-recibe la skill en `~/.agents/skills/bita` y sus hooks en `~/.codex/hooks.json`.
-Codex puede pedir revisar y confiar los hooks desde `/hooks` antes de ejecutarlos.
+plugin que conecta los hooks de bita con sus sesiones y herramientas. También
+se añade el MCP oficial de Atlassian a la configuración global de OpenCode.
+Después de abrir OpenCode, autentícalo desde `/mcps`.
+
+Codex recibe la skill en `~/.agents/skills/bita`, sus hooks en `~/.codex/hooks.json`
+y el MCP oficial de Atlassian en `~/.codex/config.toml`. La autenticación queda
+fuera de la instalación: ejecútala con `codex mcp login atlassian`. Codex puede
+pedir revisar y confiar los hooks desde `/hooks` antes de ejecutarlos.
+
+El MCP usa OAuth y `bita` no guarda credenciales. Para omitir su configuración:
+
+```sh
+bita setup --target opencode --no-atlassian
+bita setup --target codex --no-atlassian
+```
 
 La instalación de Claude enlaza la skill y los comandos de barra en `~/.claude`
 apuntando al paquete instalado, y mete los permisos y el hook `SessionStart` en
@@ -122,8 +134,8 @@ quieras.
 |---|---|
 | Binario | Enlaza `bita` en tu directorio de binarios (`$PNPM_HOME/bin`, o `~/.local/bin`) |
 | Claude | `~/.claude/skills/bita`, `~/.claude/commands` y `settings.json` |
-| OpenCode | `~/.config/opencode/skills/bita`, `commands` y `plugins/bita.*` |
-| Codex | `~/.agents/skills/bita` y `~/.codex/hooks.json` |
+| OpenCode | `~/.config/opencode/skills/bita`, `commands`, `plugins/bita.*` y MCP de Atlassian |
+| Codex | `~/.agents/skills/bita`, `~/.codex/hooks.json`, `~/.codex/config.toml` y MCP de Atlassian |
 
 Las skills, comandos y plugins son **symlinks al repo**, a propósito: cuando
 actualizas el repo se actualizan contigo. Los archivos de configuración se
@@ -190,9 +202,20 @@ Reabre la sesión para que cargue el hook, la skill y los comandos.
 
 ### 5. Conectar Jira
 
-Jira no se toca desde el CLI: lo escribe el agente por el conector de Atlassian. Lo
-único que se guarda aquí es a qué tablero va cada proyecto, y se pregunta solo la
-primera vez:
+Jira no se toca desde el CLI: lo escribe el agente mediante el MCP oficial de
+Atlassian. `bita setup --target opencode`, `bita setup --target codex` y
+`bita setup --target all` lo configuran automáticamente, pero la autenticación
+siempre queda a cargo de la persona:
+
+- OpenCode: `/mcps`
+- Codex: `codex mcp login atlassian`
+
+OpenCode muestra las herramientas del servidor con el prefijo `atlassian_` cuando
+están fuera de Code Mode. El servidor permite Jira y Confluence, y respeta los
+permisos de la cuenta autenticada.
+
+Lo único que se guarda aquí es a qué tablero va cada proyecto, y se pregunta solo
+la primera vez:
 
 ```sh
 bita map set <projectId> <JIRAKEY> --parent <JIRAKEY-123>   # siempre a esa épica

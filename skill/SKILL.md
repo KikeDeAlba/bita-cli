@@ -203,6 +203,21 @@ párrafo y pregunta:
 4. **¿Alguna frase le habla a alguien o dice quién hizo qué?** Si sí, fuera: el
    issue es de quien lo tiene asignado, y todo lo que dice es suyo.
 
+## El conector de Atlassian
+
+Jira y Confluence se operan mediante el MCP oficial de Atlassian. La instalación
+de OpenCode y Codex lo registra automáticamente, pero la autenticación se hace
+fuera de `bita`:
+
+- OpenCode: `/mcps`
+- Codex: `codex mcp login atlassian`
+
+En OpenCode, las herramientas pueden aparecer con el prefijo `atlassian_` o
+dentro del grupo `tools.atlassian`, según la configuración de Code Mode. Codex
+puede mostrar los mismos nombres sin ese prefijo. La operación semántica manda:
+usa la herramienta Jira equivalente disponible en el servidor y no inventes una
+variante por diferencias de nombres entre clientes.
+
 ## La ventana que sigue existiendo
 
 No hay cuota que agotar, pero **Jira sigue siendo remoto**. El hueco entre
