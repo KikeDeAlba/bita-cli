@@ -9,20 +9,19 @@ El nombre viene de bitácora.
 
 ## Por qué existe
 
-Antes esto hablaba con la API de Toggl Track. El plan gratuito tiene un límite
-horario de llamadas que bloqueó el trabajo tres veces en una sola sesión, dos de
-ellas a mitad de una escritura, dejando Jira por delante del registro de tiempo.
+Este proyecto registra el tiempo localmente y deja el volcado a Jira para después,
+sin depender de un servicio externo durante el trabajo. Así el registro de tiempo
+no queda separado de los cambios cuando una sincronización falla a mitad de una
+escritura.
 
-Casi toda la complejidad del CLI servía para rodear ese límite, no para resolver
-el problema: el throttle, los reintentos, la paginación, el caché de 24 horas, el
-espejo del cronómetro en curso y los tags usados como estado porque no había
-dónde guardarlo. Con una base local todo eso desaparece.
+Con una base local desaparecen el throttle, los reintentos, la paginación, el
+caché de 24 horas, el espejo del cronómetro en curso y los tags usados como
+estado porque no había dónde guardarlo.
 
 Quedan dos ventajas que no se buscaban:
 
-- **Varios cronómetros a la vez.** El límite de uno era de Toggl. Aquí un
-  cronómetro corriendo es una fila con `stopped_at` nulo, y puede haber las que
-  hagan falta.
+- **Varios cronómetros a la vez.** Un cronómetro corriendo es una fila con
+  `stopped_at` nulo, y puede haber las que hagan falta.
 - **El estado es una clave foránea.** Una entrada está pendiente mientras no
   tenga fila en `jira_links`. No hay tag que pueda diverger ni retaggeo a medias.
 
@@ -61,9 +60,21 @@ bita setup --target all
 ```
 
 OpenCode recibe la skill y los comandos en `~/.config/opencode`, además de un
-plugin que conecta los hooks de bita con sus sesiones y herramientas. Codex
-recibe la skill en `~/.agents/skills/bita` y sus hooks en `~/.codex/hooks.json`.
-Codex puede pedir revisar y confiar los hooks desde `/hooks` antes de ejecutarlos.
+plugin que conecta los hooks de bita con sus sesiones y herramientas. También
+se añade el MCP oficial de Atlassian a la configuración global de OpenCode.
+Después de abrir OpenCode, autentícalo desde `/mcps`.
+
+Codex recibe la skill en `~/.agents/skills/bita`, sus hooks en `~/.codex/hooks.json`
+y el MCP oficial de Atlassian en `~/.codex/config.toml`. La autenticación queda
+fuera de la instalación: ejecútala con `codex mcp login atlassian`. Codex puede
+pedir revisar y confiar los hooks desde `/hooks` antes de ejecutarlos.
+
+El MCP usa OAuth y `bita` no guarda credenciales. Para omitir su configuración:
+
+```sh
+bita setup --target opencode --no-atlassian
+bita setup --target codex --no-atlassian
+```
 
 La instalación de Claude enlaza la skill y los comandos de barra en `~/.claude`
 apuntando al paquete instalado, y mete los permisos y el hook `SessionStart` en
@@ -123,8 +134,8 @@ quieras.
 |---|---|
 | Binario | Enlaza `bita` en tu directorio de binarios (`$PNPM_HOME/bin`, o `~/.local/bin`) |
 | Claude | `~/.claude/skills/bita`, `~/.claude/commands` y `settings.json` |
-| OpenCode | `~/.config/opencode/skills/bita`, `commands` y `plugins/bita.*` |
-| Codex | `~/.agents/skills/bita` y `~/.codex/hooks.json` |
+| OpenCode | `~/.config/opencode/skills/bita` con su skill específica, `commands`, `plugins/bita.*` y MCP de Atlassian |
+| Codex | `~/.agents/skills/bita` con su skill específica, `~/.codex/hooks.json`, `~/.codex/config.toml` y MCP de Atlassian |
 
 Las skills, comandos y plugins son **symlinks al repo**, a propósito: cuando
 actualizas el repo se actualizan contigo. Los archivos de configuración se
@@ -191,9 +202,20 @@ Reabre la sesión para que cargue el hook, la skill y los comandos.
 
 ### 5. Conectar Jira
 
-Jira no se toca desde el CLI: lo escribe el agente por el conector de Atlassian. Lo
-único que se guarda aquí es a qué tablero va cada proyecto, y se pregunta solo la
-primera vez:
+Jira no se toca desde el CLI: lo escribe el agente mediante el MCP oficial de
+Atlassian. `bita setup --target opencode`, `bita setup --target codex` y
+`bita setup --target all` lo configuran automáticamente, pero la autenticación
+siempre queda a cargo de la persona:
+
+- OpenCode: `/mcps`
+- Codex: `codex mcp login atlassian`
+
+OpenCode muestra las herramientas del servidor con el prefijo `atlassian_` cuando
+están fuera de Code Mode. El servidor permite Jira y Confluence, y respeta los
+permisos de la cuenta autenticada.
+
+Lo único que se guarda aquí es a qué tablero va cada proyecto, y se pregunta solo
+la primera vez:
 
 ```sh
 bita map set <projectId> <JIRAKEY> --parent <JIRAKEY-123>   # siempre a esa épica
@@ -498,12 +520,11 @@ cambian en el mismo commit.
 
 ## La skill
 
-`skill/SKILL.md` es la skill que envuelve el CLI: decide cuándo
-proponer el cronómetro, infiere la Historia de Jira a partir de las notas, y
-maneja la jerarquía Épica → Historia → Subtarea. Está enlazada por symlink desde
-`~/.claude/skills/bita`, `~/.config/opencode/skills/bita` o
-`~/.agents/skills/bita`, para que el procedimiento y los flags cambien en el
-mismo commit.
+`skill/SKILL.md` es la skill que recibe Claude. Las variantes
+`skill-opencode/SKILL.md` y `skill-codex/SKILL.md` conservan el procedimiento
+común y añaden únicamente las instrucciones de su cliente. Cada una está
+enlazada por symlink desde la integración correspondiente, para que ningún
+cliente cargue las instrucciones de otro.
 
 ## Desarrollo
 
@@ -523,7 +544,9 @@ src/cli/       comandos y formato de salida
 src/docs/      los documentos de cada entrada: rutas, markdown y escritura
 src/state/     configuración y notas heredadas en disco
 src/integrations/ adaptadores para OpenCode y otros agentes
-skill/         la skill compartida por los agentes
+skill/         la skill de Claude
+skill-opencode/ la skill de OpenCode
+skill-codex/   la skill de Codex
 commands/      los slash commands
 scripts/       el instalador
 ```

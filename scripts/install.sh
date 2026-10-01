@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${BITA_TARGET:-claude}"
 NO_DRAWIO=0
+NO_ATLASSIAN=0
 
 info() { printf '  %s\n' "$1"; }
 warn() { printf '  ! %s\n' "$1" >&2; }
@@ -49,6 +50,10 @@ while [ "$#" -gt 0 ]; do
       NO_DRAWIO=1
       shift
       ;;
+    --no-atlassian)
+      NO_ATLASSIAN=1
+      shift
+      ;;
     *)
       warn "unknown option: $1"
       exit 2
@@ -92,5 +97,8 @@ echo "Integration"
 SETUP_ARGS=(--target "$TARGET")
 if [ "$NO_DRAWIO" -eq 1 ]; then
   SETUP_ARGS+=(--no-drawio)
+fi
+if [ "$NO_ATLASSIAN" -eq 1 ]; then
+  SETUP_ARGS+=(--no-atlassian)
 fi
 node "$REPO_ROOT/src/bin/bita.ts" setup "${SETUP_ARGS[@]}"

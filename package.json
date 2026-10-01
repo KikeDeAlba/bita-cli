@@ -1,7 +1,7 @@
 {
   "name": "@kikedealba/bita",
-  "version": "0.10.0",
-  "description": "Registro de tiempo local que documenta el trabajo y lo vuelca a Jira, con integraciones para agentes de código.",
+  "version": "0.11.0",
+  "description": "Registro de tiempo local que documenta el trabajo y lo vuelca a Jira, con integraciones para agentes de c\u00f3digo.",
   "license": "MIT",
   "author": "Jesus Enrique De Alba Gaytan",
   "homepage": "https://github.com/KikeDeAlba/bita-cli#readme",
@@ -34,6 +34,8 @@
   "files": [
     "dist",
     "skill",
+    "skill-opencode",
+    "skill-codex",
     "commands",
     "scripts",
     "README.md",
