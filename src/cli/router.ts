@@ -22,7 +22,7 @@ import { runConfluence } from './commands/confluence.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '0.9.0'
+export const VERSION = '0.10.0'
 
 const HELP = `bita ${VERSION}
 
@@ -79,7 +79,7 @@ Documents:
   docs migrate [--yes]       Turn every entry document into a page
   docs migrate --undo        Put the corpus back as it was
 
-  setup                      Link the skill and the slash commands into Claude
+  setup                      Install the integration for Claude, OpenCode, or Codex
   app install                Download and install the desktop app
   app version                What is installed, and what the latest release is
 
@@ -97,6 +97,7 @@ Configuration:
   scope list|set|unset|which Map a path prefix to a project; the longest one wins
   config get|set-jira        Inspect or set the local configuration
   hook session-start         Emit the Claude Code SessionStart context
+  hook codex                 Adapt a Codex lifecycle event from stdin
 
 Range presets:
   today, yesterday, week, last-week, month, last-month
@@ -179,9 +180,18 @@ Note options:
   --section "..."            Which section --note-md lands in (default: Qué se hizo)
   --file / --command / --resource   Artifacts touched, repeatable
 
-Notes migrate options:
+  Notes migrate options:
   --dry-run                  Show what would be written without writing it
   --limit N                  Only the first N entries
+
+Setup options:
+  --target TARGET            claude, opencode, codex, or all (default claude)
+  --claude-dir DIR           Claude configuration directory
+  --opencode-dir DIR         OpenCode configuration directory
+  --codex-home DIR           Codex home directory
+  --agents-home DIR          Codex skills directory parent
+  --no-settings              Skip Claude settings changes
+  --no-drawio                Skip draw.io setup
 `
 
 export async function route(argv: string[]): Promise<number> {

@@ -1,7 +1,7 @@
 {
   "name": "@kikedealba/bita",
-  "version": "0.9.0",
-  "description": "Registro de tiempo local que documenta el trabajo y lo vuelca a Jira, con su integracion para Claude Code.",
+  "version": "0.10.0",
+  "description": "Registro de tiempo local que documenta el trabajo y lo vuelca a Jira, con integraciones para agentes de código.",
   "license": "MIT",
   "author": "Jesus Enrique De Alba Gaytan",
   "homepage": "https://github.com/KikeDeAlba/bita-cli#readme",
@@ -18,6 +18,8 @@
     "worklog",
     "documentation",
     "claude-code",
+    "opencode",
+    "codex",
     "cli",
     "sqlite"
   ],

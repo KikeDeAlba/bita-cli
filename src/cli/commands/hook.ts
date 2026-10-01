@@ -32,13 +32,13 @@ const RULE = [
   'Al terminar, actualiza la pagina y para con: bita stop <id> --did "<que paso>"',
 ].join('\n')
 
-async function runPromptSubmit(): Promise<number> {
+async function runPromptSubmit(): Promise<string | undefined> {
   const db = openDatabase(databasePath())
   try {
     const now = new Date()
     const timezone = resolveTimezone(db)
     const drafts = listRunningDrafts(db).map((row) => enrichEntry(row, timezone, now))
-    if (drafts.length === 0) return 0
+    if (drafts.length === 0) return undefined
 
     const lines = drafts.map(
       (draft) =>
@@ -59,24 +59,19 @@ async function runPromptSubmit(): Promise<number> {
       'Si el mensaje todavia no dice en que se trabaja, no inventes nada y sigue.',
     ].join('\n')
 
-    process.stdout.write(
-      `${JSON.stringify({
-        hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
-      })}\n`,
-    )
+    return additionalContext
   } finally {
     db.close()
   }
-  return 0
 }
 
-function runCheckpoint(): number {
+function runCheckpoint(): string | undefined {
   const db = openDatabase(databasePath())
   try {
     const now = new Date()
     const timezone = resolveTimezone(db)
     const running = listRunning(db).filter((entry) => entry.description.trim().length > 0)
-    if (running.length === 0) return 0
+    if (running.length === 0) return undefined
 
     const status = checkpointStatus(
       db,
@@ -91,7 +86,7 @@ function runCheckpoint(): number {
       return now.getTime() - Date.parse(since) >= CHECKPOINT_STALE_MINUTES * 60_000
     })
 
-    if (stale.length === 0) return 0
+    if (stale.length === 0) return undefined
 
     const lines = stale.map((entry) => {
       const state = status.get(entry.id)
@@ -129,15 +124,10 @@ function runCheckpoint(): number {
       'solicitado", primera ni segunda persona. Esto acaba en Jira y Confluence, donde lo leeran otros.',
     ].join('\n')
 
-    process.stdout.write(
-      `${JSON.stringify({
-        hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
-      })}\n`,
-    )
+    return additionalContext
   } finally {
     db.close()
   }
-  return 0
 }
 
 async function readStdin(): Promise<string> {
@@ -152,7 +142,15 @@ export async function runHook(argv: string[]): Promise<number> {
 
   if (event === 'checkpoint') {
     try {
-      return runCheckpoint()
+      const additionalContext = runCheckpoint()
+      if (additionalContext) {
+        process.stdout.write(
+          `${JSON.stringify({
+            hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
+          })}\n`,
+        )
+      }
+      return 0
     } catch {
       return 0
     }
@@ -160,7 +158,15 @@ export async function runHook(argv: string[]): Promise<number> {
 
   if (event === 'prompt-submit') {
     try {
-      return await runPromptSubmit()
+      const additionalContext = await runPromptSubmit()
+      if (additionalContext) {
+        process.stdout.write(
+          `${JSON.stringify({
+            hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
+          })}\n`,
+        )
+      }
+      return 0
     } catch {
       return 0
     }
@@ -186,15 +192,119 @@ export async function runHook(argv: string[]): Promise<number> {
     return 0
   }
 
+  if (event === 'codex') return runCodexHook()
+
   if (event !== 'session-start') return 0
 
+  const additionalContext = await runSessionStartContext()
+  if (additionalContext) {
+    process.stdout.write(
+      `${JSON.stringify({
+        hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext },
+      })}\n`,
+    )
+  }
+  return 0
+}
+
+type CodexHookInput = {
+  hook_event_name?: unknown
+  tool_name?: unknown
+  tool_input?: unknown
+  tool_response?: unknown
+  cwd?: unknown
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function inputRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
+function touchedFiles(input: unknown): string[] {
+  const record = inputRecord(input)
+  const paths = ['filePath', 'file_path', 'path', 'filename', 'file']
+    .map((key) => stringValue(record[key]))
+    .filter((path): path is string => path !== undefined)
+  const command = stringValue(record.command)
+  if (command) {
+    for (const match of command.matchAll(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm)) {
+      const path = stringValue(match[1])
+      if (path) paths.push(path)
+    }
+  }
+  return [...new Set(paths)]
+}
+
+async function runCodexHook(): Promise<number> {
+  let input: CodexHookInput
+  try {
+    input = JSON.parse(await readStdin()) as CodexHookInput
+  } catch {
+    return 0
+  }
+
+  const event = stringValue(input.hook_event_name)
+  if (event === 'SessionStart') {
+    const additionalContext = await runSessionStartContext()
+    if (additionalContext) {
+      process.stdout.write(
+        `${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } })}\n`,
+      )
+    }
+    return 0
+  }
+
+  if (event === 'UserPromptSubmit') {
+    const additionalContext = await runPromptSubmit()
+    if (additionalContext) {
+      process.stdout.write(
+        `${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } })}\n`,
+      )
+    }
+    return 0
+  }
+
+  if (event !== 'PostToolUse') return 0
+
+  const toolInput = inputRecord(input.tool_input)
+  for (const file of touchedFiles(toolInput)) {
+    try {
+      await runTouched(file)
+    } catch {
+      return 0
+    }
+  }
+
+  try {
+    await runRefHook(JSON.stringify({
+      cwd: stringValue(input.cwd),
+      tool_name: stringValue(input.tool_name),
+      tool_input: toolInput,
+      tool_response: input.tool_response,
+    }))
+    const additionalContext = runCheckpoint()
+    if (additionalContext) {
+      process.stdout.write(
+        `${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } })}\n`,
+      )
+    }
+  } catch {
+    return 0
+  }
+  return 0
+}
+
+async function runSessionStartContext(): Promise<string | undefined> {
   try {
     const identity = await currentRepoIdentity()
-    if (!identity) return 0
+    if (!identity) return undefined
 
     const config = await readConfig()
     const mapping = resolveMappedProject(identity.slug, config)
-    if (!mapping) return 0
+    if (!mapping) return undefined
 
     const db = openDatabase(databasePath())
     let state: string
@@ -216,21 +326,8 @@ export async function runHook(argv: string[]): Promise<number> {
       db.close()
     }
 
-    const additionalContext = [
-      RULE,
-      '',
-      `Proyecto de este repositorio: ${mapping.projectName}.`,
-      state,
-    ].join('\n')
-
-    process.stdout.write(
-      `${JSON.stringify({
-        hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext },
-      })}\n`,
-    )
+    return [RULE, '', `Proyecto de este repositorio: ${mapping.projectName}.`, state].join('\n')
   } catch {
-    return 0
+    return undefined
   }
-
-  return 0
 }

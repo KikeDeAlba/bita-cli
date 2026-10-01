@@ -22,7 +22,7 @@ commits: las horas son las medidas.
 
 ## El contador arranca antes de saber nada
 
-El flujo normal es: abrir Claude sobre `~/dev`, **arrancar el contador en blanco**
+El flujo normal es: abrir el agente de código sobre `~/dev`, **arrancar el contador en blanco**
 con `/bita-start`, y solo entonces escribir el encargo. Planear es trabajo y el
 reloj ya está corriendo mientras se planea.
 
@@ -110,7 +110,7 @@ nada, así que consulta las veces que haga falta.
     Confluence se escriben como documentación técnica de quien tiene asignada
     la tarea, no como el acta de un chat ni como un reparto entre una persona y
     un asistente. Ver "Cómo se escribe lo que se publica".
-11. **Toda pregunta de opción cerrada va por `AskUserQuestion`.** Nunca escribas
+11. **Toda pregunta de opción cerrada va por la interfaz de preguntas disponible.** Nunca escribas
     un menú numerado en la respuesta para que el usuario conteste "1", "2" o "3":
     la interfaz ya tiene ese menú y elegir en él es un clic, no teclear un número
     que hay que emparejar a mano con una lista de más arriba. Aplica a la
@@ -470,7 +470,7 @@ con su motivo.
 **Las tareas se cierran al terminar. No lo preguntes.** Solo se dejan abiertas si
 el usuario lo pide explícitamente, y entonces dilo en la tabla.
 
-La confirmación se pide con **`AskUserQuestion`**, con estas cuatro opciones:
+La confirmación se pide con la interfaz de preguntas disponible, con estas cuatro opciones:
 
 | Opción | Qué hace |
 |---|---|
@@ -912,7 +912,7 @@ en el backlog de bita, y el trabajo hecho, en Jira.
      diagramas en el orden de la página, cada uno con su fragmento listo.
   3. Coloca cada imagen donde va su diagrama. Ver «Cómo entra la imagen» abajo.
   Si falla con `CONFLUENCE_LOGIN_REQUIRED` o `CONFLUENCE_AUTH`, **para** y pide al
-  usuario que corra `bita confluence login` en una terminal (o, desde Claude
+    usuario que corra `bita confluence login` en una terminal (o, desde el agente
   Code, `! pbpaste | bita confluence login --token-stdin --email <correo>` con el
   token copiado): el token no lo escribes tú.
 - **Cómo entra la imagen.** Probado en gruposti: el conector acepta ADF y
