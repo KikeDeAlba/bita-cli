@@ -185,7 +185,16 @@ test('recap setup installs dependencies and skips the permission dialogs without
   env.files.add(BINARY)
   const step = await ensureRecapSetup(env)
   assert.equal(step.state, 'installed')
-  assert.match(step.detail, /grant the microphone and screen permissions/)
+  assert.doesNotMatch(step.detail, /grant/)
+  assert.ok(env.calls.some((call) => call.includes('--skip-permissions')))
+})
+
+test('reinstalling the same version from a local zip says so', async () => {
+  const env = fake({ localZip: '/dist/Recap-0.2.0-macos-arm64.zip' })
+  env.versions.set(APP, '0.2.0')
+  const step = await ensureRecapApp(env)
+  assert.equal(step.state, 'installed')
+  assert.match(step.detail, /^Reinstalled Recap 0\.2\.0/)
 })
 
 test('the recap setup summary names what is still missing', () => {
