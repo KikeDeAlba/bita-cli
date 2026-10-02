@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { DEFAULT_STORY_THEMES, type StoryTheme } from '../config/constants.ts'
+import { parseHooks, type HookConfig } from '../hooks/hooks.ts'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -60,6 +61,7 @@ export interface AppConfig {
   defaults?: { issueTypeName?: string; pendingTagName?: string; storyThemes?: StoryTheme[] }
   projectMapping: Record<string, ProjectMapping>
   scopeMapping: Record<string, ScopeMapping>
+  hooks?: HookConfig[]
 }
 
 export function emptyConfig(): AppConfig {
@@ -127,6 +129,7 @@ export async function readConfig(configPath = CONFIG_PATH): Promise<AppConfig> {
       raw = await readFile(LEGACY_CONFIG_PATH, 'utf8')
     }
     const parsed = migrateLegacyKeys(JSON.parse(raw) as Partial<AppConfig>)
+    const hooks = parseHooks(parsed.hooks)
     return {
       version: parsed.version ?? 1,
       ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
@@ -135,6 +138,7 @@ export async function readConfig(configPath = CONFIG_PATH): Promise<AppConfig> {
       ...(parsed.defaults !== undefined ? { defaults: parsed.defaults } : {}),
       projectMapping: parsed.projectMapping ?? {},
       scopeMapping: parsed.scopeMapping ?? {},
+      ...(hooks.length > 0 ? { hooks } : {}),
     }
   } catch {
     return emptyConfig()

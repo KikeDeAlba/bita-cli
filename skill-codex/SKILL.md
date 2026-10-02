@@ -673,6 +673,26 @@ El proyecto sale del repo mapeado; si no lo está, el CLI falla con
 **Pueden correr varios cronómetros a la vez** y `start` nunca se niega. Eso es
 deliberado: mide dos trabajos en paralelo en vez de forzar una elección falsa.
 
+### Reuniones
+
+Una reunión lleva tipo, para que la grabe [recap](https://github.com/KikeDeAlba/recap)
+por el hook de bita:
+
+```
+bita start "<título>" --kind remote-meeting      # Meet, Zoom, Teams, llamada, videollamada
+bita start "<título>" --kind in-person-meeting   # presencial, en sala, en oficina
+bita amend <id> --kind remote-meeting            # a un contador que ya corre
+bita amend <id> --kind none                      # deja de ser reunión
+```
+
+Elige el tipo por el contexto; si no queda claro si es remota o presencial,
+pregunta solo eso. `start`, `stop`, `cancel` y un `amend` que cambia el tipo
+disparan los hooks de `bita hooks`: con recap configurado, arrancar graba, parar
+procesa la grabación y deja la minuta en la sección «Reunión» del documento, y
+cancelar descarta la grabación. `meta.hooksFired` dice cuántos se lanzaron; si
+es 0 en una reunión, no hay hook configurado y no se está grabando, así que
+dilo.
+
 ### Varios a la vez, y cuándo partir
 
 1. **Cambia el proyecto → arranca otro cronómetro.** El proyecto elige el

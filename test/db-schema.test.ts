@@ -102,3 +102,13 @@ test('reads the database location from the environment', () => {
   assert.equal(databasePath({ [DB_PATH_ENV_VAR]: '/tmp/custom.db' }), '/tmp/custom.db')
   assert.equal(databasePath({ XDG_DATA_HOME: '/data' }), '/data/bita/bita.db')
 })
+
+test('version 9 adds a nullable kind to every entry, existing ones included', () => {
+  const db = openMemoryDatabase()
+  const columns = db.prepare('PRAGMA table_info(entries)').all() as { name: string; notnull: number }[]
+  const kind = columns.find((column) => column.name === 'kind')
+  assert.ok(kind)
+  assert.equal(kind.notnull, 0)
+  assert.ok(LATEST_VERSION >= 9)
+  db.close()
+})

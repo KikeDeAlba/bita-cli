@@ -42,6 +42,9 @@ import { readConfig, setScopeMapping } from '../../state/config.ts'
 import { currentRepoIdentity } from './repo.ts'
 import { resolveMappedProject } from '../resolve-project.ts'
 import { promptText } from '../prompt.ts'
+import { parseKind } from '../../domain/kind.ts'
+import { emitHooks } from '../../hooks/emit.ts'
+import type { HookPayload } from '../../hooks/hooks.ts'
 
 const TIMER_OPTIONS = {
   project: { type: 'string' as const },
@@ -62,6 +65,12 @@ const TIMER_OPTIONS = {
   did: { type: 'string' as const },
   page: { type: 'string' as const },
   'page-new': { type: 'string' as const },
+  kind: { type: 'string' as const },
+}
+
+function readKind(args: ParsedArgs): string | null {
+  const raw = readString(args, 'kind')
+  return raw === undefined ? null : parseKind(raw)
 }
 
 function recordDid(ctx: LocalContext, entryId: number, args: ParsedArgs): void {
@@ -262,6 +271,7 @@ export async function runStart(argv: string[]): Promise<number> {
   const args = parseCommandArgs(argv, TIMER_OPTIONS, BASE_OPTIONS)
   const json = readBoolean(args, 'json')
   const title = readTitle(args)
+  const kind = readKind(args)
   const ctx = createLocalContext(args)
 
   try {
@@ -276,6 +286,7 @@ export async function runStart(argv: string[]): Promise<number> {
       projectId,
       startedAt,
       source: 'timer',
+      kind,
       now: ctx.now.toISOString(),
     })
 
@@ -283,6 +294,7 @@ export async function runStart(argv: string[]): Promise<number> {
     const row = listRunning(ctx.db).find((entry) => entry.id === created.id)
     const enriched = row ? enrich(ctx, row) : null
     const docPath = isDraft ? null : await recordDoc(ctx, created.id, null, 'start', true)
+    const hooksFired = enriched ? await emitHooks(ctx, [{ event: 'start', entry: enriched, docPath }]) : 0
 
     if (json) {
       writeJson(
@@ -295,11 +307,13 @@ export async function runStart(argv: string[]): Promise<number> {
           draft: isDraft,
           docPath,
           pageId,
+          hooksFired,
         }),
       )
     } else {
       writeOut(isDraft ? `Started #${created.id}, still a draft` : `Started #${created.id}: ${title}`)
       if (enriched?.projectName) writeOut(`Project : ${enriched.projectName}`)
+      if (kind) writeOut(`Kind    : ${kind}`)
       writeOut(`Since   : ${enriched?.startLocal.slice(11, 16) ?? ''}`)
       if (docPath) writeOut(`Document: ${docPath}`)
       if (isDraft) {
@@ -342,6 +356,7 @@ export async function runStop(argv: string[]): Promise<number> {
     const seed = await loadDocSeed(args)
 
     const stopped: EnrichedTimeEntry[] = []
+    const payloads: HookPayload[] = []
     let docPath: string | null = null
     for (const target of targets) {
       const snapshot = enrich(ctx, { ...target, stoppedAt })
@@ -352,7 +367,14 @@ export async function runStop(argv: string[]): Promise<number> {
       }
       recordDid(ctx, target.id, args)
       stopped.push(snapshot)
+      const stored = findDocForEntry(ctx.db, target.id)
+      payloads.push({
+        event: 'stop',
+        entry: snapshot,
+        docPath: stored ? resolveDocPath(ctx.docsRoot, stored.relPath) : null,
+      })
     }
+    const hooksFired = await emitHooks(ctx, payloads)
 
     if (json) {
       writeJson(
@@ -360,6 +382,7 @@ export async function runStop(argv: string[]): Promise<number> {
           stopped: stopped.length,
           stillRunning: countRunning(ctx.db),
           docPath,
+          hooksFired,
         }),
       )
     } else {
@@ -530,9 +553,13 @@ export async function runCancel(argv: string[]): Promise<number> {
     for (const path of docPaths) {
       if (await removeDocument(path)) docsRemoved.push(path)
     }
+    const hooksFired = await emitHooks(
+      ctx,
+      discarded.map((entry) => ({ event: 'cancel' as const, entry, docPath: null })),
+    )
 
     if (json) {
-      writeJson(successEnvelope('cancel', discarded, { discarded: discarded.length, docsRemoved }))
+      writeJson(successEnvelope('cancel', discarded, { discarded: discarded.length, docsRemoved, hooksFired }))
     } else {
       for (const entry of discarded) {
         writeOut(`Discarded #${entry.id}: ${entry.description} (${entry.durationHuman} lost)`)
@@ -581,6 +608,7 @@ export async function runLog(argv: string[]): Promise<number> {
       startedAt,
       stoppedAt,
       source: 'manual',
+      kind: readKind(args),
       now: ctx.now.toISOString(),
     })
 

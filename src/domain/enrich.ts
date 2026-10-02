@@ -40,6 +40,7 @@ export function enrichEntry(
     startedJira: toJiraStarted(row.startedAt, timezone),
     running: row.stoppedAt === null,
     mergedInto: row.mergedInto,
+    kind: row.kind,
   }
 }
 

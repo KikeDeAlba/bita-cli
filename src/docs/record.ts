@@ -74,6 +74,7 @@ function ownedFrontMatter(
     repo: identity?.slug ?? '',
     branch: identity?.branch ?? '',
     jira: entry.issueKey ?? '',
+    kind: entry.kind ?? '',
   }
 }
 

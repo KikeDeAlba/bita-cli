@@ -44,6 +44,14 @@ bita start "<título>" --page <pageId>
 bita start "<título>" --page-new "<título de la página>"
 ```
 
+**Si es una reunión**, márcala con su tipo para que se grabe:
+`--kind remote-meeting` (Meet, Zoom, Teams, llamada) o `--kind in-person-meeting`
+(presencial, en sala, en oficina). Si no queda claro cuál, pregunta solo eso.
+
+```
+bita start "<título>" --kind remote-meeting
+```
+
 **No escribas la página todavía**: se edita mientras el trabajo pasa, con
 `/bita-check`.
 
