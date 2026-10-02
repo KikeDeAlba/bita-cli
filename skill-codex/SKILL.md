@@ -685,6 +685,9 @@ bita amend <id> --kind remote-meeting            # a un contador que ya corre
 bita amend <id> --kind none                      # deja de ser reunión
 ```
 
+`bita setup` instala recap (app, CLI, plugin, modelos y hook). Si `bita hooks`
+no lo muestra, sugiere correr `bita setup` antes de prometer que se grabará.
+
 Elige el tipo por el contexto; si no queda claro si es remota o presencial,
 pregunta solo eso. `start`, `stop`, `cancel` y un `amend` que cambia el tipo
 disparan los hooks de `bita hooks`: con recap configurado, arrancar graba, parar

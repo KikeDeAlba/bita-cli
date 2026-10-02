@@ -203,6 +203,7 @@ Setup options:
   --agents-home DIR          Codex skills directory parent
   --no-settings              Skip Claude settings changes
   --no-drawio                Skip draw.io setup
+  --no-recap                 Skip installing recap (meeting recorder, app, plugin and models)
 `
 
 export async function route(argv: string[]): Promise<number> {
