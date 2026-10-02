@@ -23,7 +23,7 @@ import { runConfluence } from './commands/confluence.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '0.10.0'
+export const VERSION = '0.12.0'
 
 const HELP = `bita ${VERSION}
 
