@@ -136,6 +136,7 @@ quieras.
 | Claude | `~/.claude/skills/bita`, `~/.claude/commands` y `settings.json` |
 | OpenCode | `~/.config/opencode/skills/bita` con su skill específica, `commands`, `plugins/bita.*` y MCP de Atlassian |
 | Codex | `~/.agents/skills/bita` con su skill específica, `~/.codex/hooks.json`, `~/.codex/config.toml` y MCP de Atlassian |
+| recap | Con `claude` o `all`, en Mac con Apple Silicon: el grabador de reuniones (ver abajo) |
 
 Las skills, comandos y plugins son **symlinks al repo**, a propósito: cuando
 actualizas el repo se actualizan contigo. Los archivos de configuración se
@@ -150,6 +151,25 @@ Para instalar una sola superficie:
 ./scripts/install.sh --target opencode
 ./scripts/install.sh --target codex
 ```
+
+#### recap
+
+Con el target `claude` o `all`, `bita setup` también deja listo
+[recap](https://github.com/KikeDeAlba/recap), el grabador que sigue a los
+contadores de reunión (ver «Reuniones y hooks»):
+
+1. Baja la última release (`Recap-<versión>-macos-arm64.zip`) a
+   `~/Applications/Recap.app`, o la actualiza si está atrasada.
+2. Enlaza `recap` en el primer directorio del `PATH` donde se pueda escribir
+   (`~/.local/bin`, `/opt/homebrew/bin` o `/usr/local/bin`); si ninguno está en
+   el `PATH`, lo deja en `~/.local/bin` y dice qué agregar a `~/.zshrc`.
+3. Instala el plugin de Claude Code (`claude plugin install recap@recap`).
+4. Corre `recap setup --install-deps`: `brew install ffmpeg whisper-cpp`, el
+   modelo de whisper (≈1.6 GB la primera vez), el hook en `bita hooks` y, si hay
+   terminal, los permisos de micrófono y pantalla.
+
+`--no-recap` se lo salta. Para probar un build sin publicar:
+`BITA_RECAP_ZIP=/ruta/Recap-0.1.0-macos-arm64.zip bita setup`.
 
 Si tu directorio de binarios está en otro sitio:
 

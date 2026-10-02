@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,28 +8,17 @@ import { ConflictError, NotFoundError, UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString } from '../args.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { promptText } from '../prompt.ts'
+import { downloadAsset, latestRelease, releaseVersion, type Release } from '../../setup/github-release.ts'
 
 const run = promisify(execFile)
 
 const SUBCOMMANDS = new Set(['install', 'version'])
-const RELEASES = 'https://api.github.com/repos/KikeDeAlba/bita-desktop/releases/latest'
+const REPO = 'KikeDeAlba/bita-desktop'
 const TARGET = '/Applications/bita.app'
 
 const OPTIONS = {
   yes: { type: 'boolean' as const, default: false },
   to: { type: 'string' as const },
-}
-
-interface ReleaseAsset {
-  name: string
-  browser_download_url: string
-  size: number
-}
-
-interface Release {
-  tag_name: string
-  name: string
-  assets: ReleaseAsset[]
 }
 
 export async function runApp(argv: string[]): Promise<number> {
@@ -45,30 +34,15 @@ export async function runApp(argv: string[]): Promise<number> {
   return await install(json, readBoolean(args, 'yes'), readString(args, 'to') ?? TARGET)
 }
 
-async function latest(): Promise<Release> {
-  const response = await fetch(RELEASES, {
-    headers: { accept: 'application/vnd.github+json', 'user-agent': 'bita-cli' },
-  })
-  if (!response.ok) {
-    throw new ConflictError(
-      `GitHub answered ${response.status} asking for the latest release.`,
-      'RELEASE_UNREACHABLE',
-      'Check the network, or download it by hand from the releases page.',
-    )
-  }
-  return (await response.json()) as Release
+function latest(): Promise<Release> {
+  return latestRelease(REPO)
 }
 
-function installedVersion(path: string): string | null {
+export async function readVersion(path: string): Promise<string | null> {
   const plist = join(path, 'Contents', 'Info.plist')
   if (!existsSync(plist)) return null
-  return 'installed'
-}
-
-async function readVersion(path: string): Promise<string | null> {
-  if (installedVersion(path) === null) return null
   try {
-    const { stdout } = await run('defaults', ['read', join(path, 'Contents', 'Info.plist'), 'CFBundleShortVersionString'])
+    const { stdout } = await run('defaults', ['read', plist, 'CFBundleShortVersionString'])
     return stdout.trim()
   } catch {
     return null
@@ -80,7 +54,7 @@ async function reportVersion(json: boolean): Promise<number> {
   const release = await latest().catch(() => null)
   const data = {
     installed: current,
-    latest: release?.tag_name.replace(/^v/, '') ?? null,
+    latest: release ? releaseVersion(release) : null,
     path: current === null ? null : TARGET,
   }
 
@@ -113,7 +87,7 @@ async function install(json: boolean, assumeYes: boolean, target: string): Promi
   }
 
   const current = await readVersion(target)
-  const wanted = release.tag_name.replace(/^v/, '')
+  const wanted = releaseVersion(release)
 
   if (current !== null && !assumeYes) {
     const answer = await promptText(
@@ -131,15 +105,7 @@ async function install(json: boolean, assumeYes: boolean, target: string): Promi
 
   try {
     writeOut(`Downloading ${asset.name} (${Math.round(asset.size / 1024 / 1024)} MB)…`)
-    const response = await fetch(asset.browser_download_url, { redirect: 'follow' })
-    if (!response.ok) {
-      throw new ConflictError(
-        `The download answered ${response.status}.`,
-        'DOWNLOAD_FAILED',
-        'Try again, or download it by hand from the releases page.',
-      )
-    }
-    await writeFile(dmg, Buffer.from(await response.arrayBuffer()))
+    await downloadAsset(asset, dmg)
 
     const { stdout } = await run('hdiutil', ['attach', dmg, '-nobrowse', '-readonly', '-quiet', '-mountrandom', work])
     mounted = mountPointOf(stdout) ?? mountPointOf(await plainMount(dmg, work))
