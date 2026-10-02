@@ -162,7 +162,7 @@ export async function runAmend(argv: string[]): Promise<number> {
       title: title ?? entry.description,
       projectId: project?.id ?? entry.projectId,
       projectName: project?.name ?? null,
-      kind: amended?.kind ?? entry.kind,
+      kind: amended ? amended.kind : entry.kind,
       previousKind: entry.kind,
       docPath: recorded?.path ?? null,
       renamedFrom: recorded?.renamedFrom ?? null,
