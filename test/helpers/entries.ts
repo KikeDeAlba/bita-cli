@@ -15,6 +15,7 @@ export interface EntryOverrides {
   issueKey?: string | null
   running?: boolean
   mergedInto?: number | null
+  kind?: string | null
 }
 
 export function makeEntry(overrides: EntryOverrides = {}): EnrichedTimeEntry {
@@ -42,5 +43,6 @@ export function makeEntry(overrides: EntryOverrides = {}): EnrichedTimeEntry {
     startedJira: toJiraStarted(start, TEST_TZ),
     running: overrides.running ?? false,
     mergedInto: overrides.mergedInto ?? null,
+    kind: overrides.kind ?? null,
   }
 }

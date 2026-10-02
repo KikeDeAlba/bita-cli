@@ -8,6 +8,9 @@ import { findProjectById, findProjectByName } from '../../db/projects.ts'
 import { recordEntryDoc } from '../../docs/record.ts'
 import { currentRepoIdentity } from './repo.ts'
 import { assertNotSegment } from '../resolve-entry.ts'
+import { parseKindOrClear } from '../../domain/kind.ts'
+import { enrichEntry } from '../../domain/enrich.ts'
+import { emitHooks } from '../../hooks/emit.ts'
 
 const OPTIONS = {
   draft: { type: 'boolean' as const, default: false },
@@ -16,6 +19,7 @@ const OPTIONS = {
   'note-json': { type: 'string' as const },
   'note-md': { type: 'string' as const },
   section: { type: 'string' as const },
+  kind: { type: 'string' as const },
 }
 
 async function readMarkdown(path: string): Promise<string> {
@@ -80,9 +84,17 @@ export async function runAmend(argv: string[]): Promise<number> {
   const rawProject = readString(args, 'project')
   const notePath = readString(args, 'note-json')
   const markdownPath = readString(args, 'note-md')
+  const rawKind = readString(args, 'kind')
+  const kind = rawKind === undefined ? undefined : parseKindOrClear(rawKind)
 
-  if (title === undefined && rawProject === undefined && notePath === undefined && markdownPath === undefined) {
-    throw new UsageError('Nothing to amend. Pass --title, --project or --note-md.')
+  if (
+    title === undefined &&
+    rawProject === undefined &&
+    notePath === undefined &&
+    markdownPath === undefined &&
+    kind === undefined
+  ) {
+    throw new UsageError('Nothing to amend. Pass --title, --project, --kind or --note-md.')
   }
 
   const ctx = createLocalContext(args)
@@ -101,6 +113,7 @@ export async function runAmend(argv: string[]): Promise<number> {
       {
         ...(title !== undefined ? { description: title.trim() } : {}),
         ...(project !== null ? { projectId: project.id } : {}),
+        ...(kind !== undefined ? { kind } : {}),
       },
       new Date().toISOString(),
     )
@@ -131,14 +144,30 @@ export async function runAmend(argv: string[]): Promise<number> {
         })
       : null
 
+    const kindChanged = kind !== undefined && kind !== entry.kind
+    const hooksFired =
+      kindChanged && amended
+        ? await emitHooks(ctx, [
+            {
+              event: 'amend',
+              entry: enrichEntry(amended, ctx.timezone, ctx.now),
+              previousKind: entry.kind,
+              docPath: recorded?.path ?? null,
+            },
+          ])
+        : 0
+
     payload = {
       entryId: id,
       title: title ?? entry.description,
       projectId: project?.id ?? entry.projectId,
       projectName: project?.name ?? null,
+      kind: amended ? amended.kind : entry.kind,
+      previousKind: entry.kind,
       docPath: recorded?.path ?? null,
       renamedFrom: recorded?.renamedFrom ?? null,
       wasDraft,
+      hooksFired,
     }
   } finally {
     ctx.db.close()
@@ -152,6 +181,7 @@ export async function runAmend(argv: string[]): Promise<number> {
   writeOut(`Amended #${payload.entryId}`)
   if (title !== undefined) writeOut(`Title   : ${payload.title}`)
   if (payload.projectName) writeOut(`Project : ${payload.projectName} (${payload.projectId})`)
+  if (kind !== undefined) writeOut(`Kind    : ${payload.kind ?? '(none)'}`)
   if (payload.docPath) writeOut(`Document: ${payload.docPath}`)
   if (payload.renamedFrom) writeOut(`Moved   : it was ${payload.renamedFrom}`)
   return 0

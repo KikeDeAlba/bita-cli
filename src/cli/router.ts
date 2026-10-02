@@ -15,6 +15,7 @@ import { runSetup } from './commands/setup.ts'
 import { runNote } from './commands/note.ts'
 import { runNotes } from './commands/notes.ts'
 import { runHook } from './commands/hook.ts'
+import { runHooks } from './commands/hooks.ts'
 import { runLink } from './commands/link.ts'
 import { runMerge } from './commands/merge.ts'
 import { runBacklog } from './commands/backlog.ts'
@@ -98,6 +99,9 @@ Configuration:
   config get|set-jira        Inspect or set the local configuration
   hook session-start         Emit the Claude Code SessionStart context
   hook codex                 Adapt a Codex lifecycle event from stdin
+  hooks [list]               Commands run when a timer starts, stops, is cancelled or changes kind
+  hooks add --on E -- CMD    Register one (see Hooks options)
+  hooks remove N             Remove hook number N
 
 Range presets:
   today, yesterday, week, last-week, month, last-month
@@ -124,6 +128,7 @@ Summary options:
 
 Timer options:
   --project ID|NAME          Project; otherwise inferred from the repository
+  --kind KIND                With start or log, the kind of work (remote-meeting, in-person-meeting, ...)
   --at HH:MM                 Start or stop at this time instead of now
   --all                      stop or cancel every running timer
   --last                     stop or cancel the most recently started one
@@ -152,6 +157,7 @@ Amend options:
   --draft                    Target the single running draft
   --title "..."              Set the title
   --project ID|NAME          Set the project
+  --kind KIND|none           Set or clear the kind; a change fires the amend hooks
   --note-md FILE             Seed a section of the document from a markdown file
 
 Map options:
@@ -184,6 +190,11 @@ Note options:
   --dry-run                  Show what would be written without writing it
   --limit N                  Only the first N entries
 
+Hooks options:
+  --on EVENTS                With "hooks add", comma list of start, stop, cancel, amend
+  --kind KINDS               With "hooks add", only entries of these kinds
+  -- COMMAND ARGS            With "hooks add", the command; it gets the event as JSON on stdin
+
 Setup options:
   --target TARGET            claude, opencode, codex, or all (default claude)
   --claude-dir DIR           Claude configuration directory
@@ -192,6 +203,7 @@ Setup options:
   --agents-home DIR          Codex skills directory parent
   --no-settings              Skip Claude settings changes
   --no-drawio                Skip draw.io setup
+  --no-recap                 Skip installing recap (meeting recorder, app, plugin and models)
 `
 
 export async function route(argv: string[]): Promise<number> {
@@ -207,7 +219,8 @@ export async function route(argv: string[]): Promise<number> {
     return 0
   }
 
-  if (rest.includes('--help')) {
+  const ownArgs = command === 'hooks' && rest.includes('--') ? rest.slice(0, rest.indexOf('--')) : rest
+  if (ownArgs.includes('--help')) {
     writeOut(HELP)
     return 0
   }
@@ -247,6 +260,8 @@ export async function route(argv: string[]): Promise<number> {
       return runNotes(rest)
     case 'hook':
       return runHook(rest)
+    case 'hooks':
+      return runHooks(rest)
     case 'link':
       return runLink(rest)
     case 'merge':

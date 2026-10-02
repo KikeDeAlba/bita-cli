@@ -11,7 +11,7 @@ import { resolveProjectArg } from '../src/cli/project-arg.ts'
 const NOW = '2026-09-28T10:00:00.000Z'
 
 test('the latest schema carries the backlog keys', () => {
-  assert.equal(LATEST_VERSION, 8)
+  assert.ok(LATEST_VERSION >= 8)
 })
 
 test('derives a key from the acronym, the initials or the first letters of the name', () => {
@@ -85,8 +85,8 @@ test('migrating a v7 database gives every project a key and numbers its items in
   item.run(20, 'b', NOW, NOW)
   item.run(10, 'c', NOW, NOW)
 
-  assert.equal(migrate(db), 8)
-  assert.equal(readSchemaVersion(db), 8)
+  assert.equal(migrate(db), LATEST_VERSION)
+  assert.equal(readSchemaVersion(db), LATEST_VERSION)
   assert.equal(findProjectById(db, 20)?.key, 'STI')
   assert.equal(findProjectById(db, 10)?.key, 'STIR')
   assert.equal(findBacklogItemByRef(db, 'STI-2')?.title, 'b')
