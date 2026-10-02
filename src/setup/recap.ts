@@ -174,7 +174,9 @@ export async function ensureRecapApp(env: RecapEnvironment): Promise<RecapStep> 
     const detail =
       current === null
         ? `Installed Recap ${installed} in ${appPath}.`
-        : `Updated Recap from ${current} to ${installed} in ${appPath}.`
+        : current === installed
+          ? `Reinstalled Recap ${installed} in ${appPath}.`
+          : `Updated Recap from ${current} to ${installed} in ${appPath}.`
     return { name: 'recap-app', state: 'installed', detail }
   } catch (error) {
     return { name: 'recap-app', state: 'failed', detail: `Installing Recap.app failed: ${error instanceof Error ? error.message : String(error)}` }
@@ -292,11 +294,7 @@ export async function ensureRecapSetup(env: RecapEnvironment): Promise<RecapStep
   }
   const args = ['setup', '--install-deps', '--json', ...(env.interactive ? [] : ['--skip-permissions'])]
   env.progress('Running recap setup (the first time it downloads about 1.6 GB of transcription models)…')
-  const step = summarizeRecapSetup(await env.exec(binary, args, SETUP_TIMEOUT_MS))
-  if (!env.interactive && step.state === 'installed') {
-    return { ...step, detail: `${step.detail} Run "recap setup" in a terminal to grant the microphone and screen permissions.` }
-  }
-  return step
+  return summarizeRecapSetup(await env.exec(binary, args, SETUP_TIMEOUT_MS))
 }
 
 export async function ensureRecap(env: RecapEnvironment = defaultRecapEnvironment()): Promise<RecapStep[]> {
