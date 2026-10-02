@@ -136,6 +136,7 @@ quieras.
 | Claude | `~/.claude/skills/bita`, `~/.claude/commands` y `settings.json` |
 | OpenCode | `~/.config/opencode/skills/bita` con su skill específica, `commands`, `plugins/bita.*` y MCP de Atlassian |
 | Codex | `~/.agents/skills/bita` con su skill específica, `~/.codex/hooks.json`, `~/.codex/config.toml` y MCP de Atlassian |
+| recap | Con `claude` o `all`, en Mac con Apple Silicon: el grabador de reuniones (ver abajo) |
 
 Las skills, comandos y plugins son **symlinks al repo**, a propósito: cuando
 actualizas el repo se actualizan contigo. Los archivos de configuración se
@@ -150,6 +151,25 @@ Para instalar una sola superficie:
 ./scripts/install.sh --target opencode
 ./scripts/install.sh --target codex
 ```
+
+#### recap
+
+Con el target `claude` o `all`, `bita setup` también deja listo
+[recap](https://github.com/KikeDeAlba/recap), el grabador que sigue a los
+contadores de reunión (ver «Reuniones y hooks»):
+
+1. Baja la última release (`Recap-<versión>-macos-arm64.zip`) a
+   `~/Applications/Recap.app`, o la actualiza si está atrasada.
+2. Enlaza `recap` en el primer directorio del `PATH` donde se pueda escribir
+   (`~/.local/bin`, `/opt/homebrew/bin` o `/usr/local/bin`); si ninguno está en
+   el `PATH`, lo deja en `~/.local/bin` y dice qué agregar a `~/.zshrc`.
+3. Instala el plugin de Claude Code (`claude plugin install recap@recap`).
+4. Corre `recap setup --install-deps`: `brew install ffmpeg whisper-cpp`, el
+   modelo de whisper (≈1.6 GB la primera vez), el hook en `bita hooks` y, si hay
+   terminal, los permisos de micrófono y pantalla.
+
+`--no-recap` se lo salta. Para probar un build sin publicar:
+`BITA_RECAP_ZIP=/ruta/Recap-0.1.0-macos-arm64.zip bita setup`.
 
 Si tu directorio de binarios está en otro sitio:
 
@@ -451,6 +471,62 @@ solo en cuanto lo tiene. A mano:
 ```sh
 bita amend --draft --title "Lo que sea" --project Apartados
 ```
+
+## Reuniones y hooks
+
+Una entrada puede llevar un **tipo** (`kind`), texto libre en minúsculas con
+guiones. bita no le da significado; sirve para que otras herramientas reaccionen
+a ciertos contadores. El caso de uso es [recap](https://github.com/KikeDeAlba/recap),
+que graba la reunión mientras corre el contador:
+
+```sh
+bita start "Planeación sprint 42" --kind remote-meeting
+bita start "1:1 con Ana" --kind in-person-meeting
+bita amend 812 --kind remote-meeting     # a uno que ya corre
+bita amend 812 --kind none               # quitarlo
+bita log "Retro" --kind remote-meeting --from 16:00 --for 45m
+```
+
+El tipo queda en la columna `entries.kind`, en el JSON de `start`, `stop`, `ls` y
+compañía, y en el front matter del documento.
+
+### Hooks
+
+Un hook es un comando que bita lanza cuando un contador arranca (`start`), se
+para (`stop`), se cancela (`cancel`) o cambia de tipo (`amend`). Opcionalmente
+solo para ciertos tipos:
+
+```sh
+bita hooks add --on start,stop,cancel,amend --kind remote-meeting,in-person-meeting \
+  -- /Users/me/.local/bin/recap bita-hook
+bita hooks
+bita hooks remove 1
+```
+
+Se guardan en `~/.config/bita/config.json`:
+
+```json
+"hooks": [
+  {
+    "on": ["start", "stop", "cancel", "amend"],
+    "when": { "kind": ["remote-meeting", "in-person-meeting"] },
+    "command": ["/Users/me/.local/bin/recap", "bita-hook"]
+  }
+]
+```
+
+- El comando recibe por stdin un JSON con `event`, `entry` (la entrada
+  enriquecida, con `kind`), `previousKind` (en `amend`), `docPath`,
+  `databasePath` y `docsRoot`, y además las variables `BITA_HOOK_EVENT`,
+  `BITA_ENTRY_ID`, `BITA_ENTRY_KIND`, `BITA_DB_PATH` y `BITA_DOCS_DIR`.
+- Corre desacoplado, desde `/`: bita espera solo a entregarle el JSON, nunca a
+  que termine, y un hook que falla no hace fallar el comando. Su salida va a
+  `hooks.log`, junto a la base de datos.
+- En `amend`, el filtro por tipo coincide con el tipo nuevo **o** con el
+  anterior, para que quitar `--kind` también avise.
+- **Usa rutas absolutas**: bita-desktop lanza el CLI con un `PATH` mínimo.
+- `BITA_NO_HOOKS=1` los apaga todos.
+- `meta.hooksFired` en el JSON dice cuántos se lanzaron.
 
 ## Proyectos y repositorios
 

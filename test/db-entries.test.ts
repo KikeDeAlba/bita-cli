@@ -264,3 +264,50 @@ test('refuses two projects whose names differ only in case', () => {
   assert.throws(() => insertProject(db, { name: 'pharma sti', createdAt: NOW }), /UNIQUE/i)
   db.close()
 })
+
+test('stores the kind of an entry, clears it and carries it to merged segments', () => {
+  const db = openMemoryDatabase()
+  const meeting = insertEntry(db, {
+    description: 'sprint planning',
+    projectId: null,
+    startedAt: '2026-09-19T10:00:00.000Z',
+    source: 'timer',
+    kind: 'remote-meeting',
+    now: NOW,
+  })
+  assert.equal(meeting.kind, 'remote-meeting')
+
+  const plain = insertEntry(db, {
+    description: 'deploy',
+    projectId: null,
+    startedAt: '2026-09-19T11:00:00.000Z',
+    source: 'timer',
+    now: NOW,
+  })
+  assert.equal(plain.kind, null)
+
+  const segment = insertEntry(db, {
+    description: 'sprint planning',
+    projectId: null,
+    startedAt: '2026-09-19T08:00:00.000Z',
+    stoppedAt: '2026-09-19T09:00:00.000Z',
+    source: 'timer',
+    now: NOW,
+  })
+  db.prepare('UPDATE entries SET merged_into = ? WHERE id = ?').run(meeting.id, segment.id)
+
+  updateEntry(db, meeting.id, { kind: 'in-person-meeting' }, NOW)
+  const kinds = db.prepare('SELECT id, kind FROM entries ORDER BY id').all() as { id: number; kind: string | null }[]
+  assert.deepEqual(
+    kinds.map((row) => ({ ...row })),
+    [
+      { id: meeting.id, kind: 'in-person-meeting' },
+      { id: plain.id, kind: null },
+      { id: segment.id, kind: 'in-person-meeting' },
+    ],
+  )
+
+  updateEntry(db, meeting.id, { kind: null }, NOW)
+  assert.equal(listRunning(db).find((entry) => entry.id === meeting.id)?.kind, null)
+  db.close()
+})

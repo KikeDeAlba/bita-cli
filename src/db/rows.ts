@@ -20,6 +20,7 @@ export interface EntryRow {
   source: EntrySource
   externalId: number | null
   mergedInto: number | null
+  kind: string | null
   createdAt: string
   updatedAt: string
 }

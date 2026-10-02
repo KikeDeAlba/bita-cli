@@ -247,6 +247,8 @@ const BACKLOG_KEYS: readonly string[] = [
   `ALTER TABLE backlog_items ADD COLUMN seq INTEGER`,
 ]
 
+const ENTRY_KIND: readonly string[] = [`ALTER TABLE entries ADD COLUMN kind TEXT`]
+
 function backfillBacklogKeys(db: DatabaseSync): void {
   backfillProjectKeys(db)
   backfillBacklogSequence(db)
@@ -263,6 +265,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 6, statements: PAGE_REFS },
   { version: 7, statements: BACKLOG_ITEMS },
   { version: 8, statements: BACKLOG_KEYS, run: backfillBacklogKeys },
+  { version: 9, statements: ENTRY_KIND },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

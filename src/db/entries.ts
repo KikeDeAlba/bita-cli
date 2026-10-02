@@ -13,6 +13,7 @@ interface RawEntry {
   source: string
   external_id: number | null
   merged_into: number | null
+  kind: string | null
   created_at: string
   updated_at: string
 }
@@ -46,6 +47,7 @@ function toEntry(raw: RawEntry): EntryRow {
     source: raw.source as EntrySource,
     externalId: raw.external_id,
     mergedInto: raw.merged_into ?? null,
+    kind: raw.kind ?? null,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   }
@@ -69,6 +71,7 @@ export interface NewEntry {
   billable?: boolean
   source: EntrySource
   externalId?: number | null
+  kind?: string | null
   now: string
 }
 
@@ -76,8 +79,8 @@ export function insertEntry(db: DatabaseSync, entry: NewEntry): EntryRow {
   const result = db
     .prepare(
       `INSERT INTO entries
-         (project_id, description, started_at, stopped_at, billable, source, external_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (project_id, description, started_at, stopped_at, billable, source, external_id, kind, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       entry.projectId,
@@ -87,6 +90,7 @@ export function insertEntry(db: DatabaseSync, entry: NewEntry): EntryRow {
       fromBoolean(entry.billable ?? false),
       entry.source,
       entry.externalId ?? null,
+      entry.kind ?? null,
       toUtcIso(entry.now),
       toUtcIso(entry.now),
     )
@@ -170,7 +174,13 @@ export function stopEntry(db: DatabaseSync, id: number, stoppedAt: string, now: 
 export function updateEntry(
   db: DatabaseSync,
   id: number,
-  fields: { description?: string; projectId?: number | null; startedAt?: string; stoppedAt?: string | null },
+  fields: {
+    description?: string
+    projectId?: number | null
+    startedAt?: string
+    stoppedAt?: string | null
+    kind?: string | null
+  },
   now: string,
 ): boolean {
   const sets: string[] = []
@@ -191,11 +201,18 @@ export function updateEntry(
     sets.push('stopped_at = ?')
     values.push(fields.stoppedAt === null ? null : toUtcIso(fields.stoppedAt))
   }
+  if (fields.kind !== undefined) {
+    sets.push('kind = ?')
+    values.push(fields.kind)
+  }
   if (sets.length === 0) return false
   sets.push('updated_at = ?')
   values.push(toUtcIso(now), id)
   const result = db.prepare(`UPDATE entries SET ${sets.join(', ')} WHERE id = ?`).run(...values)
-  if (result.changes > 0 && (fields.description !== undefined || fields.projectId !== undefined)) {
+  if (
+    result.changes > 0 &&
+    (fields.description !== undefined || fields.projectId !== undefined || fields.kind !== undefined)
+  ) {
     propagateToSegments(db, id, now)
   }
   return result.changes > 0
@@ -206,9 +223,10 @@ function propagateToSegments(db: DatabaseSync, id: number, now: string): void {
     `UPDATE entries
      SET description = (SELECT description FROM entries WHERE id = ?),
          project_id = (SELECT project_id FROM entries WHERE id = ?),
+         kind = (SELECT kind FROM entries WHERE id = ?),
          updated_at = ?
      WHERE merged_into = ?`,
-  ).run(id, id, toUtcIso(now), id)
+  ).run(id, id, id, toUtcIso(now), id)
 }
 
 export function listSegments(db: DatabaseSync, targetId: number): EntryWithProjectRow[] {

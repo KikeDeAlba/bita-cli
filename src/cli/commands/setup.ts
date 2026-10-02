@@ -10,6 +10,7 @@ import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString } from '../args
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { ensureDrawio, type SetupStep } from '../../setup/drawio.ts'
 import { ensureCodexAtlassianMcp, ensureOpenCodeAtlassianMcp, type AtlassianMcpStep } from '../../setup/atlassian.ts'
+import { defaultRecapEnvironment, ensureRecap, type RecapStep } from '../../setup/recap.ts'
 
 const run = promisify(execFile)
 const TARGETS = ['claude', 'opencode', 'codex', 'all'] as const
@@ -24,6 +25,7 @@ const OPTIONS = {
   'no-settings': { type: 'boolean' as const, default: false },
   'no-drawio': { type: 'boolean' as const, default: false },
   'no-atlassian': { type: 'boolean' as const, default: false },
+  'no-recap': { type: 'boolean' as const, default: false },
 }
 
 export function packageRoot(): string {
@@ -65,6 +67,11 @@ export async function runSetup(argv: string[]): Promise<number> {
         : await ensureDrawio()
       : []
 
+  const recap: RecapStep[] =
+    (target === 'claude' || target === 'all') && !readBoolean(args, 'no-recap')
+      ? await ensureRecap(defaultRecapEnvironment(json ? undefined : (message) => writeOut(`- ${message}`)))
+      : []
+
   if (json) {
     const legacy = target === 'claude' ? results[0] : undefined
     writeJson(
@@ -73,6 +80,7 @@ export async function runSetup(argv: string[]): Promise<number> {
         target,
         results,
         drawio,
+        recap,
         ...(legacy
           ? { claudeDir: legacy.directory, linked: legacy.linked, settings: legacy.settings }
           : {}),
@@ -88,7 +96,9 @@ export async function runSetup(argv: string[]): Promise<number> {
     if (result.hooks !== null) writeOut(`- hooks merged into ${result.hooks}`)
     if (result.mcp !== null) writeOut(`${result.mcp.state === 'failed' || result.mcp.state === 'unavailable' ? '!' : '-'} ${result.mcp.detail}`)
   }
-  for (const step of drawio) writeOut(`${step.state === 'failed' || step.state === 'unavailable' ? '!' : '-'} ${step.detail}`)
+  for (const step of [...drawio, ...recap]) {
+    writeOut(`${step.state === 'failed' || step.state === 'unavailable' ? '!' : '-'} ${step.detail}`)
+  }
   writeOut('')
   writeOut('Next:')
   writeOut('  bita project add "<name>"     create a project')
