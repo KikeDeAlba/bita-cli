@@ -1,9 +1,9 @@
-import { UsageError } from '../../errors.ts'
+import { ConflictError, UsageError } from '../../errors.ts'
 import { parseCommandArgs, readBoolean, readString } from '../args.ts'
 import { withLocalContext } from '../local-context.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { inTransaction } from '../../db/open.ts'
-import { findEntryById, listSegments } from '../../db/entries.ts'
+import { findEntryById, findEntryWithProject, listSegments } from '../../db/entries.ts'
 import { findLink, linkEntry, unlinkEntry } from '../../db/jira-links.ts'
 
 const ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9_]+-\d+$/
@@ -13,6 +13,7 @@ const OPTIONS = {
   worklog: { type: 'string' as const, multiple: true },
   ids: { type: 'string' as const },
   unlink: { type: 'boolean' as const, default: false },
+  force: { type: 'boolean' as const, default: false },
 }
 
 function readIds(args: import('../args.ts').ParsedArgs, positionals: string[]): number[] {
@@ -51,6 +52,18 @@ export function runLink(argv: string[]): number {
     const missing = ids.filter((id) => findEntryById(ctx.db, id) === undefined)
     if (missing.length > 0) {
       throw new UsageError(`No entry with id ${missing.join(', ')}.`)
+    }
+    if (!unlink && !readBoolean(args, 'force')) {
+      const outside = ids
+        .map((id) => findEntryWithProject(ctx.db, id))
+        .filter((entry) => entry !== undefined && !entry.projectJira)
+      if (outside.length > 0) {
+        throw new ConflictError(
+          `Entries ${outside.map((entry) => `#${entry?.id}`).join(', ')} belong to ${outside[0]?.projectName ?? 'a project'}, which never goes to Jira.`,
+          'NOT_A_JIRA_PROJECT',
+          'bita project jira <project> on, or bita link ... --force',
+        )
+      }
     }
     for (const id of [...ids]) {
       for (const segment of listSegments(ctx.db, id)) {

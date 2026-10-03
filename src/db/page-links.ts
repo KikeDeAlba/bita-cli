@@ -220,3 +220,33 @@ export function talliesByPage(db: DatabaseSync): Map<number, PageTally> {
   }
   return tallies
 }
+
+export const MEETING_KINDS: readonly string[] = ['remote-meeting', 'in-person-meeting']
+
+export interface PageMeeting {
+  entryId: number
+  kind: string
+  startedAt: string
+  stoppedAt: string | null
+  durationSeconds: number
+}
+
+export function meetingsOfPage(db: DatabaseSync, pageId: number): PageMeeting[] {
+  return queryAll<{ id: number; kind: string; started_at: string; stopped_at: string | null }>(
+    db.prepare(
+      `SELECT e.id, e.kind, e.started_at, e.stopped_at
+       FROM page_entries pe JOIN entries e ON e.id = pe.entry_id
+       WHERE pe.page_id = ? AND e.kind IN (${MEETING_KINDS.map(() => '?').join(', ')})
+       ORDER BY e.started_at`,
+    ),
+    pageId,
+    ...MEETING_KINDS,
+  ).map((row) => ({
+    entryId: row.id,
+    kind: row.kind,
+    startedAt: row.started_at,
+    stoppedAt: row.stopped_at,
+    durationSeconds:
+      row.stopped_at === null ? 0 : Math.max(0, Math.round((Date.parse(row.stopped_at) - Date.parse(row.started_at)) / 1000)),
+  }))
+}

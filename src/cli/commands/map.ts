@@ -112,6 +112,11 @@ export async function runMap(argv: string[]): Promise<number> {
         `No project with id ${projectId}. Run "bita projects" to list them.`,
       )
     }
+    if (!project.jira) {
+      throw new UsageError(
+        `"${project.name}" never goes to Jira. Turn it on first with: bita project jira ${projectId} on`,
+      )
+    }
 
     const issueTypeName = readString(args, 'issue-type')
     const rawParent = readString(args, 'parent') ?? readString(args, 'epic')

@@ -42,13 +42,13 @@ Tracking:
   note save <id>             Record the document after editing it
   note get|ls <id>           Read the document, or list the ones an entry has
   notes migrate              Turn the legacy NDJSON notes into documents
-  link <ids...> --issue K    Mark entries as registered in a Jira issue
+  link <ids...> --issue K    Mark entries as registered in a Jira issue (--force for a project outside Jira)
 
 Backlog (pending work and findings, kept out of the pages):
   backlog ls                 Open items across projects (--project, --page, --kind, --status)
   backlog add --kind K       Record a pending item or a finding (--title, --md, --page, --entry)
   backlog resolve|reopen <key> Close an item, like STI-14 (--resolution "..."), or open it again
-  backlog edit|rm <key>      Change or remove an item
+  backlog edit|rm <key>      Change or remove an item (edit --project moves it and gives it that project's key)
   backlog extract            Move the pending and findings sections out of the pages (--dry-run)
 
 Confluence (REST API, token in the macOS Keychain):
@@ -90,6 +90,7 @@ Reporting:
   projects                   List projects and their Jira mapping
   project add "<name>"       Create a project (also rename, archive, delete)
   project key <project> <KEY>  Change the short key that prefixes its backlog items
+  project jira <project> on|off  Whether its time goes to Jira; off keeps it tracked but apart
 
 Configuration:
   map list|set|unset|story   Map projects to Jira projects, parents and stories

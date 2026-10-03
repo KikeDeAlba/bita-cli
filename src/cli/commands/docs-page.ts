@@ -22,11 +22,13 @@ import {
   issuesOfPage,
   linkEntryToPage,
   linkIssueToPage,
+  meetingsOfPage,
   talliesByPage,
   unlinkEntryFromPage,
   unlinkIssueFromPage,
   worklogIssuesOfPage,
   type PageIssueRole,
+  type PageMeeting,
   type StatusCategory,
 } from '../../db/page-links.ts'
 import { listProjects } from '../../db/projects.ts'
@@ -190,6 +192,7 @@ interface PageView {
   byteSize: number
   recordedAt: string
   childCount: number
+  meetings: PageMeeting[]
   children?: PageView[]
 }
 
@@ -234,6 +237,7 @@ function pageView(
     byteSize: page.byteSize,
     recordedAt: page.recordedAt,
     childCount: childrenOf(ctx.db, page.id).length,
+    meetings: meetingsOfPage(ctx.db, page.id),
   }
 }
 

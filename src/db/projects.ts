@@ -11,6 +11,7 @@ interface RawProject {
   key: string | null
   client_name: string | null
   active: number
+  jira: number
   external_id: number | null
   created_at: string
 }
@@ -22,6 +23,7 @@ function toProject(raw: RawProject): ProjectRow {
     key: raw.key,
     clientName: raw.client_name,
     active: toBoolean(raw.active),
+    jira: raw.jira === undefined ? true : toBoolean(raw.jira),
     externalId: raw.external_id,
     createdAt: raw.created_at,
   }
@@ -39,6 +41,7 @@ export interface NewProject {
   name: string
   clientName?: string | null
   active?: boolean
+  jira?: boolean
   id?: number
   externalId?: number | null
   createdAt: string
@@ -47,13 +50,14 @@ export interface NewProject {
 export function insertProject(db: DatabaseSync, project: NewProject): ProjectRow {
   const id = project.id ?? nextLocalProjectId(db)
   db.prepare(
-    `INSERT INTO projects (id, name, client_name, active, external_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO projects (id, name, client_name, active, jira, external_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     project.name,
     project.clientName ?? null,
     fromBoolean(project.active ?? true),
+    fromBoolean(project.jira ?? true),
     project.externalId ?? null,
     project.createdAt,
   )
@@ -101,6 +105,10 @@ export function renameProject(db: DatabaseSync, id: number, name: string): void 
 
 export function setProjectActive(db: DatabaseSync, id: number, active: boolean): void {
   db.prepare('UPDATE projects SET active = ? WHERE id = ?').run(fromBoolean(active), id)
+}
+
+export function setProjectJira(db: DatabaseSync, id: number, jira: boolean): void {
+  db.prepare('UPDATE projects SET jira = ? WHERE id = ?').run(fromBoolean(jira), id)
 }
 
 export function deleteProject(db: DatabaseSync, id: number): boolean {

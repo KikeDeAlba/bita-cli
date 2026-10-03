@@ -19,6 +19,7 @@ export interface EnrichedTimeEntry {
   running: boolean
   mergedInto: number | null
   kind: string | null
+  jira: boolean
 }
 
 export interface WorklogSlice {
@@ -51,6 +52,7 @@ export interface TaskGroup {
   partIndex: number
   partCount: number
   splitReason: 'none' | 'max-task-hours'
+  jira: boolean
 }
 
 export interface ExcludedEntry {
