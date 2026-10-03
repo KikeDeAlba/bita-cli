@@ -1,7 +1,7 @@
 ---
 description: Actualiza la documentación del trabajo y después para el cronómetro
 argument-hint: [id, vacío si solo hay uno, o "all"]
-allowed-tools: Bash(bita stop:*), Bash(bita ls:*), Bash(bita docs:*), Bash(bita note:*), Bash(bita backlog:*), Read, Write, Edit
+allowed-tools: Bash(bita stop:*), Bash(bita ls:*), Bash(bita docs:*), Bash(bita note:*), Bash(bita backlog:*), Bash(bita amend:*), Bash(recap wait:*), Bash(recap status:*), Read, Write, Edit
 ---
 
 Corriendo ahora mismo:
@@ -20,6 +20,49 @@ te acuerdas del porqué. Sin ella el issue queda con un título y nada más.
   equivocado la vuelve mentira.
 - Si viene `all`, para todos con `bita stop --all` y **no escribas ningún
   `--did`**: un bloque pertenece a un solo trabajo.
+
+## 0. Si es una reunión, no documentes: para y espera
+
+Si el cronómetro que vas a parar tiene `kind` `remote-meeting` o
+`in-person-meeting` (míralo con `bita ls --json`), **sáltate los pasos 1 y 2**.
+recap ya graba la reunión y, al parar, hace lo demás sin que nadie se lo pida:
+
+- transcribe y escribe la minuta;
+- le pone al contador un título real y, si estaba vacío, el proyecto;
+- crea la página en ese proyecto, o agrega la sección a la página que ya
+  tenía, y la escribe;
+- pasa los pendientes y las preguntas abiertas al backlog;
+- deja la minuta en la sección «Reunión» del documento de la entrada.
+
+```
+bita stop <id> --json            # sin --did y sin escribir la página
+recap wait --bita-entry <id> --json
+```
+
+`recap wait` tarda de uno a cinco minutos en una reunión de una hora: córrelo
+con un timeout amplio (15 min). Si `meta.hooksFired` del stop es 0, recap no se
+enteró y no hay grabación: dilo y para ahí.
+
+Con el resultado de `recap wait` (`data.wrapup`) responde:
+
+- el título que quedó;
+- el proyecto;
+- la página;
+- cuántos pendientes y hallazgos se crearon;
+- la duración.
+
+Si una etapa falló, muestra su error y sugiere `recap process <id>`.
+
+**Si `wrapup.projectResolved` es false**, la transcripción no dejó claro el
+proyecto. Pregunta solo «¿De qué proyecto fue?» y, con la respuesta:
+
+```
+bita amend <id> --project <X>
+bita docs page move <pageId> --project <X>
+bita backlog edit <CLAVE> --project <X>      # uno por cada clave de wrapup.backlogKeys
+```
+
+Nada más: no reescribas la página ni la minuta.
 
 ## 1. Primero, la página
 
