@@ -19,6 +19,7 @@ export interface HookPayload {
   entry: EnrichedTimeEntry
   previousKind?: string | null
   docPath: string | null
+  pageIds?: number[]
 }
 
 export interface HookTarget {
@@ -84,6 +85,7 @@ export function hookDocument(payload: HookPayload, target: HookTarget): string {
     entry: payload.entry,
     previousKind: payload.previousKind ?? null,
     docPath: payload.docPath,
+    pageIds: payload.pageIds ?? [],
     databasePath: target.databasePath,
     docsRoot: target.docsRoot,
     firedAt: new Date().toISOString(),
