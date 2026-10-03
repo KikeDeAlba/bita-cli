@@ -16,6 +16,7 @@ export async function runProjects(argv: string[]): Promise<number> {
       key: project.key,
       name: project.name,
       active: project.active,
+      jira: project.jira,
       clientName: project.clientName,
       jiraProjectKey: config.projectMapping[String(project.id)]?.jiraProjectKey ?? null,
     }))
@@ -41,7 +42,7 @@ export async function runProjects(argv: string[]): Promise<number> {
           project.name,
           project.clientName ?? '',
           project.active ? 'yes' : 'no',
-          project.jiraProjectKey ?? '',
+          project.jira ? (project.jiraProjectKey ?? '') : 'never',
         ]),
       ),
     )

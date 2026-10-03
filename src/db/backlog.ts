@@ -216,7 +216,13 @@ export function setBacklogStatus(
 export function editBacklogItem(
   db: DatabaseSync,
   id: number,
-  fields: { title?: string | undefined; body?: string | undefined; kind?: BacklogKind | undefined; pageId?: number | null | undefined },
+  fields: {
+    title?: string | undefined
+    body?: string | undefined
+    kind?: BacklogKind | undefined
+    pageId?: number | null | undefined
+    projectId?: number | null | undefined
+  },
   now: string,
 ): boolean {
   const sets: string[] = []
@@ -236,6 +242,13 @@ export function editBacklogItem(
   if (fields.pageId !== undefined) {
     sets.push('page_id = ?')
     values.push(fields.pageId)
+  }
+  if (fields.projectId !== undefined) {
+    const current = queryOne<{ project_id: number | null }>(db.prepare('SELECT project_id FROM backlog_items WHERE id = ?'), id)
+    if (current !== undefined && current.project_id !== fields.projectId) {
+      sets.push('project_id = ?', 'seq = (SELECT COALESCE(MAX(seq), 0) + 1 FROM backlog_items WHERE project_id IS ?)')
+      values.push(fields.projectId, fields.projectId)
+    }
   }
   if (sets.length === 0) return false
   sets.push('updated_at = ?')

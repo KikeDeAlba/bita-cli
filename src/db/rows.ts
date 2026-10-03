@@ -6,6 +6,7 @@ export interface ProjectRow {
   key: string | null
   clientName: string | null
   active: boolean
+  jira: boolean
   externalId: number | null
   createdAt: string
 }
@@ -27,6 +28,7 @@ export interface EntryRow {
 
 export interface EntryWithProjectRow extends EntryRow {
   projectName: string | null
+  projectJira: boolean
   clientName: string | null
   registered: boolean
   issueKey: string | null

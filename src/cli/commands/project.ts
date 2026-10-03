@@ -10,6 +10,7 @@ import {
   insertProject,
   renameProject,
   setProjectActive,
+  setProjectJira,
   setProjectKey,
 } from '../../db/projects.ts'
 import { PROJECT_KEY_PATTERN, UNASSIGNED_KEY } from '../../db/project-keys.ts'
@@ -21,6 +22,7 @@ const OPTIONS = {
   force: { type: 'boolean' as const, default: false },
   yes: { type: 'boolean' as const, default: false },
   'dry-run': { type: 'boolean' as const, default: false },
+  'no-jira': { type: 'boolean' as const, default: false },
 }
 
 function requireProjectId(raw: string | undefined): number {
@@ -53,13 +55,14 @@ export async function runProject(argv: string[]): Promise<number> {
       const created = insertProject(ctx.db, {
         name,
         clientName: readString(args, 'client') ?? null,
+        jira: !readBoolean(args, 'no-jira'),
         createdAt: new Date().toISOString(),
       })
 
       if (json) {
         writeJson(successEnvelope('project add', created))
       } else {
-        writeOut(`Created project ${created.id}: ${created.name} (key ${created.key ?? '-'})`)
+        writeOut(`Created project ${created.id}: ${created.name} (key ${created.key ?? '-'})${created.jira ? '' : ', never sent to Jira'}`)
         writeOut('')
         writeOut('To track time for a repository against it, from inside that repository:')
         writeOut(`  bita repo set . ${created.id}`)
@@ -115,6 +118,25 @@ export async function runProject(argv: string[]): Promise<number> {
     })
   }
 
+  if (subcommand === 'jira') {
+    const usage = 'Usage: bita project jira <id|name|key> on|off'
+    const target = rest[0]
+    const value = rest[1]?.trim().toLowerCase()
+    if (target === undefined || (value !== 'on' && value !== 'off') || rest.length > 2) throw new UsageError(usage)
+
+    return withLocalContext(args, (ctx) => {
+      const project = resolveProjectArg(ctx.db, target)
+      const jira = value === 'on'
+      setProjectJira(ctx.db, project.id, jira)
+      if (json) writeJson(successEnvelope('project jira', { id: project.id, name: project.name, jira }))
+      else {
+        writeOut(jira ? `${project.name} goes to Jira again.` : `${project.name} no longer goes to Jira.`)
+        if (!jira) writeOut('Its time is still tracked and documented, and is reported apart from the Jira hours.')
+      }
+      return 0
+    })
+  }
+
   if (subcommand === 'archive') {
     const id = requireProjectId(rest[0])
     const activate = readBoolean(args, 'activate')
@@ -131,6 +153,6 @@ export async function runProject(argv: string[]): Promise<number> {
   }
 
   throw new UsageError(
-    'Usage: bita project add|rename|key|archive|delete. To list them, run "bita projects".',
+    'Usage: bita project add|rename|key|jira|archive|delete. To list them, run "bita projects".',
   )
 }

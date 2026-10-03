@@ -249,6 +249,8 @@ const BACKLOG_KEYS: readonly string[] = [
 
 const ENTRY_KIND: readonly string[] = [`ALTER TABLE entries ADD COLUMN kind TEXT`]
 
+const PROJECT_JIRA: readonly string[] = [`ALTER TABLE projects ADD COLUMN jira INTEGER NOT NULL DEFAULT 1`]
+
 function backfillBacklogKeys(db: DatabaseSync): void {
   backfillProjectKeys(db)
   backfillBacklogSequence(db)
@@ -266,6 +268,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 7, statements: BACKLOG_ITEMS },
   { version: 8, statements: BACKLOG_KEYS, run: backfillBacklogKeys },
   { version: 9, statements: ENTRY_KIND },
+  { version: 10, statements: PROJECT_JIRA },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

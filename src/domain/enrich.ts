@@ -41,6 +41,7 @@ export function enrichEntry(
     running: row.stoppedAt === null,
     mergedInto: row.mergedInto,
     kind: row.kind,
+    jira: row.projectJira,
   }
 }
 

@@ -112,3 +112,14 @@ test('version 9 adds a nullable kind to every entry, existing ones included', ()
   assert.ok(LATEST_VERSION >= 9)
   db.close()
 })
+
+test('version 10 lets a project stay out of Jira, every existing one in by default', () => {
+  const db = openMemoryDatabase()
+  const columns = db.prepare('PRAGMA table_info(projects)').all() as { name: string; dflt_value: string | null; notnull: number }[]
+  const jira = columns.find((column) => column.name === 'jira')
+  assert.ok(jira)
+  assert.equal(jira.notnull, 1)
+  assert.equal(jira.dflt_value, '1')
+  assert.ok(LATEST_VERSION >= 10)
+  db.close()
+})
