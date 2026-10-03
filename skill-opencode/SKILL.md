@@ -312,7 +312,16 @@ Devuelve un envelope con `data.groups`. Cada grupo es **una tarea de Jira**:
 - `partIndex` / `partCount` / `splitReason` — ver el tope de 8 horas.
 
 En `meta` vienen `excluded`, `alreadyRegistered`, `unmappedProjects`,
-`overlaps` y `warnings`.
+`nonJira`, `overlaps` y `warnings`.
+
+**Proyectos fuera de Jira.** Un proyecto con `jira: false` en `bita projects --json`
+(por ejemplo, Can Doo with Pet) se mide y se documenta, pero **nunca va a Jira**.
+Con `--pending`, sus entradas no aparecen en `groups` ni en `unmappedProjects`:
+quedan sumadas en `meta.nonJira` (`totalHuman` y `projects[]`). No propongas
+mapearlo, no lo pongas en la propuesta, y repórtalo aparte en una línea
+(«Fuera de Jira: 3h 30m de Can Doo with Pet»). `bita link` rechaza esas entradas
+con `NOT_A_JIRA_PROJECT`. Se marca con `bita project jira <proyecto> off`, y se
+revierte con `on`.
 
 ### 3. Triaje
 

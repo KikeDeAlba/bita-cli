@@ -89,7 +89,8 @@ function buildGroup(
   estimateStepSeconds: number,
 ): TaskGroup {
   const totalSeconds = worklogs.reduce((sum, slice) => sum + slice.durationSeconds, 0)
-  const estimateSeconds = roundUpToStep(totalSeconds, estimateStepSeconds)
+  const jira = base.sample.jira
+  const estimateSeconds = jira ? roundUpToStep(totalSeconds, estimateStepSeconds) : 0
   const entryIds = [...new Set(worklogs.map((slice) => slice.entryId))]
   const entriesInPart = base.entries.filter((entry) => entryIds.includes(entry.id))
   const days = [...new Set(worklogs.map((slice) => slice.localDay))].sort()
@@ -118,6 +119,7 @@ function buildGroup(
     partIndex,
     partCount,
     splitReason: partCount > 1 ? 'max-task-hours' : 'none',
+    jira,
   }
 }
 

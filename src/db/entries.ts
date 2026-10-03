@@ -20,6 +20,7 @@ interface RawEntry {
 
 export interface RawEntryWithProject extends RawEntry {
   project_name: string | null
+  project_jira: number | null
   client_name: string | null
   registered: number
   issue_key: string | null
@@ -28,6 +29,7 @@ export interface RawEntryWithProject extends RawEntry {
 const SELECT_WITH_PROJECT = `
   SELECT e.*,
          p.name AS project_name,
+         p.jira AS project_jira,
          p.client_name AS client_name,
          j.entry_id IS NOT NULL AS registered,
          j.issue_key AS issue_key
@@ -57,6 +59,7 @@ export function toEntryWithProject(raw: RawEntryWithProject): EntryWithProjectRo
   return {
     ...toEntry(raw),
     projectName: raw.project_name,
+    projectJira: raw.project_jira === null ? true : toBoolean(raw.project_jira),
     clientName: raw.client_name,
     registered: toBoolean(raw.registered),
     issueKey: raw.issue_key,

@@ -265,6 +265,7 @@ function runStatus(ctx: LocalContext, args: ParsedArgs, positional: string[], js
 async function runEdit(ctx: LocalContext, args: ParsedArgs, positional: string[], json: boolean): Promise<number> {
   const { id } = requireItem(ctx, positional[0])
   const rawPage = readString(args, 'page')
+  const rawProject = readString(args, 'project')
   const title = readString(args, 'title')
   if (title !== undefined && title.trim().length === 0) throw new UsageError('The title cannot be empty.')
   const changed = editBacklogItem(
@@ -275,10 +276,11 @@ async function runEdit(ctx: LocalContext, args: ParsedArgs, positional: string[]
       body: await readBody(args),
       kind: readKind(args, false),
       pageId: rawPage === undefined ? undefined : rawPage === '-' ? null : requirePage(ctx.db, readPositiveId(rawPage, 'page')).id,
+      projectId: rawProject === undefined ? undefined : resolveProjectArg(ctx.db, rawProject).id,
     },
     ctx.now.toISOString(),
   )
-  if (!changed) throw new UsageError('Nothing to edit. Pass --title, --md, --body, --kind or --page.')
+  if (!changed) throw new UsageError('Nothing to edit. Pass --title, --md, --body, --kind, --page or --project.')
   return reportItem('backlog edit', requireItem(ctx, String(id)), json, 'Edited')
 }
 

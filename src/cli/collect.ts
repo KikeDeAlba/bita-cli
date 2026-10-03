@@ -18,6 +18,7 @@ export interface CollectResult {
   range: ResolvedRange
   filter: RegistrationFilter
   selected: EnrichedTimeEntry[]
+  nonJira: EnrichedTimeEntry[]
   excluded: ExcludedEntry[]
   alreadyRegistered: { count: number; totalSeconds: number }
   overlaps: DayOverlap[]
@@ -78,15 +79,20 @@ export function collectEntries(
   const matched = inRange.filter((entry) => matchesRegistration(entry, filter))
 
   const selected: EnrichedTimeEntry[] = []
+  const nonJira: EnrichedTimeEntry[] = []
   const excluded: ExcludedEntry[] = []
 
-  const registeredEntries = inRange.filter((entry) => entry.registered)
+  const registeredEntries = inRange.filter((entry) => entry.registered && entry.jira)
   const alreadyRegistered = {
     count: registeredEntries.length,
     totalSeconds: registeredEntries.reduce((sum, entry) => sum + entry.durationSeconds, 0),
   }
 
   for (const entry of matched) {
+    if (filter === 'pending' && !entry.jira) {
+      if (!entry.running || options.includeRunning) nonJira.push(entry)
+      continue
+    }
     if (entry.running && !options.includeRunning) {
       excluded.push(toExcluded(entry, 'running'))
       continue
@@ -116,5 +122,5 @@ export function collectEntries(
   const overlaps = findOverlaps(inRange, ctx.now)
   for (const overlap of overlaps) warnings.push(describeOverlap(overlap))
 
-  return { range, filter, selected, excluded, alreadyRegistered, overlaps, warnings }
+  return { range, filter, selected, nonJira, excluded, alreadyRegistered, overlaps, warnings }
 }

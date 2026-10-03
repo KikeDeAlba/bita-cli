@@ -16,6 +16,7 @@ export interface EntryOverrides {
   running?: boolean
   mergedInto?: number | null
   kind?: string | null
+  jira?: boolean
 }
 
 export function makeEntry(overrides: EntryOverrides = {}): EnrichedTimeEntry {
@@ -44,5 +45,6 @@ export function makeEntry(overrides: EntryOverrides = {}): EnrichedTimeEntry {
     running: overrides.running ?? false,
     mergedInto: overrides.mergedInto ?? null,
     kind: overrides.kind ?? null,
+    jira: overrides.jira ?? true,
   }
 }

@@ -12,6 +12,7 @@ import { pagesForEntries, type SummaryPage } from '../../docs/page-read.ts'
 import { loadSummaryDocs, parseNotesMode } from '../../docs/read.ts'
 import { touchesByEntry } from '../../db/touches.ts'
 import { jiraTarget, readConfig, storyThemes } from '../../state/config.ts'
+import { partitionByJira, summarizeNonJira } from '../../domain/no-jira.ts'
 
 export async function runSummary(argv: string[]): Promise<number> {
   const args = parseCommandArgs(argv, {
@@ -101,7 +102,7 @@ export async function runSummary(argv: string[]): Promise<number> {
     const unmappedProjects = [
       ...new Map(
         withMapping
-          .filter((group) => group.projectId !== null && group.jiraProjectKey === null)
+          .filter((group) => group.jira && group.projectId !== null && group.jiraProjectKey === null)
           .map((group) => [
             group.projectId,
             { projectId: group.projectId, projectName: group.projectName },
@@ -110,6 +111,9 @@ export async function runSummary(argv: string[]): Promise<number> {
     ]
 
     const totalSeconds = groups.reduce((sum, group) => sum + group.totalSeconds, 0)
+    const jiraSeconds = groups.filter((group) => group.jira).reduce((sum, group) => sum + group.totalSeconds, 0)
+    const nonJira = summarizeNonJira([...result.nonJira, ...partitionByJira(result.selected).nonJira])
+    const nonJiraSeconds = nonJira.totalSeconds
     const splitCount = groups.filter((group) => group.partCount > 1).length
 
     if (splitCount > 0) {
@@ -122,7 +126,15 @@ export async function runSummary(argv: string[]): Promise<number> {
       writeJson(
         successEnvelope(
           'summary',
-          { totalSeconds, totalHuman: formatDuration(totalSeconds), groups: withMapping },
+          {
+            totalSeconds,
+            totalHuman: formatDuration(totalSeconds),
+            jiraSeconds,
+            jiraHuman: formatDuration(jiraSeconds),
+            nonJiraSeconds,
+            nonJiraHuman: formatDuration(nonJiraSeconds),
+            groups: withMapping,
+          },
           {
             range: {
               fromDay: result.range.fromDay,
@@ -139,6 +151,7 @@ export async function runSummary(argv: string[]): Promise<number> {
             alreadyRegistered: result.alreadyRegistered,
             overlaps: result.overlaps,
             unmappedProjects,
+            nonJira,
             notes: {
               root: ctx.docsRoot,
               matched: loaded.byEntry.size,
@@ -170,7 +183,7 @@ export async function runSummary(argv: string[]): Promise<number> {
         ],
         withMapping.map((group) => [
           group.projectName ?? '(no project)',
-          group.jiraProjectKey ?? '?',
+          group.jira ? (group.jiraProjectKey ?? '?') : 'never',
           group.jiraParentKey ?? (group.epicMode === 'per-run' ? '(board)' : ''),
           group.summary,
           group.days.length === 1
@@ -186,6 +199,13 @@ export async function runSummary(argv: string[]): Promise<number> {
     writeOut(
       `${groups.length} tasks, ${result.selected.length} entries, ${formatDuration(totalSeconds)} total.`,
     )
+
+    if (nonJira.entryCount > 0) {
+      writeOut('')
+      writeOut(
+        `Outside Jira: ${nonJira.totalHuman} (${nonJira.projects.map((project) => `${project.name ?? '(no project)'} ${project.totalHuman}`).join(', ')}), never uploaded.`,
+      )
+    }
 
     if (result.excluded.length > 0) {
       writeOut('')
