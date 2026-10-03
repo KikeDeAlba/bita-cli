@@ -68,7 +68,7 @@ Documents:
   docs page new "<title>"    A page in a space, or under --parent
   docs page write <id>       Write the body, or one --section, from --md
   docs page rename <id> "<t>"
-  docs page move <id> [--parent <id|->] [--position N]
+  docs page move <id> [--parent <id|->] [--project X] [--position N]
   docs page link <id>        Tie entries or Jira issues to the page
   docs page unlink <id>      Untie them
   docs page ref add <id>     Record a link the page relates to (--url, --title, --kind)

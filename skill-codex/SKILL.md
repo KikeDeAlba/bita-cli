@@ -685,6 +685,12 @@ bita amend <id> --kind remote-meeting            # a un contador que ya corre
 bita amend <id> --kind none                      # deja de ser reunión
 ```
 
+Al **parar** una reunión no se escribe la página ni se pasa `--did`: se corre
+`bita stop <id> --json` y después `recap wait --bita-entry <id> --json`. recap
+deja título, proyecto, página, backlog y minuta, y `/bita-stop` explica cómo
+reportarlo y qué hacer si `wrapup.projectResolved` es false. Para cambiarle el
+proyecto a una página que ya existe: `bita docs page move <pageId> --project <X>`.
+
 `bita setup` instala recap (app, CLI, plugin, modelos y hook). Si `bita hooks`
 no lo muestra, sugiere correr `bita setup` antes de prometer que se grabará.
 

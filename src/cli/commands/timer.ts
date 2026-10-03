@@ -73,18 +73,25 @@ function readKind(args: ParsedArgs): string | null {
   return raw === undefined ? null : parseKind(raw)
 }
 
+function assertDidHasPage(ctx: LocalContext, entryIds: readonly number[], args: ParsedArgs): void {
+  if (readString(args, 'did') === undefined) return
+  for (const entryId of entryIds) {
+    if (pagesOfEntry(ctx.db, entryId).length === 0) {
+      throw new ConflictError(
+        `Entry #${entryId} does not belong to a page yet.`,
+        'ENTRY_WITHOUT_PAGE',
+        'bita docs page link <pageId> --entry ' + String(entryId),
+      )
+    }
+  }
+}
+
 function recordDid(ctx: LocalContext, entryId: number, args: ParsedArgs): void {
   const did = readString(args, 'did')
   if (did === undefined) return
 
+  assertDidHasPage(ctx, [entryId], args)
   const links = pagesOfEntry(ctx.db, entryId)
-  if (links.length === 0) {
-    throw new ConflictError(
-      `Entry #${entryId} does not belong to a page yet.`,
-      'ENTRY_WITHOUT_PAGE',
-      'bita docs page link <pageId> --entry ' + String(entryId),
-    )
-  }
   const summary = did.trim().slice(0, DID_MAX)
   for (const link of links) linkEntryToPage(ctx.db, link.pageId, entryId, summary, ctx.now.toISOString())
 }
@@ -354,27 +361,34 @@ export async function runStop(argv: string[]): Promise<number> {
     const at = readString(args, 'at')
     const stoppedAt = at === undefined ? ctx.now.toISOString() : parseClockTime(at, ctx.now, '--at').toISOString()
     const seed = await loadDocSeed(args)
+    assertDidHasPage(
+      ctx,
+      targets.map((target) => target.id),
+      args,
+    )
 
     const stopped: EnrichedTimeEntry[] = []
     const payloads: HookPayload[] = []
     let docPath: string | null = null
-    for (const target of targets) {
-      const snapshot = enrich(ctx, { ...target, stoppedAt })
-      stopEntry(ctx.db, target.id, stoppedAt, ctx.now.toISOString())
-      if (targets.length === 1) {
-        recordArtifacts(ctx, target.id, args)
-        docPath = await recordDoc(ctx, target.id, seed, 'stop', seed !== null)
+    let hooksFired = 0
+    try {
+      for (const target of targets) {
+        const snapshot = enrich(ctx, { ...target, stoppedAt })
+        stopEntry(ctx.db, target.id, stoppedAt, ctx.now.toISOString())
+        const payload: HookPayload = { event: 'stop', entry: snapshot, docPath: null }
+        payloads.push(payload)
+        if (targets.length === 1) {
+          recordArtifacts(ctx, target.id, args)
+          docPath = await recordDoc(ctx, target.id, seed, 'stop', seed !== null)
+        }
+        recordDid(ctx, target.id, args)
+        stopped.push(snapshot)
+        const stored = findDocForEntry(ctx.db, target.id)
+        payload.docPath = stored ? resolveDocPath(ctx.docsRoot, stored.relPath) : null
       }
-      recordDid(ctx, target.id, args)
-      stopped.push(snapshot)
-      const stored = findDocForEntry(ctx.db, target.id)
-      payloads.push({
-        event: 'stop',
-        entry: snapshot,
-        docPath: stored ? resolveDocPath(ctx.docsRoot, stored.relPath) : null,
-      })
+    } finally {
+      hooksFired = await emitHooks(ctx, payloads)
     }
-    const hooksFired = await emitHooks(ctx, payloads)
 
     if (json) {
       writeJson(
