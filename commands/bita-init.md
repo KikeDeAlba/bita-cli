@@ -39,7 +39,9 @@ bita map set <projectId> <JIRAKEY> --parent <JIRAKEY-123>
 ```
 
 No inventes la clave del tablero ni la épica: pregúntamelas, o búscalas con el
-conector de Atlassian y enséñame los candidatos.
+conector de Atlassian y enséñame los candidatos. Si `bita project show <proyecto>
+--json` dice `atlassian.via: "cli"`, búscalas con `bita jira project ls` y
+`bita jira issue search --jql …` en vez del conector.
 
 Cierra diciéndome en una línea que a partir de la próxima sesión en ese
 repositorio te ofrecerás a arrancar el cronómetro.

@@ -1,5 +1,9 @@
 export type EntrySource = 'timer' | 'manual' | 'import'
 
+export type AtlassianVia = 'mcp' | 'cli'
+
+export type ConfluenceKind = 'space' | 'page'
+
 export interface ProjectRow {
   id: number
   name: string
@@ -9,6 +13,13 @@ export interface ProjectRow {
   jira: boolean
   externalId: number | null
   createdAt: string
+  atlassianSite: string | null
+  atlassianVia: AtlassianVia
+  confluenceRef: string | null
+  confluenceKind: ConfluenceKind | null
+  syncPull: boolean
+  syncPush: boolean
+  lastSyncAt: string | null
 }
 
 export interface EntryRow {

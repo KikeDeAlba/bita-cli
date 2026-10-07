@@ -20,6 +20,8 @@ import { runLink } from './commands/link.ts'
 import { runMerge } from './commands/merge.ts'
 import { runBacklog } from './commands/backlog.ts'
 import { runConfluence } from './commands/confluence.ts'
+import { runAtlassian } from './commands/atlassian.ts'
+import { runJira } from './commands/jira.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
@@ -51,11 +53,38 @@ Backlog (pending work and findings, kept out of the pages):
   backlog edit|rm <key>      Change or remove an item (edit --project moves it and gives it that project's key)
   backlog extract            Move the pending and findings sections out of the pages (--dry-run)
 
-Confluence (REST API, token in the macOS Keychain):
-  confluence login           Save your Atlassian e-mail and API token (run it in a terminal)
+Atlassian sites (REST API, token in the macOS Keychain under <site>|<email>):
+  atlassian site add         Add a site: --site URL --email E (asks for the token; --token-stdin without a terminal)
+  atlassian site ls          Sites, whether the token is stored, and which projects use them (--check hits the network)
+  atlassian site test <site> Check Jira and Confluence with the stored token
+  atlassian site rm <site>   Forget the site and its token (--force when a project uses it)
+  project atlassian <p>      --site S|none, --via mcp|cli, --confluence URL|SPACEKEY|none, --pull on|off, --push on|off
+  project show <p>           A project and its Atlassian settings
+
+Jira (every command takes --site; default: the project's site, then the first):
+  jira myself | jira project ls [--query Q]
+  jira issue get KEY         Summary, status, parent, description as markdown
+  jira issue create --project KEY --type T --summary S [--description-file F] [--parent KEY] [--field k=v ...]
+  jira issue edit KEY        --summary, --description[-file], --field k=v
+  jira issue transitions KEY | jira issue transition KEY --to NAME|ID
+  jira issue search --jql Q [--limit N]
+  jira issue createmeta --project KEY [--type T]
+  jira worklog add KEY --started ISO --seconds N [--comment S]
+  jira comment add KEY --body S|--body-file F
+  jira link --from KEY --to KEY --type NAME
+
+Confluence (every command takes --site):
+  confluence login           Alias of "atlassian site add"
   confluence status|logout   Check the login, or forget the token
   confluence attach <id> <files...>   Upload or replace attachments on a Confluence page
   confluence publish-diagrams <pageId> --to <id>   Render a page's diagrams and upload PNG + source
+  confluence page get <id> [--markdown]
+  confluence page create --space KEY|--parent ID --title T (--file F|--body S)
+  confluence page update <id> (--file F|--body S) [--title T] [--message M]   Markdown; --storage sends it as is
+  confluence page search --cql Q | confluence page children <id>
+  confluence sync <project>|--all [--dry-run]   Mirror the page tree with its Confluence page or space
+  confluence sync status <project>              Each tied page and which way it would go (--offline)
+  confluence conflict ls [project] | conflict resolve <pageId> --keep local|remote
 
 Documents:
   docs tree [--months]       Projects with their document and entry counts
@@ -63,6 +92,7 @@ Documents:
   docs ls [--project X]      Entries and their documents, newest first
   docs show <id|--path P>    One document: markdown, front matter, sections
   docs search "<text>"       Search every document, with snippets
+  docs search "<text>" --pages  Search by page: its markdown plus the notes of its entries
   docs page ls [--tree]      Pages, flat or as the tree
   docs page show <id>        One page: outline, tasks, work log, subpages
   docs page new "<title>"    A page in a space, or under --parent
@@ -271,6 +301,10 @@ export async function route(argv: string[]): Promise<number> {
       return runBacklog(rest)
     case 'confluence':
       return runConfluence(rest)
+    case 'atlassian':
+      return runAtlassian(rest)
+    case 'jira':
+      return runJira(rest)
     case 'start':
       return runStart(rest)
     case 'stop':

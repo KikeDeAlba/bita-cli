@@ -123,3 +123,38 @@ test('version 10 lets a project stay out of Jira, every existing one in by defau
   assert.ok(LATEST_VERSION >= 10)
   db.close()
 })
+
+test('version 11 gives projects their Atlassian settings and maps pages to Confluence', () => {
+  const db = openMemoryDatabase()
+  const columns = db.prepare('PRAGMA table_info(projects)').all() as { name: string; dflt_value: string | null; notnull: number }[]
+  const byName = new Map(columns.map((column) => [column.name, column]))
+  assert.equal(byName.get('atlassian_via')?.dflt_value, "'mcp'")
+  assert.equal(byName.get('sync_pull')?.dflt_value, '0')
+  assert.equal(byName.get('sync_push')?.notnull, 1)
+  assert.ok(byName.has('atlassian_site'))
+  assert.ok(byName.has('confluence_ref'))
+  assert.ok(byName.has('confluence_kind'))
+  assert.ok(byName.has('last_sync_at'))
+  assert.ok(LATEST_VERSION >= 11)
+
+  const now = '2026-10-06T00:00:00.000Z'
+  db.prepare("INSERT INTO projects (id, name, created_at) VALUES (1, 'P', ?)").run(now)
+  assert.throws(() => db.prepare("UPDATE projects SET atlassian_via = 'rest' WHERE id = 1").run(), /CHECK/i)
+  assert.throws(() => db.prepare("UPDATE projects SET confluence_kind = 'blog' WHERE id = 1").run(), /CHECK/i)
+
+  db.prepare(
+    "INSERT INTO doc_pages (id, project_id, slug, title, rel_path, source, created_at, recorded_at) VALUES (1, 1, 'a', 'A', 'p/a.md', 'cli', ?, ?)",
+  ).run(now, now)
+  const insert = db.prepare(
+    `INSERT INTO confluence_page_map (page_id, site, confluence_id, confluence_version, local_checksum, state, synced_at)
+     VALUES (?, 'https://x.atlassian.net', ?, 1, 'sha256:a', ?, ?)`,
+  )
+  insert.run(1, '100', 'synced', now)
+  assert.throws(() => insert.run(1, '101', 'synced', now), /UNIQUE|PRIMARY/i)
+  db.prepare("INSERT INTO doc_pages (id, project_id, slug, title, rel_path, source, created_at, recorded_at) VALUES (2, 1, 'b', 'B', 'p/b.md', 'cli', ?, ?)").run(now, now)
+  assert.throws(() => insert.run(2, '100', 'synced', now), /UNIQUE/i)
+  assert.throws(() => insert.run(2, '102', 'stale', now), /CHECK/i)
+  db.prepare('DELETE FROM doc_pages WHERE id = 1').run()
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM confluence_page_map').get() as { n: number }).n, 0)
+  db.close()
+})

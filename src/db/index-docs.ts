@@ -346,3 +346,43 @@ export function listSearchCandidates(db: DatabaseSync, filter: DocIndexFilter = 
   }
   return candidates
 }
+
+export interface PageNoteRow {
+  pageId: number
+  entryId: number
+  startedAt: string
+  relPath: string
+  checksum: string
+  byteSize: number
+}
+
+export function listPageNotes(db: DatabaseSync, projectId?: number | null): PageNoteRow[] {
+  const scoped = projectId === undefined ? '' : 'WHERE IFNULL(p.project_id, 0) = IFNULL(?, 0)'
+  const params: SQLInputValue[] = projectId === undefined ? [] : [projectId]
+  return queryAll<{
+    page_id: number
+    entry_id: number
+    started_at: string
+    rel_path: string
+    checksum: string
+    byte_size: number
+  }>(
+    db.prepare(
+      `SELECT DISTINCT pe.page_id, e.id AS entry_id, e.started_at, d.rel_path, d.checksum, d.byte_size
+       FROM page_entries pe
+       JOIN doc_pages p ON p.id = pe.page_id
+       JOIN entries e ON e.id = pe.entry_id OR e.merged_into = pe.entry_id
+       JOIN entry_docs d ON d.entry_id = e.id AND d.kind = 'note'
+       ${scoped}
+       ORDER BY pe.page_id, e.started_at DESC, e.id DESC`,
+    ),
+    ...params,
+  ).map((row) => ({
+    pageId: row.page_id,
+    entryId: row.entry_id,
+    startedAt: row.started_at,
+    relPath: row.rel_path,
+    checksum: row.checksum,
+    byteSize: row.byte_size,
+  }))
+}

@@ -1,6 +1,6 @@
-import { UsageError } from '../../errors.ts'
-import { parseCommandArgs, readBoolean, readString } from '../args.ts'
-import { withLocalContext } from '../local-context.ts'
+import { NotFoundError, UsageError } from '../../errors.ts'
+import { parseCommandArgs, readBoolean, readString, type ParsedArgs } from '../args.ts'
+import { createLocalContext, withLocalContext } from '../local-context.ts'
 import { runProjectDelete } from './delete.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import {
@@ -10,9 +10,15 @@ import {
   insertProject,
   renameProject,
   setProjectActive,
+  setProjectAtlassian,
   setProjectJira,
   setProjectKey,
+  type ProjectAtlassianUpdate,
 } from '../../db/projects.ts'
+import type { ProjectRow } from '../../db/rows.ts'
+import { parseConfluenceRef, projectAtlassianView } from '../../atlassian/project-view.ts'
+import { findSite, loadAtlassianConfig, sitesOf } from '../../atlassian/sites.ts'
+import type { AppConfig } from '../../state/config.ts'
 import { PROJECT_KEY_PATTERN, UNASSIGNED_KEY } from '../../db/project-keys.ts'
 import { resolveProjectArg } from '../project-arg.ts'
 
@@ -23,6 +29,11 @@ const OPTIONS = {
   yes: { type: 'boolean' as const, default: false },
   'dry-run': { type: 'boolean' as const, default: false },
   'no-jira': { type: 'boolean' as const, default: false },
+  site: { type: 'string' as const },
+  via: { type: 'string' as const },
+  confluence: { type: 'string' as const },
+  pull: { type: 'string' as const },
+  push: { type: 'string' as const },
 }
 
 function requireProjectId(raw: string | undefined): number {
@@ -137,6 +148,22 @@ export async function runProject(argv: string[]): Promise<number> {
     })
   }
 
+  if (subcommand === 'show') {
+    const target = rest[0]
+    if (target === undefined || rest.length > 1) throw new UsageError('Usage: bita project show <id|name|key>')
+    return runProjectShow(args, target, json)
+  }
+
+  if (subcommand === 'atlassian') {
+    const target = rest[0]
+    if (target === undefined || rest.length > 1) {
+      throw new UsageError(
+        'Usage: bita project atlassian <id|name|key> [--site S|none] [--via mcp|cli] [--confluence URL|SPACEKEY|none] [--pull on|off] [--push on|off]',
+      )
+    }
+    return runProjectAtlassian(args, target, json)
+  }
+
   if (subcommand === 'archive') {
     const id = requireProjectId(rest[0])
     const activate = readBoolean(args, 'activate')
@@ -153,6 +180,129 @@ export async function runProject(argv: string[]): Promise<number> {
   }
 
   throw new UsageError(
-    'Usage: bita project add|rename|key|jira|archive|delete. To list them, run "bita projects".',
+    'Usage: bita project add|show|rename|key|jira|atlassian|archive|delete. To list them, run "bita projects".',
   )
+}
+
+export function atlassianOf(project: ProjectRow, config: AppConfig) {
+  return projectAtlassianView(project, sitesOf(config)[0]?.site ?? null)
+}
+
+async function runProjectShow(args: ParsedArgs, target: string, json: boolean): Promise<number> {
+  const config = await loadAtlassianConfig()
+  const ctx = createLocalContext(args)
+  try {
+    const project = resolveProjectArg(ctx.db, target)
+    const data = {
+      id: project.id,
+      key: project.key,
+      name: project.name,
+      clientName: project.clientName,
+      active: project.active,
+      jira: project.jira,
+      jiraProjectKey: config.projectMapping[String(project.id)]?.jiraProjectKey ?? null,
+      atlassian: atlassianOf(project, config),
+    }
+    if (json) {
+      writeJson(successEnvelope('project show', data))
+      return 0
+    }
+    writeOut(`${project.id}  ${project.name} (key ${project.key ?? '-'})`)
+    writeAtlassian(data.atlassian)
+    return 0
+  } finally {
+    ctx.db.close()
+  }
+}
+
+function writeAtlassian(view: ReturnType<typeof atlassianOf>): void {
+  writeOut(`Atlassian site : ${view.site ?? '(default)'}`)
+  writeOut(`Through        : ${view.via === 'cli' ? 'bita jira / bita confluence' : 'the Atlassian MCP'}`)
+  const confluence = view.confluence
+  writeOut(
+    `Confluence     : ${
+      confluence === null
+        ? '(none)'
+        : `${confluence.kind} ${confluence.kind === 'space' ? (confluence.spaceKey ?? '') : (confluence.title ?? confluence.pageId ?? '')}${confluence.url ? `  ${confluence.url}` : ''}`
+    }`,
+  )
+  writeOut(`Sync           : pull ${view.sync.pull ? 'on' : 'off'}, push ${view.sync.push ? 'on' : 'off'}${view.sync.lastSyncAt ? `, last ${view.sync.lastSyncAt}` : ''}`)
+}
+
+function onOff(args: ParsedArgs, name: string): boolean | undefined {
+  const raw = readString(args, name)
+  if (raw === undefined) return undefined
+  const value = raw.trim().toLowerCase()
+  if (value === 'on' || value === 'true' || value === 'yes') return true
+  if (value === 'off' || value === 'false' || value === 'no') return false
+  throw new UsageError(`--${name} takes on or off, not "${raw}".`)
+}
+
+async function runProjectAtlassian(args: ParsedArgs, target: string, json: boolean): Promise<number> {
+  const config = await loadAtlassianConfig()
+  const ctx = createLocalContext(args)
+  try {
+    const project = resolveProjectArg(ctx.db, target)
+    const update: ProjectAtlassianUpdate = {}
+    const warnings: string[] = []
+
+    const siteRaw = readString(args, 'site')
+    if (siteRaw !== undefined) {
+      if (siteRaw.trim().toLowerCase() === 'none') update.site = null
+      else {
+        const entry = findSite(config, siteRaw)
+        if (!entry) {
+          throw new NotFoundError(
+            `There is no login for ${siteRaw}.`,
+            'ATLASSIAN_SITE_NOT_FOUND',
+            'Add it first with "bita atlassian site add --site <url> --email <you@company.com>".',
+          )
+        }
+        update.site = entry.site
+      }
+    }
+
+    const via = readString(args, 'via')
+    if (via !== undefined) {
+      if (via !== 'mcp' && via !== 'cli') throw new UsageError(`--via takes mcp or cli, not "${via}".`)
+      update.via = via
+    }
+
+    const confluenceRaw = readString(args, 'confluence')
+    if (confluenceRaw !== undefined) {
+      const parsed = parseConfluenceRef(confluenceRaw)
+      update.confluence = parsed === null ? null : { ref: parsed.ref, kind: parsed.kind }
+      if (parsed?.site) {
+        const current = update.site !== undefined ? update.site : project.atlassianSite
+        if (current === null && update.site === undefined && findSite(config, parsed.site)) update.site = parsed.site
+        else if (current !== null && current !== parsed.site) {
+          warnings.push(`The Confluence URL is on ${parsed.site}, but the project works against ${current}.`)
+        }
+        if (!findSite(config, parsed.site)) warnings.push(`There is no login for ${parsed.site} yet.`)
+      }
+    }
+
+    const pull = onOff(args, 'pull')
+    const push = onOff(args, 'push')
+    if (pull !== undefined) update.syncPull = pull
+    if (push !== undefined) update.syncPush = push
+
+    setProjectAtlassian(ctx.db, project.id, update)
+    const updated = resolveProjectArg(ctx.db, String(project.id))
+    if ((updated.syncPull || updated.syncPush) && updated.confluenceRef === null) {
+      warnings.push('Sync is on, but there is no Confluence page or space to sync with: pass --confluence.')
+    }
+
+    const data = { id: updated.id, name: updated.name, atlassian: atlassianOf(updated, config), warnings }
+    if (json) {
+      writeJson(successEnvelope('project atlassian', data))
+      return 0
+    }
+    writeOut(`${updated.name}:`)
+    writeAtlassian(data.atlassian)
+    for (const warning of warnings) writeOut(`Warning: ${warning}`)
+    return 0
+  } finally {
+    ctx.db.close()
+  }
 }

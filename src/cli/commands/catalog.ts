@@ -4,6 +4,7 @@ import { renderTable } from '../table.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { listProjects } from '../../db/projects.ts'
 import { readConfig } from '../../state/config.ts'
+import { atlassianOf } from './project.ts'
 
 export async function runProjects(argv: string[]): Promise<number> {
   const args = parseCommandArgs(argv, { all: { type: 'boolean', default: false } })
@@ -19,6 +20,7 @@ export async function runProjects(argv: string[]): Promise<number> {
       jira: project.jira,
       clientName: project.clientName,
       jiraProjectKey: config.projectMapping[String(project.id)]?.jiraProjectKey ?? null,
+      atlassian: atlassianOf(project, config),
     }))
 
     if (readBoolean(args, 'json')) {
