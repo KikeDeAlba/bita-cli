@@ -11,7 +11,7 @@ import {
   type DocIndexFilter,
   type EntryDocIndexRow,
 } from '../../db/index-docs.ts'
-import { listProjects } from '../../db/projects.ts'
+import { findProjectById, listProjects } from '../../db/projects.ts'
 import type { EntryDocRow } from '../../db/docs.ts'
 import type { EntryWithProjectRow } from '../../db/rows.ts'
 import { resolveDateRange, type ResolvedRange } from '../../domain/date-range.ts'
@@ -42,6 +42,7 @@ import { migratePages, undoMigration } from '../../docs/migrate-pages.ts'
 import { pageTree, runDocsPage } from './docs-page.ts'
 import { runDiagrams } from './diagrams.ts'
 import { readConfig } from '../../state/config.ts'
+import { atlassianOf } from './project.ts'
 
 const OPTIONS = {
   project: { type: 'string' as const },
@@ -390,7 +391,8 @@ export interface SpaceProject {
 }
 
 async function spacesWithPages(ctx: LocalContext, projects: readonly SpaceProject[]): Promise<unknown[]> {
-  const pageCtx = { ...ctx, siteUrl: (await readConfig()).jira?.siteUrl }
+  const config = await readConfig()
+  const pageCtx = { ...ctx, siteUrl: config.jira?.siteUrl }
   const roots = pageTree(pageCtx)
 
   const byProject = new Map<number | null, ReturnType<typeof pageTree>>()
@@ -410,6 +412,7 @@ async function spacesWithPages(ctx: LocalContext, projects: readonly SpaceProjec
 
   return spaces.map((project) => {
     const pages = byProject.get(project.projectId) ?? []
+    const row = project.projectId === null ? undefined : catalogue.find((candidate) => candidate.id === project.projectId) ?? findProjectById(ctx.db, project.projectId)
     return {
       projectId: project.projectId,
       projectName: project.projectName,
@@ -417,6 +420,7 @@ async function spacesWithPages(ctx: LocalContext, projects: readonly SpaceProjec
       active: project.active,
       entryCount: project.entryCount,
       pageCount: countPages(pages),
+      atlassian: row ? atlassianOf(row, config) : null,
       pages,
     }
   })

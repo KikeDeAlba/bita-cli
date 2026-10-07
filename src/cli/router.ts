@@ -20,6 +20,8 @@ import { runLink } from './commands/link.ts'
 import { runMerge } from './commands/merge.ts'
 import { runBacklog } from './commands/backlog.ts'
 import { runConfluence } from './commands/confluence.ts'
+import { runAtlassian } from './commands/atlassian.ts'
+import { runJira } from './commands/jira.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
@@ -271,6 +273,10 @@ export async function route(argv: string[]): Promise<number> {
       return runBacklog(rest)
     case 'confluence':
       return runConfluence(rest)
+    case 'atlassian':
+      return runAtlassian(rest)
+    case 'jira':
+      return runJira(rest)
     case 'start':
       return runStart(rest)
     case 'stop':
