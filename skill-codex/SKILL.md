@@ -141,7 +141,7 @@ Si `sync.pull` o `sync.push` está encendido, bita mantiene esas páginas al dí
 con `bita confluence sync <proyecto> --json` (primero `--dry-run`). Un cambio de
 los dos lados queda como conflicto y nunca se sobrescribe: enséñaselo al usuario
 y resuélvelo solo con su respuesta, con `bita confluence conflict resolve
-<pageId> --keep local|remote`.
+<pageId> --keep local|remote|both`.
 
 Si un comando falla con `ATLASSIAN_LOGIN_REQUIRED`, `JIRA_AUTH` o
 `CONFLUENCE_AUTH`, **para** y pide al usuario que corra `bita atlassian site add

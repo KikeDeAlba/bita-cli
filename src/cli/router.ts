@@ -22,7 +22,7 @@ import { runBacklog } from './commands/backlog.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '0.15.1'
+export const VERSION = '0.15.2'
 
 const HELP = `bita ${VERSION}
 
@@ -81,7 +81,7 @@ Confluence (every command takes --site):
   confluence page search --cql Q | confluence page children <id>
   confluence sync <project>|--all [--dry-run]   Mirror the page tree with its Confluence page or space
   confluence sync status <project>              Each tied page and which way it would go (--offline)
-  confluence conflict ls [project] | conflict resolve <pageId> --keep local|remote
+  confluence conflict ls [project] | conflict resolve <pageId> --keep local|remote|both
 
 Documents:
   docs tree [--months]       Projects with their document and entry counts

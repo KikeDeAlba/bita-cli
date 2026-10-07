@@ -79,3 +79,8 @@ test('Confluence macros come back as markdown or as a placeholder', () => {
     ].join('\n\n'),
   )
 })
+
+test('a code macro whose language is none comes back as a plain fence', () => {
+  const storage = '<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">none</ac:parameter><ac:plain-text-body><![CDATA[curl -X POST]]></ac:plain-text-body></ac:structured-macro>'
+  assert.equal(storageToMarkdown(storage), '```\ncurl -X POST\n```')
+})
