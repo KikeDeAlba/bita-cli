@@ -19,13 +19,10 @@ import { runHooks } from './commands/hooks.ts'
 import { runLink } from './commands/link.ts'
 import { runMerge } from './commands/merge.ts'
 import { runBacklog } from './commands/backlog.ts'
-import { runConfluence } from './commands/confluence.ts'
-import { runAtlassian } from './commands/atlassian.ts'
-import { runJira } from './commands/jira.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '0.15.0'
+export const VERSION = '0.15.1'
 
 const HELP = `bita ${VERSION}
 
@@ -300,11 +297,11 @@ export async function route(argv: string[]): Promise<number> {
     case 'backlog':
       return runBacklog(rest)
     case 'confluence':
-      return runConfluence(rest)
+      return (await import('./commands/confluence.ts')).runConfluence(rest)
     case 'atlassian':
-      return runAtlassian(rest)
+      return (await import('./commands/atlassian.ts')).runAtlassian(rest)
     case 'jira':
-      return runJira(rest)
+      return (await import('./commands/jira.ts')).runJira(rest)
     case 'start':
       return runStart(rest)
     case 'stop':
