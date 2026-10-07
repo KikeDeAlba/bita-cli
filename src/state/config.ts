@@ -53,11 +53,25 @@ export interface JiraConfig {
   email?: string
 }
 
+export interface AtlassianSiteConfig {
+  site: string
+  email: string
+  jira?: boolean | null
+  confluence?: boolean | null
+  displayName?: string
+  checkedAt?: string
+}
+
+export interface AtlassianConfig {
+  sites: AtlassianSiteConfig[]
+}
+
 export interface AppConfig {
   version: number
   workspaceId?: number
   timezone?: string
   jira?: JiraConfig
+  atlassian?: AtlassianConfig
   defaults?: { issueTypeName?: string; pendingTagName?: string; storyThemes?: StoryTheme[] }
   projectMapping: Record<string, ProjectMapping>
   scopeMapping: Record<string, ScopeMapping>
@@ -120,6 +134,36 @@ export function migrateLegacyKeys(parsed: Partial<AppConfig>): Partial<AppConfig
   return { ...withoutLegacy, projectMapping, scopeMapping }
 }
 
+export function normalizeSiteUrl(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return null
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+  let parsed: URL
+  try {
+    parsed = new URL(withScheme)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'https:' || parsed.hostname.length === 0 || !parsed.hostname.includes('.')) return null
+  return `https://${parsed.host.toLowerCase()}`
+}
+
+function atlassianSection(parsed: Partial<AppConfig>): AtlassianConfig | undefined {
+  const sites = Array.isArray(parsed.atlassian?.sites)
+    ? parsed.atlassian.sites.filter(
+        (entry): entry is AtlassianSiteConfig => typeof entry?.site === 'string' && typeof entry.email === 'string',
+      )
+    : undefined
+  if (sites !== undefined) return { sites }
+
+  const siteUrl = parsed.jira?.siteUrl
+  const email = parsed.jira?.email
+  if (!siteUrl || !email) return undefined
+  const site = normalizeSiteUrl(siteUrl)
+  if (site === null) return undefined
+  return { sites: [{ site, email }] }
+}
+
 export async function readConfig(configPath = CONFIG_PATH): Promise<AppConfig> {
   try {
     let raw: string
@@ -130,11 +174,13 @@ export async function readConfig(configPath = CONFIG_PATH): Promise<AppConfig> {
     }
     const parsed = migrateLegacyKeys(JSON.parse(raw) as Partial<AppConfig>)
     const hooks = parseHooks(parsed.hooks)
+    const atlassian = atlassianSection(parsed)
     return {
       version: parsed.version ?? 1,
       ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
       ...(parsed.timezone !== undefined ? { timezone: parsed.timezone } : {}),
       ...(parsed.jira !== undefined ? { jira: parsed.jira } : {}),
+      ...(atlassian !== undefined ? { atlassian } : {}),
       ...(parsed.defaults !== undefined ? { defaults: parsed.defaults } : {}),
       projectMapping: parsed.projectMapping ?? {},
       scopeMapping: parsed.scopeMapping ?? {},

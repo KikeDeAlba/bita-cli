@@ -251,6 +251,26 @@ const ENTRY_KIND: readonly string[] = [`ALTER TABLE entries ADD COLUMN kind TEXT
 
 const PROJECT_JIRA: readonly string[] = [`ALTER TABLE projects ADD COLUMN jira INTEGER NOT NULL DEFAULT 1`]
 
+const PROJECT_ATLASSIAN: readonly string[] = [
+  `ALTER TABLE projects ADD COLUMN atlassian_site TEXT`,
+  `ALTER TABLE projects ADD COLUMN atlassian_via TEXT NOT NULL DEFAULT 'mcp' CHECK (atlassian_via IN ('mcp', 'cli'))`,
+  `ALTER TABLE projects ADD COLUMN confluence_ref TEXT`,
+  `ALTER TABLE projects ADD COLUMN confluence_kind TEXT CHECK (confluence_kind IS NULL OR confluence_kind IN ('space', 'page'))`,
+  `ALTER TABLE projects ADD COLUMN sync_pull INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE projects ADD COLUMN sync_push INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE projects ADD COLUMN last_sync_at TEXT`,
+  `CREATE TABLE confluence_page_map (
+     page_id INTEGER PRIMARY KEY REFERENCES doc_pages (id) ON DELETE CASCADE,
+     site TEXT NOT NULL,
+     confluence_id TEXT NOT NULL,
+     confluence_version INTEGER NOT NULL,
+     local_checksum TEXT NOT NULL,
+     state TEXT NOT NULL CHECK (state IN ('synced', 'conflict')),
+     synced_at TEXT NOT NULL
+   )`,
+  `CREATE UNIQUE INDEX confluence_page_map_remote ON confluence_page_map (site, confluence_id)`,
+]
+
 function backfillBacklogKeys(db: DatabaseSync): void {
   backfillProjectKeys(db)
   backfillBacklogSequence(db)
@@ -269,6 +289,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 8, statements: BACKLOG_KEYS, run: backfillBacklogKeys },
   { version: 9, statements: ENTRY_KIND },
   { version: 10, statements: PROJECT_JIRA },
+  { version: 11, statements: PROJECT_ATLASSIAN },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

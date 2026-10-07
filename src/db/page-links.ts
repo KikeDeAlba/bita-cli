@@ -234,8 +234,8 @@ export interface PageMeeting {
 export function meetingsOfPage(db: DatabaseSync, pageId: number): PageMeeting[] {
   return queryAll<{ id: number; kind: string; started_at: string; stopped_at: string | null }>(
     db.prepare(
-      `SELECT e.id, e.kind, e.started_at, e.stopped_at
-       FROM page_entries pe JOIN entries e ON e.id = pe.entry_id
+      `SELECT DISTINCT e.id, e.kind, e.started_at, e.stopped_at
+       FROM page_entries pe JOIN entries e ON e.id = pe.entry_id OR e.merged_into = pe.entry_id
        WHERE pe.page_id = ? AND e.kind IN (${MEETING_KINDS.map(() => '?').join(', ')})
        ORDER BY e.started_at`,
     ),
