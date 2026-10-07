@@ -1,5 +1,5 @@
 import type { SearchCandidateRow } from '../db/index-docs.ts'
-import { inspectDocFile, type DocFileState } from './inspect.ts'
+import { inspectDocFile, type DocFileRef, type DocFileState } from './inspect.ts'
 
 export interface Match {
   offset: number
@@ -17,6 +17,7 @@ export interface MatchOptions {
   context?: number
   max?: number
   section?: string
+  skipFrontMatter?: boolean
 }
 
 export interface FoundMatches {
@@ -30,11 +31,19 @@ export interface ScanOptions extends MatchOptions {
   concurrency?: number
 }
 
-export interface ScannedDocument {
-  candidate: SearchCandidateRow
+export interface ScannedFile<T> {
+  candidate: T
   matchCount: number
   matches: Match[]
   file: DocFileState
+}
+
+export type ScannedDocument = ScannedFile<SearchCandidateRow>
+
+export interface FileScanResult<T> {
+  documents: ScannedFile<T>[]
+  scanned: { documents: number; bytes: number; missing: number; elapsedMs: number }
+  truncated: boolean
 }
 
 export interface ScanResult {
@@ -121,6 +130,12 @@ function isLowSurrogate(code: number): boolean {
   return code >= 0xdc00 && code <= 0xdfff
 }
 
+function frontMatterEnd(raw: string): number {
+  if (!raw.startsWith('---\n')) return 0
+  const closing = raw.indexOf('\n---\n', 3)
+  return closing === -1 ? 0 : closing + 5
+}
+
 export function findMatches(raw: string, needle: string, options: MatchOptions = {}): FoundMatches {
   if (needle.length === 0) return { total: 0, matches: [] }
 
@@ -134,11 +149,12 @@ export function findMatches(raw: string, needle: string, options: MatchOptions =
 
   const headings = sectionOffsets(raw)
   const starts = lineStarts(raw)
+  const searchFrom = options.skipFrontMatter ? frontMatterEnd(raw) : 0
 
   let total = 0
   const matches: Match[] = []
 
-  for (let at = haystack.indexOf(pin); at !== -1; at = haystack.indexOf(pin, at + pin.length)) {
+  for (let at = haystack.indexOf(pin, searchFrom); at !== -1; at = haystack.indexOf(pin, at + pin.length)) {
     const section = sectionFor(headings, at)
     if (options.section !== undefined && section !== options.section) continue
 
@@ -176,12 +192,22 @@ export async function scanDocuments(
   needle: string,
   options: ScanOptions = {},
 ): Promise<ScanResult> {
+  return scanFiles(docsRoot, candidates, (candidate) => candidate.doc, needle, options)
+}
+
+export async function scanFiles<T>(
+  docsRoot: string,
+  candidates: readonly T[],
+  fileOf: (candidate: T) => DocFileRef,
+  needle: string,
+  options: ScanOptions = {},
+): Promise<FileScanResult<T>> {
   const started = Date.now()
   const maxScanDocs = options.maxScanDocs ?? DEFAULT_MAX_SCAN_DOCS
   const maxScanBytes = options.maxScanBytes ?? DEFAULT_MAX_SCAN_BYTES
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY)
 
-  const found = new Array<ScannedDocument | null>(candidates.length).fill(null)
+  const found = new Array<ScannedFile<T> | null>(candidates.length).fill(null)
   let next = 0
   let documents = 0
   let bytes = 0
@@ -193,15 +219,15 @@ export async function scanDocuments(
       if (truncated) return
       const index = next
       next += 1
-      const candidate = candidates[index]
-      if (candidate === undefined) return
+      if (index >= candidates.length) return
+      const candidate = candidates[index] as T
 
       if (documents >= maxScanDocs || bytes >= maxScanBytes) {
         truncated = true
         return
       }
 
-      const { state, raw } = await inspectDocFile(docsRoot, candidate.doc)
+      const { state, raw } = await inspectDocFile(docsRoot, fileOf(candidate))
       documents += 1
 
       if (raw === null) {
@@ -220,7 +246,7 @@ export async function scanDocuments(
   await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, worker))
 
   return {
-    documents: found.filter((entry): entry is ScannedDocument => entry !== null),
+    documents: found.filter((entry): entry is ScannedFile<T> => entry !== null),
     scanned: { documents, bytes, missing, elapsedMs: Date.now() - started },
     truncated,
   }

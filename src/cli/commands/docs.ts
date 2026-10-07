@@ -20,7 +20,8 @@ import { localDay } from '../../domain/timezone.ts'
 import { inspectDocFile, type DocFileState } from '../../docs/inspect.ts'
 import { parseDocument, sectionStates, type DocSectionState } from '../../docs/markdown.ts'
 import { projectSlug } from '../../docs/slug.ts'
-import { scanDocuments } from '../../docs/search.ts'
+import { scanDocuments, type ScanOptions } from '../../docs/search.ts'
+import { searchPages } from '../../docs/page-search.ts'
 import { NotFoundError, UsageError } from '../../errors.ts'
 import {
   BASE_OPTIONS,
@@ -645,20 +646,12 @@ async function runSearch(ctx: LocalContext, args: ParsedArgs, json: boolean): Pr
   const section = readString(args, 'section')
   const limit = boundedInteger(args, 'limit', DEFAULT_SEARCH_LIMIT)
   const offset = boundedInteger(args, 'offset', 0)
+  const scanOptions = searchScanOptions(args, section)
+
+  if (readBoolean(args, 'pages')) return await runPageSearch(ctx, args, json, { query, project, section, limit, offset, scanOptions })
 
   const candidates = listSearchCandidates(ctx.db, filterFor(project, null, true))
-  const result = await scanDocuments(ctx.docsRoot, candidates, query, {
-    caseSensitive: readBoolean(args, 'case-sensitive'),
-    ...(section !== undefined ? { section } : {}),
-    ...(readInteger(args, 'context') !== undefined ? { context: boundedInteger(args, 'context', 120) } : {}),
-    ...(readInteger(args, 'max-matches') !== undefined ? { max: boundedInteger(args, 'max-matches', 5) } : {}),
-    ...(readInteger(args, 'max-scan-docs') !== undefined
-      ? { maxScanDocs: boundedInteger(args, 'max-scan-docs', 5000) }
-      : {}),
-    ...(readInteger(args, 'max-scan-bytes') !== undefined
-      ? { maxScanBytes: boundedInteger(args, 'max-scan-bytes', 33_554_432) }
-      : {}),
-  })
+  const result = await scanDocuments(ctx.docsRoot, candidates, query, scanOptions)
 
   const page = limit > 0 ? result.documents.slice(offset, offset + limit) : result.documents.slice(offset)
   const data = page.map((found) => ({
@@ -706,6 +699,72 @@ async function runSearch(ctx: LocalContext, args: ParsedArgs, json: boolean): Pr
   for (const found of data) {
     writeOut(`${found.localDay}  #${found.entryId}  ${found.matchCount}x  ${found.relPath}`)
     for (const match of found.matches) writeOut(`    ${match.snippet.replace(/\n/g, ' ')}`)
+  }
+  return 0
+}
+
+function searchScanOptions(args: ParsedArgs, section: string | undefined): ScanOptions {
+  return {
+    caseSensitive: readBoolean(args, 'case-sensitive'),
+    ...(section !== undefined ? { section } : {}),
+    ...(readInteger(args, 'context') !== undefined ? { context: boundedInteger(args, 'context', 120) } : {}),
+    ...(readInteger(args, 'max-matches') !== undefined ? { max: boundedInteger(args, 'max-matches', 5) } : {}),
+    ...(readInteger(args, 'max-scan-docs') !== undefined
+      ? { maxScanDocs: boundedInteger(args, 'max-scan-docs', 5000) }
+      : {}),
+    ...(readInteger(args, 'max-scan-bytes') !== undefined
+      ? { maxScanBytes: boundedInteger(args, 'max-scan-bytes', 33_554_432) }
+      : {}),
+  }
+}
+
+interface PageSearchRequest {
+  query: string
+  project: { id: number | null; name: string | null } | null
+  section: string | undefined
+  limit: number
+  offset: number
+  scanOptions: ScanOptions
+}
+
+async function runPageSearch(ctx: LocalContext, args: ParsedArgs, json: boolean, request: PageSearchRequest): Promise<number> {
+  const { query, project, section, limit, offset, scanOptions } = request
+  const result = await searchPages(ctx.db, ctx.docsRoot, query, {
+    ...scanOptions,
+    ...(project !== null ? { projectId: project.id } : {}),
+  })
+
+  const data = limit > 0 ? result.hits.slice(offset, offset + limit) : result.hits.slice(offset)
+  const meta = {
+    root: ctx.docsRoot,
+    query,
+    caseSensitive: readBoolean(args, 'case-sensitive'),
+    section: section ?? null,
+    project: project === null ? null : { id: project.id, name: project.name, slug: projectSlug(project.name) },
+    page: { limit, offset, returned: data.length, hasMore: limit > 0 && offset + data.length < result.hits.length },
+    pagesWithMatches: result.hits.length,
+    totalMatches: result.hits.reduce((sum, hit) => sum + hit.matchCount, 0),
+    scanned: result.scanned,
+    truncated: result.truncated,
+    warnings: result.scanned.missing > 0 ? [`${result.scanned.missing} recorded document(s) are gone from disk.`] : [],
+  }
+
+  if (json) {
+    writeJson(successEnvelope('docs search', data, meta))
+    return 0
+  }
+
+  if (data.length === 0) {
+    writeOut(`No page matches "${query}".`)
+    return 0
+  }
+  for (const hit of data) {
+    const trail = [...hit.ancestors.map((ancestor) => ancestor.title), hit.title].join(' / ')
+    writeOut(`#${hit.pageId}  ${hit.matchCount}x  ${trail}  (page ${hit.sources.page}, entries ${hit.sources.entries})`)
+    for (const match of hit.matches) {
+      const origin = match.source === 'entry' ? `entry #${match.entryId}` : 'page'
+      writeOut(`    [${origin}] ${`${match.prefix}${match.match}${match.suffix}`.replace(/\n/g, ' ')}`)
+    }
   }
   return 0
 }
