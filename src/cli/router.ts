@@ -81,7 +81,7 @@ Confluence (every command takes --site):
   confluence page search --cql Q | confluence page children <id>
   confluence sync <project>|--all [--dry-run]   Mirror the page tree with its Confluence page or space
   confluence sync status <project>              Each tied page and which way it would go (--offline)
-  confluence conflict ls [project] | conflict resolve <pageId> --keep local|remote
+  confluence conflict ls [project] | conflict resolve <pageId> --keep local|remote|both
 
 Documents:
   docs tree [--months]       Projects with their document and entry counts

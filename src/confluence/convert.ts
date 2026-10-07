@@ -119,7 +119,8 @@ function paragraph(document: DomDocument, text: string): DomElement {
 function convertMacro(document: DomDocument, macro: DomElement): void {
   const name = (macro.getAttribute('ac:name') ?? '').toLowerCase()
   if (name === 'code' || name === 'noformat') {
-    const language = childByName(macro, 'ac:parameter', ['ac:name', 'language'])?.textContent?.trim() ?? ''
+    const declared = childByName(macro, 'ac:parameter', ['ac:name', 'language'])?.textContent?.trim() ?? ''
+    const language = declared.toLowerCase() === 'none' ? '' : declared
     const body = childByName(macro, 'ac:plain-text-body')?.textContent ?? ''
     const pre = document.createElement('pre')
     const code = document.createElement('code')

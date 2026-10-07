@@ -548,7 +548,7 @@ bita confluence sync Zipp --dry-run --json   # qué haría, sin escribir nada
 bita confluence sync --all                   # todos los proyectos con sync encendido
 bita confluence sync status Zipp --json      # cada página atada y hacia dónde va
 bita confluence conflict ls [Zipp]
-bita confluence conflict resolve 142 --keep local|remote
+bita confluence conflict resolve 142 --keep local|remote|both
 ```
 
 - La raíz es la página del proyecto o, para un espacio, su página de inicio. Sus
