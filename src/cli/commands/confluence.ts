@@ -401,8 +401,8 @@ async function runConflict(args: ParsedArgs, json: boolean): Promise<number> {
     if (action === 'resolve') {
       const pageId = Number(target)
       const keep = readString(args, 'keep')
-      if (!Number.isInteger(pageId) || pageId <= 0 || (keep !== 'local' && keep !== 'remote')) {
-        throw new UsageError('Usage: bita confluence conflict resolve <pageId> --keep local|remote')
+      if (!Number.isInteger(pageId) || pageId <= 0 || (keep !== 'local' && keep !== 'remote' && keep !== 'both')) {
+        throw new UsageError('Usage: bita confluence conflict resolve <pageId> --keep local|remote|both')
       }
       const page = findPage(ctx.db, pageId)
       const owner = page?.projectId ? findProjectById(ctx.db, page.projectId) : undefined
@@ -413,7 +413,7 @@ async function runConflict(args: ParsedArgs, json: boolean): Promise<number> {
       return 0
     }
 
-    throw new UsageError('Usage: bita confluence conflict <ls [project]|resolve <pageId> --keep local|remote>')
+    throw new UsageError('Usage: bita confluence conflict <ls [project]|resolve <pageId> --keep local|remote|both>')
   } finally {
     ctx.db.close()
   }

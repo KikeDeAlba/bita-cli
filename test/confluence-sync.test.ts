@@ -200,3 +200,80 @@ test('a remote document with a title heading is pushed down a level', () => {
   assert.equal(demoteTitledHeadings('# A\n\n## B\n\n```\n# not\n```'), '## A\n\n### B\n\n```\n# not\n```')
   assert.equal(demoteTitledHeadings('## A\n\ntext'), '## A\n\ntext')
 })
+
+test('a bita page titled like the Confluence root becomes the root, and its tree is matched instead of duplicated', async () => {
+  const { db, docsRoot, ctx, fake, client, project, runbookId } = await setup()
+  const page = (title: string, parentId: number | null, depth: number, slug: string, relPath: string) =>
+    insertPage(db, { projectId: project().id, parentId, slug, title, relPath, depth, source: 'cli', now: NOW })
+  fake.pages.get('100')!.title = 'Apartados – Documentación'
+  fake.add({ id: '103', title: 'Infra', parentId: '100', storage: '<h2>Red</h2><p>VPC con NAT</p>' })
+  const rootId = page('Apartados - Documentación', null, 0, 'docs', 'apartados/docs.md')
+  await recordPageDoc(ctx, requirePage(db, rootId), { body: 'root' })
+  const arquitecturaId = page('Arquitectura', rootId, 1, 'arquitectura', 'apartados/docs/arquitectura.md')
+  await recordPageDoc(ctx, requirePage(db, arquitecturaId), { body: '## Estado\n\nuno' })
+  const infraId = page('Infra', rootId, 1, 'infra', 'apartados/docs/infra.md')
+  await recordPageDoc(ctx, requirePage(db, infraId), { body: '## Red\n\n**VPC** con NAT' })
+  const wafId = page('WAF', infraId, 2, 'waf', 'apartados/docs/infra/waf.md')
+  await recordPageDoc(ctx, requirePage(db, wafId), { body: '## Reglas\n\nbloquea admin' })
+
+  const report = await syncProject(ctx, client, project(), SITE, { dryRun: false })
+
+  assert.deepEqual(report.created, [])
+  assert.deepEqual(report.conflicts, [])
+  assert.equal(listPages(db).length, 5)
+  assert.equal(findMapByPage(db, rootId)?.confluenceId, '100')
+  assert.equal(findMapByPage(db, arquitecturaId)?.confluenceId, '101')
+  assert.equal(findMapByPage(db, infraId)?.confluenceId, '103')
+  assert.equal(findMapByPage(db, wafId)?.confluenceId, '102')
+  assert.equal(findMapByPage(db, runbookId), undefined)
+  assert.equal(fake.writes().length, 0)
+
+  const again = await syncProject(ctx, client, project(), SITE, { dryRun: false })
+  assert.deepEqual([again.pulled, again.pushed, again.created, again.conflicts], [[], [], [], []])
+  rmSync(docsRoot, { recursive: true, force: true })
+})
+
+test('with pull off, existing pages are still matched instead of pushed again', async () => {
+  const { db, docsRoot, ctx, fake, client, project } = await setup()
+  setProjectAtlassian(db, project().id, { syncPull: false })
+  const arquitecturaId = insertPage(db, {
+    projectId: project().id, parentId: null, slug: 'arquitectura', title: 'Arquitectura',
+    relPath: 'apartados/arquitectura.md', depth: 0, source: 'cli', now: NOW,
+  })
+  await recordPageDoc(ctx, requirePage(db, arquitecturaId), { body: '## Estado\n\nuno' })
+
+  const report = await syncProject(ctx, client, project(), SITE, { dryRun: false })
+  assert.equal(findMapByPage(db, arquitecturaId)?.confluenceId, '101')
+  assert.equal(report.created.some((created) => created.title === 'Arquitectura'), false)
+  assert.equal(listPages(db).some((page) => page.title === 'WAF'), false)
+  rmSync(docsRoot, { recursive: true, force: true })
+})
+
+test('pages with diagrams are never overwritten on either side, and a conflict can keep both', async () => {
+  const { db, docsRoot, ctx, fake, client, project } = await setup()
+  const diagramId = insertPage(db, {
+    projectId: project().id, parentId: null, slug: 'arquitectura', title: 'Arquitectura',
+    relPath: 'apartados/arquitectura.md', depth: 0, source: 'cli', now: NOW,
+  })
+  await recordPageDoc(ctx, requirePage(db, diagramId), { body: '## Estado\n\nuno\n\n```mermaid\ngraph TD\n  A-->B\n```' })
+  fake.pages.get('101')!.storage = '<h2>Estado</h2><p>uno</p><p><ac:image><ri:attachment ri:filename="a.png" /></ac:image></p>'
+
+  const first = await syncProject(ctx, client, project(), SITE, { dryRun: false })
+  assert.deepEqual(first.conflicts, [])
+  assert.equal(findMapByPage(db, diagramId)?.state, 'synced')
+
+  await recordPageDoc(ctx, requirePage(db, diagramId), { body: '## Estado\n\ndos\n\n```mermaid\ngraph TD\n  A-->C\n```' })
+  const pushed = await syncProject(ctx, client, project(), SITE, { dryRun: false })
+  assert.deepEqual(pushed.pushed, [])
+  assert.match(pushed.skipped.find((skipped) => skipped.pageId === diagramId)?.reason ?? '', /diagrams/)
+  assert.match(fake.pages.get('101')?.storage ?? '', /uno/)
+
+  fake.edit('101', '<h2>Estado</h2><p>tres</p>')
+  const both = await syncProject(ctx, client, project(), SITE, { dryRun: false })
+  assert.equal(both.conflicts[0]?.pageId, diagramId)
+  await assert.rejects(resolveConflict(ctx, client, diagramId, 'local'), /diagrams/)
+  const kept = await resolveConflict(ctx, client, diagramId, 'both')
+  assert.equal(kept.reason, 'kept both as they are')
+  assert.equal(findMapByPage(db, diagramId)?.state, 'synced')
+  rmSync(docsRoot, { recursive: true, force: true })
+})
