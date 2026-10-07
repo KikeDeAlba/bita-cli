@@ -72,8 +72,82 @@ no existe el estado intermedio que dejaba horas a medio registrar.
 El filtro de entrada es `--pending`, no la fecha. El rango es un acotador
 opcional.
 
-Todo es local: no hay red, ni token, ni cuota. Un comando de lectura no cuesta
-nada, así que consulta las veces que haga falta.
+Todo es local: no hay red, ni token, ni cuota (salvo `bita jira` y `bita
+confluence`, que hablan con Atlassian). Un comando de lectura no cuesta nada,
+así que consulta las veces que haga falta.
+
+## Atlassian por proyecto: MCP o CLI
+
+Cada proyecto dice cómo se habla con su Jira y su Confluence. **Antes de la
+primera llamada a Atlassian de un proyecto**, lee su configuración:
+
+```
+bita project show <proyecto> --json
+```
+
+`data.atlassian` trae:
+
+- `site`: el sitio de Atlassian del proyecto. `null` significa «el primero de
+  `bita atlassian site ls`».
+- `via`: `mcp` (el valor por defecto) o `cli`.
+- `confluence`: `{kind, url, spaceKey, pageId, title}` o `null`. `kind` es
+  `page` o `space`.
+- `sync`: `{pull, push, lastSyncAt}`.
+
+**Si `via` es `mcp`**, sigue usando el MCP de Atlassian exactamente como describe
+el resto de esta skill.
+
+**Si `via` es `cli`**, no uses el MCP para ese proyecto: cada llamada se hace con
+`bita jira …` o `bita confluence …`, siempre con `--json` y con
+`--site <site>` (si `site` es `null`, omítelo y bita usa el primero). Las
+descripciones y los comentarios se escriben en **markdown** y bita los convierte
+a ADF; no armes ADF a mano. `--field nombre=valor` toma el valor como JSON cuando
+lo es (`--field timetracking='{"originalEstimate":"2h"}'`) y como texto cuando no
+(`--field customfield_10015=2026-10-06`). Las reglas de confirmación, de
+escritura y de jerarquía son las mismas: solo cambia el transporte.
+
+| Herramienta del MCP | Comando de bita |
+|---|---|
+| `atlassianUserInfo` | `bita jira myself --site <site> --json` (`data.accountId`) |
+| `getVisibleJiraProjects` | `bita jira project ls [--query <texto>] --site <site> --json` |
+| `getJiraIssue` | `bita jira issue get <KEY> [--fields a,b] --site <site> --json` |
+| `getJiraProjectIssueTypesMetadata` | `bita jira issue createmeta --project <KEY> --site <site> --json` |
+| `getJiraIssueTypeMetaWithFields` | `bita jira issue createmeta --project <KEY> --type <tipo> --site <site> --json` (`data.fields`, `data.timetracking`) |
+| `createJiraIssue` | `bita jira issue create --project <KEY> --type <tipo> --summary "<título>" --description-file <archivo.md> [--parent <KEY>] [--field assignee='{"accountId":"<id>"}'] [--field timetracking='{"originalEstimate":"2h"}'] --site <site> --json` |
+| `editJiraIssue` | `bita jira issue edit <KEY> [--summary "<título>"] [--description-file <archivo.md>] [--field nombre=valor ...] --site <site> --json` |
+| `addWorklogToJiraIssue` | `bita jira worklog add <KEY> --started <ISO con zona> --seconds <n> [--comment "<texto>"] --site <site> --json` |
+| `addCommentToJiraIssue` | `bita jira comment add <KEY> --body-file <archivo.md> --site <site> --json` |
+| `getTransitionsForJiraIssue` | `bita jira issue transitions <KEY> --site <site> --json` |
+| `transitionJiraIssue` | `bita jira issue transition <KEY> --to <nombre o id> --site <site> --json` |
+| `searchJiraIssuesUsingJql` | `bita jira issue search --jql "<JQL>" [--limit <n>] --site <site> --json` |
+| `getConfluencePage` | `bita confluence page get <id> [--markdown] --site <site> --json` (`data.storage`, y `data.markdown` con `--markdown`) |
+| `updateConfluencePage` | `bita confluence page update <id> --file <archivo.md> [--title "<título>"] [--message "<nota>"] --site <site> --json` (con `--storage` si el archivo ya es storage) |
+| `searchConfluenceUsingCql` | `bita confluence page search --cql "<CQL>" [--limit <n>] --site <site> --json` |
+
+Para crear páginas: `bita confluence page create --parent <id>|--space <KEY>
+--title "<título>" --file <archivo.md> --site <site> --json`, y `bita confluence
+page children <id>` para ver las hijas.
+
+En modo `cli`, los diagramas que deja `publish-diagrams` se colocan con
+`image.storage` en vez de `image.adf`: lee la página con `page get --json`,
+sustituye cada párrafo marcador por el `image.storage` de su diagrama en
+`data.storage`, y guárdala con `page update <id> --storage --file <archivo>`.
+
+**Si `atlassian.confluence` está puesto, esa página o ese espacio es la
+documentación oficial del proyecto**: lo que se publique del proyecto va ahí
+(bajo esa página, o en ese espacio), y ahí se busca primero antes de crear nada.
+
+Si `sync.pull` o `sync.push` está encendido, bita mantiene esas páginas al día
+con `bita confluence sync <proyecto> --json` (primero `--dry-run`). Un cambio de
+los dos lados queda como conflicto y nunca se sobrescribe: enséñaselo al usuario
+y resuélvelo solo con su respuesta, con `bita confluence conflict resolve
+<pageId> --keep local|remote`.
+
+Si un comando falla con `ATLASSIAN_LOGIN_REQUIRED`, `JIRA_AUTH` o
+`CONFLUENCE_AUTH`, **para** y pide al usuario que corra `bita atlassian site add
+--site <site> --email <correo>` en una terminal (o, desde el agente Code,
+`! pbpaste | bita atlassian site add --site <site> --email <correo> --token-stdin`
+con el token copiado): el token no lo escribes tú.
 
 ## Reglas duras
 
@@ -949,10 +1023,12 @@ en el backlog de bita, y el trabajo hecho, en Jira.
      (`.mmd` o `.drawio`) como adjunto, para poder editarlo después. Devuelve los
      diagramas en el orden de la página, cada uno con su fragmento listo.
   3. Coloca cada imagen donde va su diagrama. Ver «Cómo entra la imagen» abajo.
-  Si falla con `CONFLUENCE_LOGIN_REQUIRED` o `CONFLUENCE_AUTH`, **para** y pide al
-    usuario que corra `bita confluence login` en una terminal (o, desde el agente
-  Code, `! pbpaste | bita confluence login --token-stdin --email <correo>` con el
-  token copiado): el token no lo escribes tú.
+  Si falla con `ATLASSIAN_LOGIN_REQUIRED` o `CONFLUENCE_AUTH`, **para** y pide al
+    usuario que corra `bita atlassian site add --site <site> --email <correo>` en
+  una terminal (o, desde el agente Code, `! pbpaste | bita atlassian site add
+  --site <site> --email <correo> --token-stdin` con el token copiado): el token
+  no lo escribes tú. `publish-diagrams` usa el sitio del proyecto de la página;
+  `--site` lo cambia.
 - **Cómo entra la imagen.** Probado en gruposti: el conector acepta ADF y
   Confluence convierte cada nodo `media` en un `<ac:image>` ligado a su adjunto.
   1. Al escribir el texto deja, donde va cada diagrama, un párrafo marcador
@@ -1030,7 +1106,8 @@ comportamiento.
 
 ## El conector de Atlassian en Codex
 
-Jira y Confluence se operan mediante el MCP oficial de Atlassian. `bita setup`
+Jira y Confluence se operan mediante el MCP oficial de Atlassian, salvo en los
+proyectos con `atlassian.via: "cli"` (ver «Atlassian por proyecto: MCP o CLI»). `bita setup`
 lo registra en `~/.codex/config.toml`, pero la autenticación se hace fuera de
 `bita` con `codex mcp login atlassian`.
 
