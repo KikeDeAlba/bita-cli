@@ -2,6 +2,7 @@ import { ConflictError, NotFoundError } from '../errors.ts'
 import type { ProjectRow } from '../db/rows.ts'
 import {
   ancestorsOf,
+  descendantsOf,
   findPage,
   insertPage,
   listPages,
@@ -143,6 +144,36 @@ function mapRow(ctx: DocsContext, site: string, pageId: number, remote: { id: st
 export interface SyncRoot {
   rootId: string
   spaceId: string
+  title: string
+}
+
+export function titleKey(title: string): string {
+  return title
+    .normalize('NFKC')
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+const DIAGRAM_FENCE = /^(`{3,}|~{3,})\s*(mermaid|drawio)\b[\s\S]*?^\1\s*$/gim
+
+export function hasDiagrams(markdown: string): boolean {
+  DIAGRAM_FENCE.lastIndex = 0
+  return DIAGRAM_FENCE.test(markdown)
+}
+
+export function sameContent(left: string, right: string): boolean {
+  const flat = (text: string): string =>
+    text
+      .replace(DIAGRAM_FENCE, '')
+      .replace(/^(`{3,}|~{3,})[^\n]*$/gm, '$1')
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/^#\s.*$/m, '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '')
+  return flat(left) === flat(right)
 }
 
 export async function resolveRoot(client: ConfluenceClient, project: ProjectRow, site: string): Promise<SyncRoot> {
@@ -155,14 +186,15 @@ export async function resolveRoot(client: ConfluenceClient, project: ProjectRow,
     if (space.homepageId === null) {
       throw new ConflictError(`The space ${space.key} has no home page to sync under.`, 'CONFLUENCE_SPACE')
     }
-    return { rootId: space.homepageId, spaceId: space.id }
+    const home = await client.page(space.homepageId)
+    return { rootId: space.homepageId, spaceId: space.id, title: home.title }
   }
   if (view.pageId === null) {
     throw new ConflictError(`Could not read a page id out of ${project.confluenceRef}.`, 'CONFLUENCE_NOT_SET')
   }
   const root = await client.page(view.pageId)
   if (root.spaceId === null) throw new ConflictError(`Confluence did not say which space page ${view.pageId} is in.`, 'CONFLUENCE_SPACE')
-  return { rootId: root.id, spaceId: root.spaceId }
+  return { rootId: root.id, spaceId: root.spaceId, title: root.title }
 }
 
 export async function syncProject(
@@ -211,6 +243,10 @@ export async function syncProject(
         report.skipped.push({ ...entry, reason: 'changed in Confluence, but pull is off' })
         continue
       }
+      if (hasDiagrams(body)) {
+        report.skipped.push({ ...entry, reason: 'changed in Confluence, but pulling would drop the diagram sources in bita' })
+        continue
+      }
       if (!dryRun) {
         const checksum = await writeLocal(ctx, page, remote)
         saveMap(ctx.db, mapRow(ctx, site, page.id, remote, checksum))
@@ -222,6 +258,10 @@ export async function syncProject(
     if (localChanged) {
       if (!push) {
         report.skipped.push({ ...entry, reason: 'changed in bita, but push is off' })
+        continue
+      }
+      if (hasDiagrams(body)) {
+        report.skipped.push({ ...entry, reason: 'changed in bita, but pushing would turn its diagrams into code; publish it with publish-diagrams' })
         continue
       }
       if (!dryRun) {
@@ -238,12 +278,50 @@ export async function syncProject(
     }
   }
 
+  const anchor = await bindRoot(ctx, client, project, site, root, report, dryRun)
   const claimed = new Set<number>()
-  if (pull) await pullUnmapped(ctx, client, project, site, root, report, dryRun, claimed)
-  if (push) await pushUnmapped(ctx, client, project, site, root, report, dryRun, claimed)
+  if (anchor !== null) claimed.add(anchor.id)
+  await pullUnmapped(ctx, client, project, site, root, anchor, report, dryRun, claimed, pull)
+  if (push) await pushUnmapped(ctx, client, project, site, root, anchor, report, dryRun, claimed)
 
   if (!dryRun) setProjectLastSync(ctx.db, project.id, ctx.now.toISOString())
   return report
+}
+
+async function bindRoot(
+  ctx: DocsContext,
+  client: ConfluenceClient,
+  project: ProjectRow,
+  site: string,
+  root: SyncRoot,
+  report: ProjectSyncReport,
+  dryRun: boolean,
+): Promise<DocPageRow | null> {
+  const mapped = findMapByRemote(ctx.db, site, root.rootId)
+  if (mapped) {
+    const page = findPage(ctx.db, mapped.pageId)
+    return page && page.projectId === project.id ? page : null
+  }
+  const wanted = titleKey(root.title)
+  const candidates = listPages(ctx.db, project.id).filter(
+    (page) =>
+      page.parentId === null &&
+      page.status === 'active' &&
+      titleKey(page.title) === wanted &&
+      findMapByPage(ctx.db, page.id) === undefined,
+  )
+  const page = candidates.length === 1 ? candidates[0] : undefined
+  if (page === undefined) return null
+  const remote = await client.page(root.rootId)
+  const body = await localBody(ctx, page)
+  const same = sameContent(body, documentBody(parseDocument(remoteMarkdown(remote))))
+  if (!dryRun) saveMap(ctx.db, mapRow(ctx, site, page.id, remote, bodyChecksum(body), same ? 'synced' : 'conflict'))
+  if (!same) report.conflicts.push(item({ id: page.id, title: page.title }, remote.id, page.title, 'exists on both sides'))
+  return page
+}
+
+function scopeOf(ctx: DocsContext, projectId: number, anchor: DocPageRow | null): DocPageRow[] {
+  return anchor === null ? listPages(ctx.db, projectId) : descendantsOf(ctx.db, anchor.id)
 }
 
 interface PendingParent {
@@ -258,13 +336,16 @@ async function pullUnmapped(
   project: ProjectRow,
   site: string,
   root: SyncRoot,
+  anchor: DocPageRow | null,
   report: ProjectSyncReport,
   dryRun: boolean,
   claimed: Set<number>,
+  create: boolean,
 ): Promise<void> {
-  const queue: { confluenceId: string; parent: PendingParent }[] = [
-    { confluenceId: root.rootId, parent: { bitaId: null, depth: 0, virtual: false } },
-  ]
+  const start: PendingParent = anchor === null
+    ? { bitaId: null, depth: 0, virtual: false }
+    : { bitaId: anchor.id, depth: anchor.depth + 1, virtual: false }
+  const queue: { confluenceId: string; parent: PendingParent }[] = [{ confluenceId: root.rootId, parent: start }]
   while (queue.length > 0) {
     const next = queue.shift()
     if (!next) break
@@ -286,25 +367,27 @@ async function pullUnmapped(
       }
 
       if (next.parent.virtual) {
-        report.created.push(item(null, child.id, child.title, 'from Confluence'))
+        if (create) report.created.push(item(null, child.id, child.title, 'from Confluence'))
         queue.push({ confluenceId: child.id, parent: { bitaId: null, depth: next.parent.depth + 1, virtual: true } })
         continue
       }
 
-      const twin = unmappedSibling(ctx, project.id, next.parent.bitaId, child.title, claimed)
+      const twin =
+        unmappedSibling(ctx, project.id, next.parent.bitaId, child.title, claimed) ??
+        unmappedNamesake(ctx, project.id, anchor, child.title, claimed)
       if (twin) {
         claimed.add(twin.id)
         const remote = await client.page(child.id)
         const body = await localBody(ctx, twin)
-        const same = bodyChecksum(body) === bodyChecksum(documentBody(parseDocument(remoteMarkdown(remote))))
+        const same = sameContent(body, documentBody(parseDocument(remoteMarkdown(remote))))
         if (!dryRun) saveMap(ctx.db, mapRow(ctx, site, twin.id, remote, bodyChecksum(body), same ? 'synced' : 'conflict'))
         if (!same) report.conflicts.push(item({ id: twin.id, title: twin.title }, child.id, twin.title, 'exists on both sides'))
         queue.push({ confluenceId: child.id, parent: { bitaId: twin.id, depth: twin.depth + 1, virtual: false } })
         continue
       }
 
-      if (dryRun) {
-        report.created.push(item(null, child.id, child.title, 'from Confluence'))
+      if (dryRun || !create) {
+        if (create) report.created.push(item(null, child.id, child.title, 'from Confluence'))
         queue.push({ confluenceId: child.id, parent: { bitaId: null, depth: next.parent.depth + 1, virtual: true } })
         continue
       }
@@ -326,15 +409,33 @@ function unmappedSibling(
   title: string,
   claimed: ReadonlySet<number>,
 ): DocPageRow | undefined {
-  const wanted = title.trim().toLowerCase()
+  const wanted = titleKey(title)
   return listPages(ctx.db, projectId).find(
     (page) =>
       page.parentId === parentId &&
       page.status === 'active' &&
-      page.title.trim().toLowerCase() === wanted &&
+      titleKey(page.title) === wanted &&
       !claimed.has(page.id) &&
       findMapByPage(ctx.db, page.id) === undefined,
   )
+}
+
+function unmappedNamesake(
+  ctx: DocsContext,
+  projectId: number,
+  anchor: DocPageRow | null,
+  title: string,
+  claimed: ReadonlySet<number>,
+): DocPageRow | undefined {
+  const wanted = titleKey(title)
+  const matches = scopeOf(ctx, projectId, anchor).filter(
+    (page) =>
+      page.status === 'active' &&
+      titleKey(page.title) === wanted &&
+      !claimed.has(page.id) &&
+      findMapByPage(ctx.db, page.id) === undefined,
+  )
+  return matches.length === 1 ? matches[0] : undefined
 }
 
 function createLocalPage(ctx: DocsContext, project: ProjectRow, parentId: number | null, depth: number, title: string): number {
@@ -357,17 +458,18 @@ async function pushUnmapped(
   project: ProjectRow,
   site: string,
   root: SyncRoot,
+  anchor: DocPageRow | null,
   report: ProjectSyncReport,
   dryRun: boolean,
   claimed: ReadonlySet<number>,
 ): Promise<void> {
   const planned = new Set<number>(claimed)
-  for (const page of listPages(ctx.db, project.id)) {
+  for (const page of scopeOf(ctx, project.id, anchor)) {
     if (page.status !== 'active') continue
     if (claimed.has(page.id) || findMapByPage(ctx.db, page.id)) continue
 
     let parentRemote: string | null = root.rootId
-    if (page.parentId !== null) {
+    if (page.parentId !== null && page.parentId !== anchor?.id) {
       const parentMap = findMapByPage(ctx.db, page.parentId)
       parentRemote = parentMap && parentMap.site === site ? parentMap.confluenceId : null
       if (parentRemote === null && !planned.has(page.parentId)) {
@@ -383,6 +485,10 @@ async function pushUnmapped(
     }
 
     const body = await localBody(ctx, page)
+    if (hasDiagrams(body)) {
+      report.skipped.push(item({ id: page.id, title: page.title }, undefined, page.title, 'has diagrams; publish it with publish-diagrams'))
+      continue
+    }
     try {
       const created = await client.createPage({ spaceId: root.spaceId, parentId: parentRemote, title: page.title, storage: markdownToStorage(body) })
       saveMap(ctx.db, mapRow(ctx, site, page.id, created, bodyChecksum(body)))
@@ -398,12 +504,26 @@ export async function resolveConflict(
   ctx: DocsContext,
   client: ConfluenceClient,
   pageId: number,
-  keep: 'local' | 'remote',
+  keep: 'local' | 'remote' | 'both',
 ): Promise<SyncItem> {
   const map = findMapByPage(ctx.db, pageId)
   if (!map) throw new NotFoundError(`Page #${pageId} is not tied to Confluence.`, 'CONFLUENCE_NOT_MAPPED')
   const page = requirePage(ctx.db, pageId)
   const remote = await client.page(map.confluenceId)
+  const body = await localBody(ctx, page)
+
+  if (keep === 'both') {
+    saveMap(ctx.db, mapRow(ctx, map.site, page.id, remote, bodyChecksum(body)))
+    return item({ id: page.id, title: page.title }, remote.id, page.title, 'kept both as they are')
+  }
+
+  if (hasDiagrams(body)) {
+    throw new ConflictError(
+      `${page.title} has diagrams, and keeping one side would ${keep === 'local' ? 'turn them into code in Confluence' : 'drop their sources in bita'}.`,
+      'CONFLUENCE_DIAGRAMS',
+      `Edit the side that is behind by hand, then run "bita confluence conflict resolve ${page.id} --keep both".`,
+    )
+  }
 
   if (keep === 'remote') {
     const checksum = await writeLocal(ctx, page, remote)
@@ -411,7 +531,6 @@ export async function resolveConflict(
     return item({ id: page.id, title: page.title }, remote.id, remote.title || page.title, 'kept Confluence')
   }
 
-  const body = await localBody(ctx, page)
   const updated = await client.updatePage({
     id: remote.id,
     title: page.title,
