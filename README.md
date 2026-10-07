@@ -222,8 +222,8 @@ Reabre la sesión para que cargue el hook, la skill y los comandos.
 
 ### 5. Conectar Jira
 
-Jira no se toca desde el CLI: lo escribe el agente mediante el MCP oficial de
-Atlassian. `bita setup --target opencode`, `bita setup --target codex` y
+Por defecto Jira no se toca desde el CLI: lo escribe el agente mediante el MCP
+oficial de Atlassian. `bita setup --target opencode`, `bita setup --target codex` y
 `bita setup --target all` lo configuran automáticamente, pero la autenticación
 siempre queda a cargo de la persona:
 
@@ -247,6 +247,10 @@ Un proyecto apunta a una épica cuando todo su trabajo cae siempre en la misma, 
 al tablero cuando se reparte entre varias. Cambiar de uno a otro conserva el
 resto del mapeo: la transición de cierre, los tipos y las Historias ya creadas,
 que se guardan por épica.
+
+Un proyecto también puede trabajar con Jira y Confluence **por el CLI** en vez
+del MCP, con un token de API guardado en el Keychain. Ver
+[Atlassian: sitios, MCP o CLI](#atlassian-sitios-mcp-o-cli).
 
 ## Uso
 
@@ -421,7 +425,15 @@ bita docs tree --months                      # proyectos, con sus meses y conteo
 bita docs ls --project ARSM                  # entradas y su documento, o «sin nota»
 bita docs show 735                           # markdown, front matter y secciones
 bita docs search "cognito" --project ARSM    # con fragmentos alrededor de cada acierto
+bita docs search "waf" --pages --json        # por página: su texto y las notas de sus entradas
 ```
+
+`docs search --pages` agrupa por página en vez de por entrada: busca en el
+markdown de cada página y en las notas de las entradas atadas a ella (las
+unificadas incluidas), y devuelve una fila por página con `ancestors`,
+`matchCount`, `sources: {page, entries}` y los fragmentos, cada uno con su
+`source` (`page` o `entry`, con `entryId`). Ordena por aciertos y luego por lo
+más reciente. Sin `--pages`, la búsqueda es la de siempre.
 
 `docs ls` devuelve **siempre las siete secciones** con su estado —`written`,
 `empty` o `absent`— para que quien pinte un índice no tenga que llevar su propia
@@ -447,6 +459,111 @@ Todos los comandos aceptan `--json` y emiten un solo documento en stdout:
 
 Los errores salen con `ok: false` y un `error.code` estable. Los avisos van a
 stderr, nunca a stdout, para que el JSON se pueda parsear tal cual.
+
+## Atlassian: sitios, MCP o CLI
+
+bita guarda uno o varios **sitios** de Atlassian, cada uno con su correo; el
+token de API vive en el Keychain de macOS (servicio `bita-atlassian`, cuenta
+`<sitio>|<correo>`). Una configuración de la 0.14 con `jira.siteUrl` y
+`jira.email` se lee como el primer sitio, y su token se sigue encontrando bajo la
+cuenta vieja (solo el correo).
+
+```sh
+bita atlassian site add --site https://acme.atlassian.net --email yo@acme.com   # pide el token
+pbpaste | bita atlassian site add --site acme.atlassian.net --email yo@acme.com --token-stdin
+bita atlassian site ls [--check] --json      # sitios, token guardado, proyectos que lo usan
+bita atlassian site test <sitio>             # comprueba Jira y Confluence con el token
+bita atlassian site rm <sitio> [--force]     # borra token y sitio; --force si un proyecto lo usa
+```
+
+`site add` verifica el token contra Jira (`/rest/api/3/myself`) y Confluence
+antes de guardarlo. Sin terminal, el token solo entra por `--token-stdin`.
+`site ls` no toca la red: `status` sale `unknown` y `jira`/`confluence` repiten
+lo último que se comprobó; con `--check` se consultan de verdad y `status` es
+`ok`, `auth_failed` o `unreachable`. `bita confluence login` sigue existiendo como
+alias de `site add`.
+
+Cada proyecto dice con qué sitio trabaja, si el agente habla con Atlassian por el
+**MCP** (por defecto) o por el **CLI**, cuál es su documentación oficial en
+Confluence y si se sincroniza:
+
+```sh
+bita project atlassian Zipp --site acme.atlassian.net --via cli
+bita project atlassian Zipp --confluence https://acme.atlassian.net/wiki/spaces/ZDE/pages/1010794497/Motor
+bita project atlassian Zipp --confluence ZDE          # un espacio entero, por su clave
+bita project atlassian Zipp --pull on --push off      # direcciones de la sincronización
+bita project show Zipp --json                         # data.atlassian
+```
+
+`--confluence` acepta la URL de una página (`kind: page`), la URL de un espacio o
+su clave (`kind: space`), o `none`. Si el proyecto no tenía sitio y la URL es de
+un sitio dado de alta, lo toma. `project show`, `projects` y cada `spaces[]` de
+`docs tree --pages` llevan el mismo objeto:
+
+```json
+{ "site": "https://acme.atlassian.net", "via": "cli",
+  "confluence": { "kind": "page", "url": "…", "spaceKey": "ZDE", "pageId": "1010794497", "title": "Motor" },
+  "sync": { "pull": true, "push": false, "lastSyncAt": null } }
+```
+
+Con `via: cli` la skill usa estos comandos en vez del MCP. Todos aceptan
+`--site`; sin él, usan el sitio del proyecto (por `--project`, o por el prefijo
+de la clave del issue a través de `bita map`) y si no, el primero:
+
+```sh
+bita jira myself
+bita jira project ls [--query Q]
+bita jira issue get DPP-12
+bita jira issue create --project DPP --type Subtarea --summary "…" --description-file req.md --parent DPP-10 \
+  --field timetracking='{"originalEstimate":"2h"}'
+bita jira issue edit DPP-12 --description-file req.md
+bita jira issue transitions DPP-12
+bita jira issue transition DPP-12 --to Listo
+bita jira issue search --jql "project = DPP AND statusCategory != Done" --limit 20
+bita jira issue createmeta --project DPP [--type Subtarea]
+bita jira worklog add DPP-12 --started 2026-10-06T09:30:00-06:00 --seconds 5400 --comment "…"
+bita jira comment add DPP-12 --body-file resultado.md
+bita jira link --from DPP-12 --to DPP-13 --type Blocks      # DPP-12 blocks DPP-13
+
+bita confluence page get 1010794497 --markdown
+bita confluence page create --parent 1010794497 --title "Red" --file red.md
+bita confluence page update 1010794497 --file motor.md --message "estado de octubre"
+bita confluence page search --cql 'space = ZDE AND title ~ "WAF"'
+bita confluence page children 1010794497
+```
+
+Descripciones, comentarios y páginas se escriben en markdown. A Jira van como
+ADF; a Confluence, como storage: los bloques de código se vuelven la macro
+`code` con su lenguaje, y al leer, las macros que no tienen equivalente quedan
+como `[Confluence macro: nombre]`. `--field nombre=valor` toma el valor como JSON
+cuando lo es, y como texto si no.
+
+## Sincronizar con Confluence
+
+Un proyecto con página o espacio de Confluence y `--pull on` o `--push on` se
+sincroniza página a página con su árbol de bita:
+
+```sh
+bita confluence sync Zipp --dry-run --json   # qué haría, sin escribir nada
+bita confluence sync --all                   # todos los proyectos con sync encendido
+bita confluence sync status Zipp --json      # cada página atada y hacia dónde va
+bita confluence conflict ls [Zipp]
+bita confluence conflict resolve 142 --keep local|remote
+```
+
+- La raíz es la página del proyecto o, para un espacio, su página de inicio. Sus
+  hijas son las páginas de primer nivel del proyecto en bita, hasta cinco niveles.
+- Una página atada cambió **en Confluence** si su versión no es la guardada, y
+  **en bita** si el cuerpo de su markdown no es el guardado. Lo que cambió de un
+  solo lado viaja si esa dirección está encendida; lo que cambió de los dos se
+  marca como **conflicto** y no se sobrescribe nunca, hasta resolverlo.
+- Con `pull`, las páginas de Confluence sin pareja se crean en bita respetando
+  el árbol; con `push`, las de bita sin pareja se crean bajo su padre en
+  Confluence. Si ya hay una página con el mismo título en el mismo lugar, se
+  atan en vez de duplicarse (en conflicto si el contenido difiere).
+- La salida es una fila por proyecto: `{project, pulled, pushed, created,
+  conflicts, skipped}`, cada elemento `{pageId?, confluenceId?, title, reason?}`.
+  `last_sync_at` se actualiza al terminar, salvo en `--dry-run`.
 
 ## Contadores en blanco
 
@@ -618,6 +735,9 @@ src/db/        el almacén: esquema, migraciones y consultas
 src/domain/    lógica pura: agrupación, duraciones, zonas horarias, solapes
 src/cli/       comandos y formato de salida
 src/docs/      los documentos de cada entrada: rutas, markdown y escritura
+src/atlassian/ sitios, tokens y la configuración Atlassian de cada proyecto
+src/jira/      cliente REST de Jira y markdown a ADF
+src/confluence/ cliente REST de Confluence, conversión a storage y sincronización
 src/state/     configuración y notas heredadas en disco
 src/integrations/ adaptadores para OpenCode y otros agentes
 skill/         la skill de Claude
