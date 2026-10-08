@@ -331,7 +331,7 @@ export async function applyExtraction(ctx: LocalContext, plan: PageExtraction): 
     }),
   )
   try {
-    await recordPageDoc(ctx, plan.page, { dropSections: plan.headings })
+    await recordPageDoc(ctx, plan.page, { dropSections: plan.headings }, { action: 'move backlog out of', reason: 'backlog extract' })
   } catch (error) {
     inTransaction(ctx.db, () => {
       for (const id of created) deleteBacklogItem(ctx.db, id)

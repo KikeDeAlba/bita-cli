@@ -31,7 +31,7 @@ async function exists(path: string): Promise<boolean> {
 test('installs OpenCode skill, commands, and plugin into a custom directory', async () => {
   const directory = await temporaryDirectory()
   try {
-    await runSetup(['--target', 'opencode', '--opencode-dir', directory, '--no-drawio', '--no-atlassian'])
+    await runSetup(['--target', 'opencode', '--opencode-dir', directory, '--no-drawio', '--no-atlassian', '--no-docs-git'])
 
     assert.equal(await readlink(join(directory, 'skills', 'bita')), join(packageRoot(), 'skill-opencode'))
     const skill = await readFile(join(directory, 'skills', 'bita', 'SKILL.md'), 'utf8')
@@ -52,8 +52,8 @@ test('installs Codex skill and merges hooks without duplicates', async () => {
   const agents = join(directory, 'agents')
   const codex = join(directory, 'codex')
   try {
-    await runSetup(['--target', 'codex', '--codex-home', codex, '--agents-home', agents])
-    await runSetup(['--target', 'codex', '--codex-home', codex, '--agents-home', agents])
+    await runSetup(['--target', 'codex', '--codex-home', codex, '--agents-home', agents, '--no-docs-git'])
+    await runSetup(['--target', 'codex', '--codex-home', codex, '--agents-home', agents, '--no-docs-git'])
 
     const hooks = JSON.parse(await readFile(join(codex, 'hooks.json'), 'utf8')) as {
       hooks: Record<string, Array<{ hooks?: Array<{ command?: string }> }>>

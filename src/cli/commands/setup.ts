@@ -11,6 +11,9 @@ import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { ensureDrawio, type SetupStep } from '../../setup/drawio.ts'
 import { ensureCodexAtlassianMcp, ensureOpenCodeAtlassianMcp, type AtlassianMcpStep } from '../../setup/atlassian.ts'
 import { defaultRecapEnvironment, ensureRecap, type RecapStep } from '../../setup/recap.ts'
+import { initDocsRepo } from '../../docs/git.ts'
+import { docsRoot } from '../../docs/paths.ts'
+import { databasePath } from '../../db/paths.ts'
 
 const run = promisify(execFile)
 const TARGETS = ['claude', 'opencode', 'codex', 'all'] as const
@@ -26,6 +29,7 @@ const OPTIONS = {
   'no-drawio': { type: 'boolean' as const, default: false },
   'no-atlassian': { type: 'boolean' as const, default: false },
   'no-recap': { type: 'boolean' as const, default: false },
+  'no-docs-git': { type: 'boolean' as const, default: false },
 }
 
 export function packageRoot(): string {
@@ -72,6 +76,8 @@ export async function runSetup(argv: string[]): Promise<number> {
       ? await ensureRecap(defaultRecapEnvironment(json ? undefined : (message) => writeOut(`- ${message}`)))
       : []
 
+  const docsGit = readBoolean(args, 'no-docs-git') ? null : await setupDocsGit(args)
+
   if (json) {
     const legacy = target === 'claude' ? results[0] : undefined
     writeJson(
@@ -81,6 +87,7 @@ export async function runSetup(argv: string[]): Promise<number> {
         results,
         drawio,
         recap,
+        docsGit,
         ...(legacy
           ? { claudeDir: legacy.directory, linked: legacy.linked, settings: legacy.settings }
           : {}),
@@ -99,12 +106,35 @@ export async function runSetup(argv: string[]): Promise<number> {
   for (const step of [...drawio, ...recap]) {
     writeOut(`${step.state === 'failed' || step.state === 'unavailable' ? '!' : '-'} ${step.detail}`)
   }
+  if (docsGit !== null) writeOut(`${docsGit.state === 'failed' ? '!' : '-'} ${docsGit.detail}`)
   writeOut('')
   writeOut('Next:')
   writeOut('  bita project add "<name>"     create a project')
   writeOut('  bita scope set . <projectId>  map this repository to it')
   writeOut('  bita app install              install the desktop app')
   return 0
+}
+
+interface DocsGitStep {
+  state: 'initialized' | 'present' | 'failed'
+  root: string
+  head: string | null
+  detail: string
+}
+
+async function setupDocsGit(args: ReturnType<typeof parseCommandArgs>): Promise<DocsGitStep> {
+  const root = readString(args, 'docs-dir') ?? docsRoot(process.env, readString(args, 'db-path') ?? databasePath())
+  try {
+    const state = await initDocsRepo(root)
+    return {
+      state: state.initialized ? 'initialized' : 'present',
+      root,
+      head: state.head,
+      detail: state.initialized ? `docs history started in ${root}` : `docs history already in ${root}`,
+    }
+  } catch (error) {
+    return { state: 'failed', root, head: null, detail: `docs history not started: ${error instanceof Error ? error.message : String(error)}` }
+  }
 }
 
 interface SetupResult {

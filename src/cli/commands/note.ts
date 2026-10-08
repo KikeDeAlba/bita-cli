@@ -9,6 +9,7 @@ import { listDocsForEntry } from '../../db/docs.ts'
 import { recordTouch } from '../../db/touches.ts'
 import { docPathFor, readEntryDoc, recordEntryDoc } from '../../docs/record.ts'
 import { readRaw } from '../../docs/store.ts'
+import { commitDocs, docsSubject } from '../../docs/git.ts'
 import { currentRepoIdentity } from './repo.ts'
 import type { EntryWithProjectRow } from '../../db/rows.ts'
 
@@ -137,6 +138,7 @@ async function runSave(
     identity: await identity(),
     create: true,
     section,
+    commit: false,
   })
   if (!recorded) throw new UsageError(`No document for entry #${entry.id}.`)
 
@@ -147,9 +149,15 @@ async function runSave(
           source: 'manual',
           identity: await identity(),
           section: { heading: 'Tocado', body: artifacts },
+          commit: false,
         })
 
   const result = withArtifacts ?? recorded
+  await commitDocs(ctx.docsRoot, [result.relPath, ...(recorded.renamedFrom !== null ? [recorded.renamedFrom] : [])], {
+    source: 'note',
+    subject: docsSubject(result.relPath, 'update note', entry.description || `#${entry.id}`),
+    entryId: entry.id,
+  })
   if (json) writeJson(successEnvelope('note save', result))
   else {
     writeOut(`Saved ${result.relPath}`)
