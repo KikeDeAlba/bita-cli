@@ -45,6 +45,8 @@ import { resolveMappedProject } from '../resolve-project.ts'
 import { promptText } from '../prompt.ts'
 import { parseKind } from '../../domain/kind.ts'
 import { emitHooks } from '../../hooks/emit.ts'
+import { entryWithMerged, suggestRepos, type RepoSuggestion } from '../repo-suggest.ts'
+import { RepoRootResolver } from '../../state/repo-roots.ts'
 import type { HookPayload } from '../../hooks/hooks.ts'
 
 const TIMER_OPTIONS = {
@@ -398,6 +400,7 @@ export async function runStop(argv: string[]): Promise<number> {
           stillRunning: countRunning(ctx.db),
           docPath,
           hooksFired,
+          repoSuggestions: await unmappedRepoSuggestions(ctx, stopped),
         }),
       )
     } else {
@@ -412,6 +415,25 @@ export async function runStop(argv: string[]): Promise<number> {
   } finally {
     ctx.db.close()
   }
+}
+
+async function unmappedRepoSuggestions(
+  ctx: LocalContext,
+  stopped: readonly EnrichedTimeEntry[],
+): Promise<RepoSuggestion[] | Record<string, RepoSuggestion[]>> {
+  const resolver = new RepoRootResolver()
+  const byEntry: Record<string, RepoSuggestion[]> = {}
+  for (const entry of stopped) {
+    const suggestions = await suggestRepos(ctx.db, entryWithMerged(ctx.db, entry.id), entry.projectId, {
+      docsRoot: ctx.docsRoot,
+      cwd: process.cwd(),
+      resolver,
+    })
+    byEntry[String(entry.id)] = suggestions.filter((suggestion) => !suggestion.mapped)
+  }
+  const [only] = stopped
+  if (stopped.length === 1 && only) return byEntry[String(only.id)] ?? []
+  return Object.fromEntries(Object.entries(byEntry).filter(([, suggestions]) => suggestions.length > 0))
 }
 
 async function chooseTargets(

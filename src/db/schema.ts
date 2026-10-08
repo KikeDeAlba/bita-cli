@@ -271,6 +271,19 @@ const PROJECT_ATLASSIAN: readonly string[] = [
   `CREATE UNIQUE INDEX confluence_page_map_remote ON confluence_page_map (site, confluence_id)`,
 ]
 
+const PROJECT_REPOS: readonly string[] = [
+  `CREATE TABLE project_repos (
+     project_id INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+     path TEXT NOT NULL,
+     slug TEXT,
+     source TEXT NOT NULL CHECK (source IN ('stop', 'manual')),
+     added_at TEXT NOT NULL,
+     last_seen_at TEXT NOT NULL,
+     PRIMARY KEY (project_id, path)
+   )`,
+  `CREATE INDEX project_repos_path ON project_repos (path)`,
+]
+
 function backfillBacklogKeys(db: DatabaseSync): void {
   backfillProjectKeys(db)
   backfillBacklogSequence(db)
@@ -290,6 +303,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 9, statements: ENTRY_KIND },
   { version: 10, statements: PROJECT_JIRA },
   { version: 11, statements: PROJECT_ATLASSIAN },
+  { version: 12, statements: PROJECT_REPOS },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

@@ -21,6 +21,7 @@ import { findSite, loadAtlassianConfig, sitesOf } from '../../atlassian/sites.ts
 import type { AppConfig } from '../../state/config.ts'
 import { PROJECT_KEY_PATTERN, UNASSIGNED_KEY } from '../../db/project-keys.ts'
 import { resolveProjectArg } from '../project-arg.ts'
+import { PROJECT_REPO_OPTIONS, runProjectRepo } from './project-repo.ts'
 
 const OPTIONS = {
   client: { type: 'string' as const },
@@ -34,6 +35,7 @@ const OPTIONS = {
   confluence: { type: 'string' as const },
   pull: { type: 'string' as const },
   push: { type: 'string' as const },
+  ...PROJECT_REPO_OPTIONS,
 }
 
 function requireProjectId(raw: string | undefined): number {
@@ -51,6 +53,10 @@ export async function runProject(argv: string[]): Promise<number> {
 
   if (subcommand === 'delete' || subcommand === 'rm') {
     return runProjectDelete(args, rest)
+  }
+
+  if (subcommand === 'repo') {
+    return runProjectRepo(args, rest)
   }
 
   if (subcommand === 'add') {
@@ -180,7 +186,7 @@ export async function runProject(argv: string[]): Promise<number> {
   }
 
   throw new UsageError(
-    'Usage: bita project add|show|rename|key|jira|atlassian|archive|delete. To list them, run "bita projects".',
+    'Usage: bita project add|show|rename|key|jira|atlassian|repo|archive|delete. To list them, run "bita projects".',
   )
 }
 
