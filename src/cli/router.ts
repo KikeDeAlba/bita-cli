@@ -124,6 +124,8 @@ Configuration:
   repo init [path]           Create a project for a repository and map it
   repo show                  Where am I, and which project resolves here
   scope list|set|unset|which Map a path prefix to a project; the longest one wins
+  project repo ls|add|rm     Local repositories of a project: ls [--project P], add <path>, rm <path>
+  project repo suggest <id>  Repositories behind the files an entry touched, and which are mapped
   config get|set-jira        Inspect or set the local configuration
   hook session-start         Emit the Claude Code SessionStart context
   hook codex                 Adapt a Codex lifecycle event from stdin
@@ -174,6 +176,9 @@ Project options:
   --all                      With "projects", include archived ones
   --force                    With "project delete", accept leaving its entries orphaned
   --yes / --dry-run          With "project delete", as in delete
+  --project ID|NAME          With "project repo", the project (add infers it from the repository)
+  --source stop|manual       With "project repo add", who mapped it (default: manual)
+  --history                  With "project repo suggest --project P", every past entry of the project
 
 Merge options:
   --into ID                  The entry that survives (default: the oldest)

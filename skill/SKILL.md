@@ -991,6 +991,20 @@ se dice en presente, como se verifica hoy; lo que queda por hacer va al backlog
 de bita con `bita backlog add`, nunca a la página ni como un TODO enterrado en la prosa.
 Si la página no se tocó en todo el bloque, escríbela ahora.
 
+**Antes de parar, los repos del proyecto.** Si no es una reunión, corre
+`bita project repo suggest <id> --json`: da las raíces git de los archivos que
+tocó el bloque, cuántos archivos en cada una (`files`) y si ya pertenecen al
+proyecto (`mapped`). Por cada una sin mapear que de verdad sea del proyecto:
+
+```
+bita project repo add <path> --project <X> --source stop
+```
+
+Solo esas: si trabajando en CoDi tocaste bita-cli de paso, bita-cli no se mapea
+a CoDi. Ante la duda, déjalo fuera. El mapa es lo que usan otras herramientas,
+como el asistente de reuniones de recap, para saber en qué repos locales buscar;
+`bita stop --json` repite en `meta.repoSuggestions` las que siguen sin mapear.
+
 **La página alimenta el requerimiento y el comentario de resultados en Jira, y
 lo que se publique en Confluence.** Antes de guardarla, revisa que no lleve
 rutas absolutas con nombres internos, secretos ni pegotes de log, y pásale la

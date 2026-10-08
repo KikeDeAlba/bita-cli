@@ -667,6 +667,34 @@ Si no hay prefijo, `bita repo init` propone uno comparando los segmentos de la
 ruta con los nombres de proyecto que ya existen, ignorando mayusculas, guiones y
 guiones bajos. Solo empata si tras normalizar son identicos.
 
+### Los repos locales de cada proyecto
+
+El prefijo dice a qué proyecto va el tiempo; aparte, bita guarda **en qué rutas
+locales vive el código de cada proyecto**, para que otras herramientas —el
+asistente de reuniones de recap, por ejemplo— sepan en qué repos buscar cuando
+se pregunta por él:
+
+```sh
+bita project repo ls [--project CoDi] [--json]       # marca los que ya no están en disco
+bita project repo add ~/dev/codi/api --project CoDi  # guarda la raíz git y su slug
+bita project repo rm ~/dev/codi/api
+bita project repo suggest 412 --json                 # raíces git de lo que tocó la entrada 412
+bita project repo suggest --project CoDi --history   # lo mismo sobre todas sus entradas
+```
+
+`add` guarda la raíz del repo (`git rev-parse --show-toplevel`), no la carpeta
+que se le pase, y desde un worktree guarda el clon principal. Sin `--project`,
+toma el proyecto al que resuelve el repo por su prefijo. Volver a agregar uno
+solo refresca cuándo se vio por última vez.
+
+`suggest` agrupa por raíz git los archivos que tocó la entrada, cuenta cuántos
+cayeron en cada una y marca `mapped` las que ya son del proyecto; los documentos
+de bita quedan fuera. Al parar, `/bita-stop` revisa esas sugerencias y mapea con
+`--source stop` solo las que de verdad pertenecen al proyecto, y `bita stop
+--json` las repite en `meta.repoSuggestions`: una lista con un solo cronómetro,
+un objeto por id de entrada con varios. `--history` sirve para sembrar el mapa
+la primera vez.
+
 ## Cómo se agrupa
 
 Un grupo es **proyecto + título**, a lo largo de todo el rango, y se convierte en
