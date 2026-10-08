@@ -59,3 +59,13 @@ export class PartialWriteError extends Error {
     this.name = 'PartialWriteError'
   }
 }
+
+export class MergeConflictError extends ConflictError {
+  readonly paths: string[]
+
+  constructor(message: string, paths: string[], hint?: string) {
+    super(message, 'MERGE_CONFLICT', hint)
+    this.name = 'MergeConflictError'
+    this.paths = paths
+  }
+}

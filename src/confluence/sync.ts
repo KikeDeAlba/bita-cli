@@ -15,7 +15,8 @@ import { findMapByPage, findMapByRemote, mapsOfProject, saveMap, setMapState, ty
 import { findProjectById, setProjectLastSync } from '../db/projects.ts'
 import { MAX_PAGE_DEPTH, pageRelPath } from '../docs/layout.ts'
 import { checksumOf, documentBody, parseDocument } from '../docs/markdown.ts'
-import { movePageFile, recordPageDoc } from '../docs/page-record.ts'
+import { movePageFile, pageCommitIntent, pageFilePaths, recordPageDoc } from '../docs/page-record.ts'
+import { commitDocs } from '../docs/git.ts'
 import { resolveDocPath } from '../docs/paths.ts'
 import type { DocsContext } from '../docs/record.ts'
 import { titleSlug } from '../docs/slug.ts'
@@ -105,12 +106,22 @@ export function remoteMarkdown(page: ConfluencePage): string {
   return demoteTitledHeadings(storageToMarkdown(page.storage))
 }
 
-async function writeLocal(ctx: DocsContext, page: DocPageRow, remote: ConfluencePage): Promise<string> {
+export async function writeLocal(ctx: DocsContext, page: DocPageRow, remote: ConfluencePage): Promise<string> {
   let current = page
   if (remote.title.trim().length > 0 && remote.title.trim() !== page.title) {
     current = await retitle(ctx, page, remote.title.trim())
   }
-  await recordPageDoc(ctx, current, { body: remoteMarkdown(remote) })
+  await recordPageDoc(ctx, current, { body: remoteMarkdown(remote) }, false)
+  const paths = [...pageFilePaths(page.relPath), ...(current.relPath !== page.relPath ? pageFilePaths(current.relPath) : [])]
+  await commitDocs(
+    ctx.docsRoot,
+    paths,
+    pageCommitIntent(current, current.relPath, 'pull', {
+      source: 'confluence-pull',
+      action: 'pull from confluence',
+      reason: `confluence ${remote.id} v${remote.version}`,
+    }),
+  )
   return bodyChecksum(await localBody(ctx, requirePage(ctx.db, page.id)))
 }
 
@@ -118,7 +129,7 @@ async function retitle(ctx: DocsContext, page: DocPageRow, title: string): Promi
   const slug = uniqueSiblingSlug(ctx.db, page.projectId, page.parentId, titleSlug(title))
   renamePage(ctx.db, page.id, title, slug, ctx.now.toISOString())
   const renamed = requirePage(ctx.db, page.id)
-  await movePageFile(ctx, renamed, relPathFor(ctx, renamed.projectId, renamed.parentId, slug))
+  await movePageFile(ctx, renamed, relPathFor(ctx, renamed.projectId, renamed.parentId, slug), false)
   return requirePage(ctx.db, page.id)
 }
 

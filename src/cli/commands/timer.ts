@@ -38,6 +38,7 @@ import { DID_MAX } from '../../config/constants.ts'
 import { checkpointStatus, findDocForEntry, listDocsForEntry, type CheckpointStatus } from '../../db/docs.ts'
 import { resolveDocPath } from '../../docs/paths.ts'
 import { removeDocument } from '../../docs/store.ts'
+import { commitDocs } from '../../docs/git.ts'
 import { readConfig, setScopeMapping } from '../../state/config.ts'
 import { currentRepoIdentity } from './repo.ts'
 import { resolveMappedProject } from '../resolve-project.ts'
@@ -566,6 +567,14 @@ export async function runCancel(argv: string[]): Promise<number> {
     const docsRemoved: string[] = []
     for (const path of docPaths) {
       if (await removeDocument(path)) docsRemoved.push(path)
+    }
+    if (docsRemoved.length > 0) {
+      await commitDocs(ctx.docsRoot, docsRemoved, {
+        source: 'note',
+        subject: `docs: remove the documents of ${discarded.length === 1 ? 'a cancelled timer' : `${discarded.length} cancelled timers`}`,
+        entryId: discarded.length === 1 ? (discarded[0]?.id ?? null) : null,
+        reason: 'timer cancelled',
+      })
     }
     const hooksFired = await emitHooks(
       ctx,

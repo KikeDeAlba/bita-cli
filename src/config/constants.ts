@@ -51,6 +51,9 @@ export const PAGE_SPLIT_BYTES = 12 * 1024
 export const DOC_LOCK_TIMEOUT_MS = 2_000
 export const DOC_LOCK_STALE_MS = 30_000
 
+export const DOCS_GIT_LOCK_TIMEOUT_MS = 5_000
+export const DOCS_GIT_LOCK_STALE_MS = 60_000
+
 export const CHECKPOINT_STALE_MINUTES = 45
 export const CHECKPOINT_TOUCH_THRESHOLD = 3
 

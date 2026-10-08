@@ -19,6 +19,7 @@ import { listDocsForEntry } from '../../db/docs.ts'
 import { listTouches } from '../../db/touches.ts'
 import { resolveDocPath } from '../../docs/paths.ts'
 import { removeDocument } from '../../docs/store.ts'
+import { commitDocs } from '../../docs/git.ts'
 import { enrichEntry } from '../../domain/enrich.ts'
 import { formatDuration } from '../../domain/duration.ts'
 
@@ -171,6 +172,7 @@ export async function applyDeletions(
   db: DatabaseSync,
   targets: DeletionTarget[],
   keepDoc: boolean,
+  docsRoot?: string,
 ): Promise<DeletionOutcome> {
   const deleted: DeletionTarget[] = []
 
@@ -197,6 +199,15 @@ export async function applyDeletions(
         docsOrphaned.push(path)
       }
     }
+  }
+
+  if (docsRoot !== undefined && docsRemoved.length > 0) {
+    await commitDocs(docsRoot, docsRemoved, {
+      source: 'note',
+      subject: `docs: remove the documents of ${deleted.length === 1 ? 'a deleted entry' : `${deleted.length} deleted entries`}`,
+      entryId: deleted.length === 1 ? (deleted[0]?.id ?? null) : null,
+      reason: 'entry deleted',
+    })
   }
 
   return { deleted, docsRemoved, docsKept, docsOrphaned }
@@ -293,7 +304,7 @@ export async function runDelete(argv: string[]): Promise<number> {
       }
     }
 
-    const outcome = await applyDeletions(ctx.db, plan.targets, keepDoc)
+    const outcome = await applyDeletions(ctx.db, plan.targets, keepDoc, ctx.docsRoot)
 
     if (json) {
       writeJson(

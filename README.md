@@ -364,6 +364,52 @@ obligatorias: describen el estado actual de algo, como documento formal, y de
 ellas salen el requerimiento del issue de Jira, el comentario con los
 resultados y lo que se publica en Confluence.
 
+### Historial de los documentos
+
+La raíz de documentos es un repositorio git local, sin remoto. `bita setup` lo
+inicia, y si no, lo inicia la primera escritura: `git init -b main`, un
+`.gitignore` con `*.bkp` y `.DS_Store`, y un commit `chore: import existing
+bita docs` con lo que ya hubiera. El autor sale de la configuración global de
+git (`bita` si no hay).
+
+**Cada escritura de bita es un commit** que lleva solo los archivos que tocó:
+`docs page write|new|rename|move|restore`, `note save`, el cierre de un
+cronómetro, el borrado de una entrada y el pull de Confluence. El mensaje es
+Conventional (`docs(codi): update reglas de negocio`) con los trailers
+`Bita-Source` (`manual`, `meeting`, `confluence-pull`, `restore`, `note`,
+`import`), `Bita-Page`, `Bita-Entry` y `Bita-Reason`. Varias sesiones pueden
+escribir a la vez: el commit toma un candado en `.git/bita.lock` y espera hasta
+5 s. Sin git instalado la escritura se hace igual y solo avisa.
+
+El working tree siempre está en `main`. Las propuestas se construyen en ramas
+con plumbing (un índice temporal, `commit-tree` y `update-ref`), sin checkout,
+y se mezclan con `git merge-tree --write-tree`; nada cambia bajo los pies de
+otra sesión ni de la app.
+
+```sh
+bita docs git init                          # idempotente
+bita docs status                            # lo editado por fuera y sin commit
+bita docs commit [<ruta>...] [--message M]  # lo guarda; sin rutas, todo
+bita docs page history <id> [--limit N]     # versiones, con su origen
+bita docs page show <id> --rev <sha>        # la página en esa versión (campo markdown)
+bita docs page diff <id> [<sha>]            # sin sha: lo no commiteado; con sha: lo que cambió ahí
+bita docs page restore <id> <sha>           # la reescribe como estaba, con origen restore
+
+bita docs propose --branch proposal/meeting-42 <id> --section "Límites" \
+  --md cambio.md --reason "Se subió el tope" --source meeting:42
+bita docs branch ls
+bita docs branch diff proposal/meeting-42 [--commit <sha>]
+bita docs branch apply proposal/meeting-42 --commit <sha>
+bita docs branch drop proposal/meeting-42
+```
+
+`propose` no toca los archivos: cada propuesta es un commit en la rama (que
+nace de `main` si no existe) y devuelve su `sha`. `branch apply` mezcla ese
+commit contra `main` tomando a su padre como base y escribe el resultado con el
+mismo camino que `docs page write`, así que la base y el commit en `main` quedan
+al día. Si la página cambió en las mismas líneas después de la propuesta, falla
+con `MERGE_CONFLICT` (salida 9 y `error.paths`) sin escribir nada.
+
 ### Pendientes y hallazgos
 
 Lo que queda por hacer y lo que se descubrió de paso **no va en las páginas**:

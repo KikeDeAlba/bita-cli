@@ -41,6 +41,7 @@ import { copyFile } from 'node:fs/promises'
 import { migratePages, undoMigration } from '../../docs/migrate-pages.ts'
 import { pageTree, runDocsPage } from './docs-page.ts'
 import { runDiagrams } from './diagrams.ts'
+import { DOCS_GIT_SUBCOMMANDS, runDocsGit } from './docs-git.ts'
 import { readConfig } from '../../state/config.ts'
 import { atlassianOf } from './project.ts'
 
@@ -67,7 +68,7 @@ const OPTIONS = {
   'max-scan-bytes': { type: 'string' as const },
 }
 
-const SUBCOMMANDS = new Set(['tree', 'ls', 'show', 'search', 'page', 'migrate', 'diagrams'])
+const SUBCOMMANDS = new Set(['tree', 'ls', 'show', 'search', 'page', 'migrate', 'diagrams', ...DOCS_GIT_SUBCOMMANDS])
 
 const DEFAULT_LIST_LIMIT = 50
 const DEFAULT_SEARCH_LIMIT = 30
@@ -81,6 +82,7 @@ export async function runDocs(argv: string[]): Promise<number> {
   if (first === 'page') return await runDocsPage(argv.slice(1))
   if (first === 'migrate') return await runMigrate(argv.slice(1))
   if (first === 'diagrams') return await runDiagrams(argv.slice(1))
+  if (DOCS_GIT_SUBCOMMANDS.has(first)) return await runDocsGit(first, argv.slice(1))
 
   const args = parseCommandArgs(argv.slice(1), OPTIONS, { ...BASE_OPTIONS, ...RANGE_OPTIONS })
   const json = readBoolean(args, 'json')

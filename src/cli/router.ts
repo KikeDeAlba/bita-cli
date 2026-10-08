@@ -104,6 +104,21 @@ Documents:
   docs diagrams ls <id>      The page's mermaid and draw.io diagrams, and whether they are rendered
   docs diagrams render <id>  Render them to PNG next to the page (--force redraws all)
   docs page rm <id>          Forget the page; the .md stays on disk
+  docs page history <id>     Every committed version of the page, with where it came from (--limit N)
+  docs page show <id> --rev <sha>   The page as it was at that revision
+  docs page diff <id> [<sha>]       What changed: uncommitted edits, or what that revision changed
+  docs page restore <id> <sha>      Write that revision back as the current page
+
+Docs history (the docs root is a local git repository; every bita write is a commit on main):
+  docs git init              Start the history, committing what is there (also run by setup and the first write)
+  docs status                Files edited outside bita and not committed yet
+  docs commit [<path>...]    Commit them (all of them without paths; --message M)
+  docs propose --branch B <pageId> (--md F|--body S) [--section H] --reason R --source meeting:<id>|manual
+                             Commit a change to a branch without touching the files on disk
+  docs branch ls             Proposal branches and their commits
+  docs branch diff <b> [--commit <sha>]   The diff of each proposal
+  docs branch apply <b> --commit <sha>    Merge one proposal into main (fails with MERGE_CONFLICT if the page moved on)
+  docs branch drop <b>       Delete the branch
   docs migrate [--yes]       Turn every entry document into a page
   docs migrate --undo        Put the corpus back as it was
 
@@ -232,6 +247,7 @@ Setup options:
   --no-settings              Skip Claude settings changes
   --no-drawio                Skip draw.io setup
   --no-recap                 Skip installing recap (meeting recorder, app, plugin and models)
+  --no-docs-git              Skip starting the docs history
 `
 
 export async function route(argv: string[]): Promise<number> {
