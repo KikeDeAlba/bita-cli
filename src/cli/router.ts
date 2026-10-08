@@ -22,7 +22,7 @@ import { runBacklog } from './commands/backlog.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '0.15.2'
+export const VERSION = '0.16.0'
 
 const HELP = `bita ${VERSION}
 
@@ -104,6 +104,21 @@ Documents:
   docs diagrams ls <id>      The page's mermaid and draw.io diagrams, and whether they are rendered
   docs diagrams render <id>  Render them to PNG next to the page (--force redraws all)
   docs page rm <id>          Forget the page; the .md stays on disk
+  docs page history <id>     Every committed version of the page, with where it came from (--limit N)
+  docs page show <id> --rev <sha>   The page as it was at that revision
+  docs page diff <id> [<sha>]       What changed: uncommitted edits, or what that revision changed
+  docs page restore <id> <sha>      Write that revision back as the current page
+
+Docs history (the docs root is a local git repository; every bita write is a commit on main):
+  docs git init              Start the history, committing what is there (also run by setup and the first write)
+  docs status                Files edited outside bita and not committed yet
+  docs commit [<path>...]    Commit them (all of them without paths; --message M)
+  docs propose --branch B <pageId> (--md F|--body S) [--section H] --reason R --source meeting:<id>|manual
+                             Commit a change to a branch without touching the files on disk
+  docs branch ls             Proposal branches and their commits
+  docs branch diff <b> [--commit <sha>]   The diff of each proposal
+  docs branch apply <b> --commit <sha>    Merge one proposal into main (fails with MERGE_CONFLICT if the page moved on)
+  docs branch drop <b>       Delete the branch
   docs migrate [--yes]       Turn every entry document into a page
   docs migrate --undo        Put the corpus back as it was
 
@@ -124,6 +139,8 @@ Configuration:
   repo init [path]           Create a project for a repository and map it
   repo show                  Where am I, and which project resolves here
   scope list|set|unset|which Map a path prefix to a project; the longest one wins
+  project repo ls|add|rm     Local repositories of a project: ls [--project P], add <path>, rm <path>
+  project repo suggest <id>  Repositories behind the files an entry touched, and which are mapped
   config get|set-jira        Inspect or set the local configuration
   hook session-start         Emit the Claude Code SessionStart context
   hook codex                 Adapt a Codex lifecycle event from stdin
@@ -174,6 +191,9 @@ Project options:
   --all                      With "projects", include archived ones
   --force                    With "project delete", accept leaving its entries orphaned
   --yes / --dry-run          With "project delete", as in delete
+  --project ID|NAME          With "project repo", the project (add infers it from the repository)
+  --source stop|manual       With "project repo add", who mapped it (default: manual)
+  --history                  With "project repo suggest --project P", every past entry of the project
 
 Merge options:
   --into ID                  The entry that survives (default: the oldest)
@@ -232,6 +252,7 @@ Setup options:
   --no-settings              Skip Claude settings changes
   --no-drawio                Skip draw.io setup
   --no-recap                 Skip installing recap (meeting recorder, app, plugin and models)
+  --no-docs-git              Skip starting the docs history
 `
 
 export async function route(argv: string[]): Promise<number> {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { route } from '../cli/router.ts'
-import { ConflictError, NotFoundError, UsageError } from '../errors.ts'
+import { ConflictError, MergeConflictError, NotFoundError, UsageError } from '../errors.ts'
 import { EXIT_CONFLICT, EXIT_GENERIC, EXIT_USAGE } from '../cli/exit-codes.ts'
 import { errorEnvelope, writeErr, writeJson } from '../cli/output.ts'
 
@@ -32,10 +32,12 @@ async function main(): Promise<void> {
           code: codeFor(error),
           message,
           ...(hint ? { hint } : {}),
+          ...(error instanceof MergeConflictError ? { paths: error.paths } : {}),
         }),
       )
     } else {
       writeErr(message)
+      if (error instanceof MergeConflictError) for (const path of error.paths) writeErr(`  conflict: ${path}`)
       if (hint) writeErr(`\n${hint}`)
     }
 

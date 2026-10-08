@@ -364,6 +364,52 @@ obligatorias: describen el estado actual de algo, como documento formal, y de
 ellas salen el requerimiento del issue de Jira, el comentario con los
 resultados y lo que se publica en Confluence.
 
+### Historial de los documentos
+
+La raíz de documentos es un repositorio git local, sin remoto. `bita setup` lo
+inicia, y si no, lo inicia la primera escritura: `git init -b main`, un
+`.gitignore` con `*.bkp` y `.DS_Store`, y un commit `chore: import existing
+bita docs` con lo que ya hubiera. El autor sale de la configuración global de
+git (`bita` si no hay).
+
+**Cada escritura de bita es un commit** que lleva solo los archivos que tocó:
+`docs page write|new|rename|move|restore`, `note save`, el cierre de un
+cronómetro, el borrado de una entrada y el pull de Confluence. El mensaje es
+Conventional (`docs(codi): update reglas de negocio`) con los trailers
+`Bita-Source` (`manual`, `meeting`, `confluence-pull`, `restore`, `note`,
+`import`), `Bita-Page`, `Bita-Entry` y `Bita-Reason`. Varias sesiones pueden
+escribir a la vez: el commit toma un candado en `.git/bita.lock` y espera hasta
+5 s. Sin git instalado la escritura se hace igual y solo avisa.
+
+El working tree siempre está en `main`. Las propuestas se construyen en ramas
+con plumbing (un índice temporal, `commit-tree` y `update-ref`), sin checkout,
+y se mezclan con `git merge-tree --write-tree`; nada cambia bajo los pies de
+otra sesión ni de la app.
+
+```sh
+bita docs git init                          # idempotente
+bita docs status                            # lo editado por fuera y sin commit
+bita docs commit [<ruta>...] [--message M]  # lo guarda; sin rutas, todo
+bita docs page history <id> [--limit N]     # versiones, con su origen
+bita docs page show <id> --rev <sha>        # la página en esa versión (campo markdown)
+bita docs page diff <id> [<sha>]            # sin sha: lo no commiteado; con sha: lo que cambió ahí
+bita docs page restore <id> <sha>           # la reescribe como estaba, con origen restore
+
+bita docs propose --branch proposal/meeting-42 <id> --section "Límites" \
+  --md cambio.md --reason "Se subió el tope" --source meeting:42
+bita docs branch ls
+bita docs branch diff proposal/meeting-42 [--commit <sha>]
+bita docs branch apply proposal/meeting-42 --commit <sha>
+bita docs branch drop proposal/meeting-42
+```
+
+`propose` no toca los archivos: cada propuesta es un commit en la rama (que
+nace de `main` si no existe) y devuelve su `sha`. `branch apply` mezcla ese
+commit contra `main` tomando a su padre como base y escribe el resultado con el
+mismo camino que `docs page write`, así que la base y el commit en `main` quedan
+al día. Si la página cambió en las mismas líneas después de la propuesta, falla
+con `MERGE_CONFLICT` (salida 9 y `error.paths`) sin escribir nada.
+
 ### Pendientes y hallazgos
 
 Lo que queda por hacer y lo que se descubrió de paso **no va en las páginas**:
@@ -666,6 +712,34 @@ segmentos, asi que `.../apartados` nunca cubre `.../apartados-legacy`.
 Si no hay prefijo, `bita repo init` propone uno comparando los segmentos de la
 ruta con los nombres de proyecto que ya existen, ignorando mayusculas, guiones y
 guiones bajos. Solo empata si tras normalizar son identicos.
+
+### Los repos locales de cada proyecto
+
+El prefijo dice a qué proyecto va el tiempo; aparte, bita guarda **en qué rutas
+locales vive el código de cada proyecto**, para que otras herramientas —el
+asistente de reuniones de recap, por ejemplo— sepan en qué repos buscar cuando
+se pregunta por él:
+
+```sh
+bita project repo ls [--project CoDi] [--json]       # marca los que ya no están en disco
+bita project repo add ~/dev/codi/api --project CoDi  # guarda la raíz git y su slug
+bita project repo rm ~/dev/codi/api
+bita project repo suggest 412 --json                 # raíces git de lo que tocó la entrada 412
+bita project repo suggest --project CoDi --history   # lo mismo sobre todas sus entradas
+```
+
+`add` guarda la raíz del repo (`git rev-parse --show-toplevel`), no la carpeta
+que se le pase, y desde un worktree guarda el clon principal. Sin `--project`,
+toma el proyecto al que resuelve el repo por su prefijo. Volver a agregar uno
+solo refresca cuándo se vio por última vez.
+
+`suggest` agrupa por raíz git los archivos que tocó la entrada, cuenta cuántos
+cayeron en cada una y marca `mapped` las que ya son del proyecto; los documentos
+de bita quedan fuera. Al parar, `/bita-stop` revisa esas sugerencias y mapea con
+`--source stop` solo las que de verdad pertenecen al proyecto, y `bita stop
+--json` las repite en `meta.repoSuggestions`: una lista con un solo cronómetro,
+un objeto por id de entrada con varios. `--history` sirve para sembrar el mapa
+la primera vez.
 
 ## Cómo se agrupa
 

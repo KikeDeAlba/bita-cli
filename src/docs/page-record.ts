@@ -17,6 +17,7 @@ import {
 } from './markdown.ts'
 import { resolveDocPath } from './paths.ts'
 import { readRaw, renameDocument, withDocLock, writeDocument } from './store.ts'
+import { commitDocs, docsSubject, prepareDocsRepo, type DocsSource } from './git.ts'
 
 export interface PageWrite {
   section?: { heading: string; body: string } | undefined
@@ -33,6 +34,30 @@ export interface RecordedPage {
   changed: boolean
   sectionCount: number
   headingCount: number
+  sha: string | null
+}
+
+export interface PageCommit {
+  source?: DocsSource | undefined
+  action?: string | undefined
+  reason?: string | null | undefined
+  entryId?: number | null | undefined
+  trailers?: Record<string, string> | undefined
+}
+
+export function pageCommitIntent(page: DocPageRow, relPath: string, action: string, commit: PageCommit) {
+  return {
+    source: commit.source ?? 'manual',
+    subject: docsSubject(relPath, commit.action ?? action, page.title),
+    pageId: page.id,
+    entryId: commit.entryId ?? null,
+    reason: commit.reason ?? null,
+    ...(commit.trailers ? { trailers: commit.trailers } : {}),
+  }
+}
+
+export function pageFilePaths(relPath: string): string[] {
+  return [relPath, assetsRelDir(relPath)]
 }
 
 function ownedFrontMatter(ctx: DocsContext, page: DocPageRow, parentTitle: string | null): Record<string, string> {
@@ -51,10 +76,12 @@ export async function recordPageDoc(
   ctx: DocsContext,
   page: DocPageRow,
   write: PageWrite = {},
+  commit: PageCommit | false = {},
 ): Promise<RecordedPage> {
   const absolutePath = resolveDocPath(ctx.docsRoot, page.relPath)
   const parents = ancestorsOf(ctx.db, page.id)
   const parentTitle = parents.at(-1)?.title ?? null
+  if (commit !== false) await prepareDocsRepo(ctx.docsRoot)
 
   return withDocLock(absolutePath, async () => {
     const raw = await readRaw(absolutePath)
@@ -87,6 +114,15 @@ export async function recordPageDoc(
       recordedAt: ctx.now.toISOString(),
     })
 
+    const sha =
+      commit === false || !result.changed
+        ? null
+        : await commitDocs(
+            ctx.docsRoot,
+            [page.relPath],
+            pageCommitIntent(page, page.relPath, result.created ? 'create' : 'update', commit),
+          )
+
     return {
       page,
       path: absolutePath,
@@ -95,11 +131,17 @@ export async function recordPageDoc(
       changed: result.changed,
       sectionCount: result.sectionCount,
       headingCount,
+      sha,
     }
   })
 }
 
-export async function movePageFile(ctx: DocsContext, page: DocPageRow, toRelPath: string): Promise<boolean> {
+export async function movePageFile(
+  ctx: DocsContext,
+  page: DocPageRow,
+  toRelPath: string,
+  commit: PageCommit | false = {},
+): Promise<boolean> {
   if (page.relPath === toRelPath) return false
 
   const from = resolveDocPath(ctx.docsRoot, page.relPath)
@@ -113,6 +155,13 @@ export async function movePageFile(ctx: DocsContext, page: DocPageRow, toRelPath
   }
 
   repointPage(ctx.db, page.id, toRelPath)
+  if (commit !== false) {
+    await commitDocs(
+      ctx.docsRoot,
+      [...pageFilePaths(page.relPath), ...pageFilePaths(toRelPath)],
+      pageCommitIntent(page, toRelPath, 'move', commit),
+    )
+  }
   return true
 }
 

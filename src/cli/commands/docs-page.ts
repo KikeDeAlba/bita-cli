@@ -41,7 +41,17 @@ import { outline, parseDocument, type DocHeading, type ParsedDocument } from '..
 import { backlogHeadings } from '../../docs/backlog-extract.ts'
 import { listBacklogItems } from '../../db/backlog.ts'
 import { PAGE_SPLIT_BYTES, PAGE_SPLIT_SECTIONS } from '../../config/constants.ts'
-import { recordPageDoc, movePageFile } from '../../docs/page-record.ts'
+import { recordPageDoc, movePageFile, pageCommitIntent, pageFilePaths } from '../../docs/page-record.ts'
+import {
+  commitDocs,
+  pageHistory,
+  pathAtRev,
+  readBlob,
+  requireDocsRepo,
+  resolveRev,
+  revisionDiff,
+  worktreeDiff,
+} from '../../docs/git.ts'
 import { resolveDocPath } from '../../docs/paths.ts'
 import { projectSlug, titleSlug } from '../../docs/slug.ts'
 import { readRaw } from '../../docs/store.ts'
@@ -56,7 +66,22 @@ import { resolveProjectArg } from '../project-arg.ts'
 import { addRefToPage, refsOfPage, removeRefFromPage, REF_KINDS, type RefKind } from '../../db/page-refs.ts'
 import { classifyUrl } from '../../domain/refs.ts'
 
-const SUBCOMMANDS = new Set(['ls', 'show', 'new', 'write', 'rename', 'move', 'link', 'unlink', 'rm', 'ref', 'asset'])
+const SUBCOMMANDS = new Set([
+  'ls',
+  'show',
+  'new',
+  'write',
+  'rename',
+  'move',
+  'link',
+  'unlink',
+  'rm',
+  'ref',
+  'asset',
+  'history',
+  'diff',
+  'restore',
+])
 
 const OPTIONS = {
   project: { type: 'string' as const },
@@ -83,6 +108,8 @@ const OPTIONS = {
   'no-markdown': { type: 'boolean' as const, default: false },
   create: { type: 'boolean' as const, default: false },
   tree: { type: 'boolean' as const, default: false },
+  rev: { type: 'string' as const },
+  limit: { type: 'string' as const },
 }
 
 export interface PageContext extends LocalContext {
@@ -121,6 +148,9 @@ export async function runDocsPage(argv: string[]): Promise<number> {
     if (first === 'unlink') return await runUnlink(ctx, args, positional, json)
     if (first === 'ref') return await runRef(ctx, args, positional, json)
     if (first === 'asset') return await runAsset(ctx, args, positional, json)
+    if (first === 'history') return await runHistory(ctx, args, positional, json)
+    if (first === 'diff') return await runPageDiff(ctx, args, positional, json)
+    if (first === 'restore') return await runRestore(ctx, args, positional, json)
     return await runRemove(ctx, args, positional, json)
   } finally {
     ctx.db.close()
@@ -306,6 +336,7 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
   const siteUrl = ctx.siteUrl
   const absolutePath = resolveDocPath(ctx.docsRoot, page.relPath)
   const raw = await readRaw(absolutePath)
+  const revision = await revisionText(ctx, page, readString(args, 'rev'))
   const parsed = raw === null ? null : parseDocument(raw)
   const headings: DocHeading[] = parsed === null ? [] : outline(parsed)
   const inspected = await inspectDocFile(ctx.docsRoot, page)
@@ -369,6 +400,7 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
       createdAt: item.createdAt,
       resolvedAt: item.resolvedAt,
     })),
+    ...(revision ? { rev: revision.sha, revPath: revision.path, markdown: revision.markdown } : {}),
   }
 
   if (json) {
@@ -382,6 +414,10 @@ async function runShow(ctx: PageContext, args: ParsedArgs, positional: string[],
     return 0
   }
 
+  if (revision) {
+    writeOut(revision.markdown)
+    return 0
+  }
   writeOut(`#${page.id}  ${page.title}`)
   writeOut(page.relPath)
   if (headings.length > 0) writeOut(headings.map((heading) => `  ${'  '.repeat(heading.level - 2)}${heading.heading}`).join('\n'))
@@ -539,6 +575,7 @@ async function runWrite(ctx: PageContext, args: ParsedArgs, positional: string[]
     path: recorded.path,
     changed: recorded.changed,
     warnings,
+    sha: recorded.sha,
   })
 }
 
@@ -572,8 +609,14 @@ async function runRename(ctx: PageContext, args: ParsedArgs, positional: string[
 
   const renamed = requirePage(ctx.db, page.id)
   const parent = renamed.parentId === null ? null : requirePage(ctx.db, renamed.parentId)
-  await movePageFile(ctx, renamed, relPathFor(ctx, renamed.projectId, parent, slug))
-  await recordPageDoc(ctx, requirePage(ctx.db, page.id))
+  const toRelPath = relPathFor(ctx, renamed.projectId, parent, slug)
+  await movePageFile(ctx, renamed, toRelPath, false)
+  await recordPageDoc(ctx, requirePage(ctx.db, page.id), {}, false)
+  await commitDocs(
+    ctx.docsRoot,
+    [...pageFilePaths(page.relPath), ...pageFilePaths(toRelPath)],
+    pageCommitIntent(requirePage(ctx.db, page.id), toRelPath, 'rename', {}),
+  )
 
   return report(ctx, 'docs page rename', requirePage(ctx.db, page.id), json)
 }
@@ -692,6 +735,84 @@ async function runRemove(ctx: PageContext, args: ParsedArgs, positional: string[
   }
   writeOut(`Removed ${doomed.length} page${doomed.length === 1 ? '' : 's'}. The .md files stay on disk.`)
   return 0
+}
+
+async function revisionText(
+  ctx: PageContext,
+  page: DocPageRow,
+  rev: string | undefined,
+): Promise<{ sha: string; path: string; markdown: string } | null> {
+  if (rev === undefined) return null
+  await requireDocsRepo(ctx.docsRoot)
+  const sha = await resolveRev(ctx.docsRoot, rev)
+  const { path } = await pathAtRev(ctx.docsRoot, page.relPath, sha)
+  const markdown = await readBlob(ctx.docsRoot, sha, path)
+  if (markdown === null) {
+    throw new NotFoundError(`Page #${page.id} has no content at ${sha.slice(0, 7)}.`, 'REV_NOT_FOUND')
+  }
+  return { sha, path, markdown }
+}
+
+async function runHistory(ctx: PageContext, args: ParsedArgs, positional: string[], json: boolean): Promise<number> {
+  const page = pageIdArg(positional, args, ctx)
+  const limit = readInteger(args, 'limit')
+  if (limit !== undefined && limit <= 0) throw new UsageError('--limit must be a positive number.')
+  const revisions = await pageHistory(ctx.docsRoot, page.relPath, limit)
+  const data = { pageId: page.id, path: page.relPath, revisions }
+
+  if (json) {
+    writeJson(successEnvelope('docs page history', data, { root: ctx.docsRoot }))
+    return 0
+  }
+  if (revisions.length === 0) {
+    writeOut(`Page #${page.id} has no history yet.`)
+    return 0
+  }
+  for (const revision of revisions) {
+    writeOut(`${revision.sha.slice(0, 7)}  ${revision.date}  ${revision.source.padEnd(15)} ${revision.subject}`)
+  }
+  return 0
+}
+
+async function runPageDiff(ctx: PageContext, args: ParsedArgs, positional: string[], json: boolean): Promise<number> {
+  const page = pageIdArg(positional, args, ctx)
+  await requireDocsRepo(ctx.docsRoot)
+  const rev = positional[1] ?? readString(args, 'rev')
+  const result = rev === undefined ? await worktreeDiff(ctx.docsRoot, page.relPath) : await revisionDiff(ctx.docsRoot, page.relPath, rev)
+  const data = { pageId: page.id, from: result.from, to: result.to, diff: result.diff, hunks: result.hunks }
+
+  if (json) {
+    writeJson(successEnvelope('docs page diff', data, { root: ctx.docsRoot }))
+    return 0
+  }
+  if (result.diff.length === 0) writeOut('No changes.')
+  else process.stdout.write(result.diff)
+  return 0
+}
+
+async function runRestore(ctx: PageContext, args: ParsedArgs, positional: string[], json: boolean): Promise<number> {
+  const page = pageIdArg(positional, args, ctx)
+  const rev = positional[1] ?? readString(args, 'rev')
+  if (rev === undefined) throw new UsageError('Usage: bita docs page restore <pageId> <sha>')
+  const revision = await revisionText(ctx, page, rev)
+  if (revision === null) throw new UsageError('Usage: bita docs page restore <pageId> <sha>')
+
+  const recorded = await recordPageDoc(
+    ctx,
+    page,
+    { body: revision.markdown },
+    { source: 'restore', action: `restore ${revision.sha.slice(0, 7)} of`, reason: `restore ${revision.sha.slice(0, 7)}` },
+  )
+  const written = await readRaw(recorded.path)
+  const warnings = written === null ? [] : pageWarnings(parseDocument(written), Buffer.byteLength(written))
+
+  return report(ctx, 'docs page restore', requirePage(ctx.db, page.id), json, {
+    path: recorded.path,
+    changed: recorded.changed,
+    warnings,
+    sha: recorded.sha,
+    restoredFrom: revision.sha,
+  })
 }
 
 function report(

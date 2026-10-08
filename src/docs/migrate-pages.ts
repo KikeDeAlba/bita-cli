@@ -16,6 +16,7 @@ import { issueUrl } from '../domain/jira.ts'
 import { pageRelPath } from './layout.ts'
 import { checksumOf, parseDocument, type DocSection } from './markdown.ts'
 import { recordPageDoc } from './page-record.ts'
+import { commitDocs } from './git.ts'
 import { resolveDocPath } from './paths.ts'
 import type { DocsContext } from './record.ts'
 import { titleSlug } from './slug.ts'
@@ -186,12 +187,19 @@ export async function migratePages(
     await recordPageDoc(ctx, page, {
       body: body.map((section) => `## ${section.heading}\n\n${section.body}`).join('\n\n'),
       frontMatter: { migratedFrom: legacy.rel_path },
-    })
+    }, false)
 
     migrated.push({ entryId: entry.id, pageId, title, relPath, migratedFrom: legacy.rel_path, summary: said, issues })
   }
 
-  if (!dryRun && migrated.length > 0) writeSetting(ctx.db, MIGRATION_BATCH_KEY, batch)
+  if (!dryRun && migrated.length > 0) {
+    writeSetting(ctx.db, MIGRATION_BATCH_KEY, batch)
+    await commitDocs(
+      ctx.docsRoot,
+      migrated.map((page) => page.relPath),
+      { source: 'manual', subject: `docs: turn ${migrated.length} entry documents into pages`, reason: 'docs migrate' },
+    )
+  }
 
   return { batch, dryRun, scanned: candidates.length, migrated, skipped }
 }
@@ -208,6 +216,7 @@ export async function undoMigration(ctx: DocsContext): Promise<UndoReport> {
 
   let filesRemoved = 0
   const filesKept: string[] = []
+  const removedPaths: string[] = []
 
   for (const page of pages) {
     const absolutePath = resolveDocPath(ctx.docsRoot, page.rel_path)
@@ -217,6 +226,7 @@ export async function undoMigration(ctx: DocsContext): Promise<UndoReport> {
       if (checksumOf(raw) === page.checksum) {
         await rm(absolutePath, { force: true })
         filesRemoved += 1
+        removedPaths.push(page.rel_path)
       } else {
         filesKept.push(page.rel_path)
       }
@@ -225,5 +235,12 @@ export async function undoMigration(ctx: DocsContext): Promise<UndoReport> {
   }
 
   writeSetting(ctx.db, MIGRATION_BATCH_KEY, '')
+  if (filesRemoved > 0) {
+    await commitDocs(
+      ctx.docsRoot,
+      removedPaths,
+      { source: 'manual', subject: 'docs: undo the page migration', reason: 'docs migrate --undo' },
+    )
+  }
   return { batch, pagesRemoved: pages.length, filesRemoved, filesKept }
 }

@@ -7,7 +7,7 @@ export interface Envelope<T> {
   generatedAt: string
   meta?: Record<string, unknown>
   data?: T
-  error?: { code: string; message: string; hint?: string; status?: number }
+  error?: { code: string; message: string; hint?: string; status?: number; paths?: string[] }
 }
 
 export function successEnvelope<T>(
@@ -27,7 +27,7 @@ export function successEnvelope<T>(
 
 export function errorEnvelope(
   command: string,
-  error: { code: string; message: string; hint?: string; status?: number },
+  error: { code: string; message: string; hint?: string; status?: number; paths?: string[] },
   data?: unknown,
   meta?: Record<string, unknown>,
 ): Envelope<unknown> {

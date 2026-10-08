@@ -23,6 +23,7 @@ import {
   type ParsedDocument,
 } from './markdown.ts'
 import { readRaw, renameDocument, withDocLock, writeDocument } from './store.ts'
+import { commitDocs, docsSubject, prepareDocsRepo } from './git.ts'
 
 export interface DocsContext {
   db: DatabaseSync
@@ -111,6 +112,7 @@ export interface RecordOptions {
   identity?: RepoIdentity | null
   create?: boolean
   section?: { heading: string; body: string } | undefined
+  commit?: false | { reason?: string } | undefined
 }
 
 export async function recordEntryDoc(
@@ -127,6 +129,7 @@ export async function recordEntryDoc(
     : { relPath: wanted, renamedFrom: null }
 
   const absolutePath = resolveDocPath(ctx.docsRoot, placement.relPath)
+  if (options.commit !== false) await prepareDocsRepo(ctx.docsRoot)
 
   return withDocLock(absolutePath, async () => {
     const raw = await readRaw(absolutePath)
@@ -170,6 +173,19 @@ export async function recordEntryDoc(
       headSha: identity?.headSha ?? null,
       now,
     })
+
+    if (options.commit !== false && (written.changed || placement.renamedFrom !== null)) {
+      await commitDocs(
+        ctx.docsRoot,
+        [placement.relPath, ...(placement.renamedFrom !== null ? [placement.renamedFrom] : [])],
+        {
+          source: 'note',
+          subject: docsSubject(placement.relPath, written.created ? 'create note' : 'update note', entry.description || `#${entry.id}`),
+          entryId: entry.id,
+          reason: options.commit?.reason ?? null,
+        },
+      )
+    }
 
     return {
       entryId: entry.id,

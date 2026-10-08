@@ -1,7 +1,7 @@
 ---
 description: Actualiza la documentación del trabajo y después para el cronómetro
 argument-hint: [id, vacío si solo hay uno, o "all"]
-allowed-tools: Bash(bita stop:*), Bash(bita ls:*), Bash(bita docs:*), Bash(bita note:*), Bash(bita backlog:*), Bash(bita amend:*), Bash(recap wait:*), Bash(recap status:*), Read, Write, Edit
+allowed-tools: Bash(bita stop:*), Bash(bita ls:*), Bash(bita docs:*), Bash(bita note:*), Bash(bita backlog:*), Bash(bita amend:*), Bash(bita project:*), Bash(recap wait:*), Bash(recap status:*), Read, Write, Edit
 ---
 
 Corriendo ahora mismo:
@@ -24,7 +24,7 @@ te acuerdas del porqué. Sin ella el issue queda con un título y nada más.
 ## 0. Si es una reunión, no documentes: para y espera
 
 Si el cronómetro que vas a parar tiene `kind` `remote-meeting` o
-`in-person-meeting` (míralo con `bita ls --json`), **sáltate los pasos 1 y 2**.
+`in-person-meeting` (míralo con `bita ls --json`), **sáltate los pasos 1 a 3**.
 recap ya graba la reunión y, al parar, hace lo demás sin que nadie se lo pida:
 
 - transcribe y escribe la minuta;
@@ -112,7 +112,31 @@ internos ni pegotes de log. Y pásale la prueba de olfato de la skill: nada de
 «se acordó con el usuario», «según lo solicitado», «decidimos», «creo que», «yo
 hice» ni «esto lo ejecutas tú». Lo van a leer otros en Jira y en Confluence.
 
-## 2. Después, parar
+## 2. Luego, los repos del proyecto
+
+Mira en qué repos locales cayeron los archivos que tocó el bloque:
+
+```
+bita project repo suggest <id> --json
+```
+
+Cada sugerencia trae la raíz git (`path`), su `slug`, cuántos archivos se
+tocaron ahí (`files`) y si ya pertenece al proyecto de la entrada (`mapped`).
+Por cada una sin mapear que **de verdad sea del proyecto**:
+
+```
+bita project repo add <path> --project <X> --source stop
+```
+
+Solo esas. Si trabajando en CoDi tocaste bita-cli de paso, bita-cli no se mapea
+a CoDi: el mapa dice dónde vive el código de un proyecto, no por dónde pasaste.
+Ante la duda, déjalo fuera. Si la entrada no tiene proyecto, no mapees nada.
+
+Con eso otras herramientas, como el asistente de reuniones de recap, saben en
+qué repos locales buscar cuando se pregunta por el proyecto. `bita stop --json`
+repite en `meta.repoSuggestions` las que siguen sin mapear.
+
+## 3. Después, parar
 
 ```
 bita stop <id> --did "<qué pasó en este bloque>"
