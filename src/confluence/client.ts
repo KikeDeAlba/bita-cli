@@ -80,6 +80,7 @@ const MEDIA_TYPES: Record<string, string> = {
   svg: 'image/svg+xml',
   drawio: 'application/vnd.jgraph.mxfile',
   mmd: 'text/plain',
+  pdf: 'application/pdf',
 }
 
 export function mediaTypeOf(filename: string): string {

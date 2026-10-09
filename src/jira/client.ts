@@ -1,4 +1,7 @@
+import { readFile } from 'node:fs/promises'
+import { basename } from 'node:path'
 import { ConflictError } from '../errors.ts'
+import { mediaTypeOf } from '../confluence/client.ts'
 import type { AtlassianCredentials } from '../atlassian/sites.ts'
 import type { Fetch } from '../atlassian/runtime.ts'
 import { adfToMarkdown, type AdfDocument } from './adf.ts'
@@ -39,6 +42,23 @@ export interface JiraIssueType {
   name: string
   subtask: boolean
   hierarchyLevel: number | null
+}
+
+export interface JiraAttachment {
+  id: string
+  filename: string
+  mimeType: string | null
+  size: number | null
+  url: string | null
+}
+
+export interface JiraComment {
+  id: string
+  author: string | null
+  authorAccountId: string | null
+  created: string | null
+  updated: string | null
+  body: string
 }
 
 export interface JiraField {
@@ -91,7 +111,7 @@ export class JiraClient {
 
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
     const headers: Record<string, string> = { Authorization: this.authorization, Accept: 'application/json' }
-    if (init.body !== undefined) headers['Content-Type'] = 'application/json'
+    if (typeof init.body === 'string') headers['Content-Type'] = 'application/json'
     const response = await this.fetch(`${this.site}${path}`, { ...init, headers: { ...headers, ...(init.headers ?? {}) } })
     const text = await response.text()
     if (response.status === 401 || response.status === 403) {
@@ -276,6 +296,54 @@ export class JiraClient {
       body: JSON.stringify({ body: comment }),
     })
     return { id: asString(nested(body, 'id')) ?? '', created: asString(nested(body, 'created')) }
+  }
+
+  async comments(key: string): Promise<JiraComment[]> {
+    const found: JiraComment[] = []
+    let startAt = 0
+    for (;;) {
+      const params = new URLSearchParams({ startAt: String(startAt), maxResults: '100', orderBy: 'created' })
+      const body = await this.request(`/rest/api/3/issue/${encodeURIComponent(key)}/comment?${params.toString()}`)
+      const list = nested(body, 'comments')
+      const page = Array.isArray(list) ? list : []
+      for (const raw of page) {
+        found.push({
+          id: asString(nested(raw, 'id')) ?? '',
+          author: asString(nested(raw, 'author', 'displayName')),
+          authorAccountId: asString(nested(raw, 'author', 'accountId')),
+          created: asString(nested(raw, 'created')),
+          updated: asString(nested(raw, 'updated')),
+          body: adfToMarkdown(nested(raw, 'body')),
+        })
+      }
+      const total = asNumber(nested(body, 'total'))
+      startAt += page.length
+      if (page.length === 0 || total === null || startAt >= total) break
+    }
+    return found
+  }
+
+  async deleteComment(key: string, commentId: string): Promise<void> {
+    await this.request(`/rest/api/3/issue/${encodeURIComponent(key)}/comment/${encodeURIComponent(commentId)}`, { method: 'DELETE' })
+  }
+
+  async attach(key: string, filePath: string): Promise<JiraAttachment[]> {
+    const filename = basename(filePath)
+    const bytes = await readFile(filePath)
+    const form = new FormData()
+    form.append('file', new Blob([bytes], { type: mediaTypeOf(filename) }), filename)
+    const body = await this.request(`/rest/api/3/issue/${encodeURIComponent(key)}/attachments`, {
+      method: 'POST',
+      headers: { 'X-Atlassian-Token': 'no-check' },
+      body: form,
+    })
+    return (Array.isArray(body) ? body : []).map((raw) => ({
+      id: asString(nested(raw, 'id')) ?? '',
+      filename: asString(nested(raw, 'filename')) ?? filename,
+      mimeType: asString(nested(raw, 'mimeType')),
+      size: asNumber(nested(raw, 'size')),
+      url: asString(nested(raw, 'content')),
+    }))
   }
 
   async linkIssues(type: string, from: string, to: string): Promise<void> {
