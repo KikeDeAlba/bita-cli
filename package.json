@@ -1,6 +1,6 @@
 {
   "name": "@kikedealba/bita",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Registro de tiempo local que documenta el trabajo y lo vuelca a Jira, con integraciones para agentes de código.",
   "license": "MIT",
   "author": "Jesus Enrique De Alba Gaytan",
