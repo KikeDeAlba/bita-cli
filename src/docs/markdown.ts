@@ -100,7 +100,7 @@ export function parseDocument(text: string): ParsedDocument {
     const sectionHeading = /^##\s+(.*\S)\s*$/.exec(line)
     if (sectionHeading?.[1]) {
       if (current) sections.push({ heading: current.heading, body: current.body.join('\n').trim() })
-      current = { heading: sectionHeading[1], body: [] }
+      current = { heading: sectionHeading[1].normalize('NFC'), body: [] }
       continue
     }
 
@@ -111,7 +111,7 @@ export function parseDocument(text: string): ParsedDocument {
 
     const documentTitle = /^#\s+(.*\S)\s*$/.exec(line)
     if (documentTitle?.[1] && title.length === 0) {
-      title = documentTitle[1]
+      title = documentTitle[1].normalize('NFC')
       continue
     }
     preamble.push(line)
@@ -159,7 +159,8 @@ export function upsertSection(
   body: string,
   order: readonly string[] = [],
 ): { doc: ParsedDocument; created: boolean; changed: boolean } {
-  const index = doc.sections.findIndex((section) => section.heading === heading)
+  heading = heading.normalize('NFC')
+  const index = doc.sections.findIndex((section) => section.heading.normalize('NFC') === heading)
   const trimmed = body.trim()
 
   if (index === -1) {

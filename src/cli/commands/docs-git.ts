@@ -24,6 +24,7 @@ import {
   type DocsSource,
 } from '../../docs/git.ts'
 import { emptyDocument, parseDocument, renderDocument, upsertSection } from '../../docs/markdown.ts'
+import { normalizeDatabaseText, normalizeDocFiles } from '../../docs/normalize.ts'
 import { recordPageDoc } from '../../docs/page-record.ts'
 import { NotFoundError, UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString, type ParsedArgs } from '../args.ts'
@@ -40,11 +41,12 @@ const OPTIONS = {
   commit: { type: 'string' as const },
   message: { type: 'string' as const },
   all: { type: 'boolean' as const, default: false },
+  'dry-run': { type: 'boolean' as const, default: false },
 }
 
 const BRANCH_ACTIONS = new Set(['ls', 'diff', 'apply', 'drop'])
 
-export const DOCS_GIT_SUBCOMMANDS = new Set(['git', 'status', 'commit', 'propose', 'branch'])
+export const DOCS_GIT_SUBCOMMANDS = new Set(['git', 'status', 'commit', 'propose', 'branch', 'normalize'])
 
 export async function runDocsGit(first: string, argv: string[]): Promise<number> {
   const head = argv[0]
@@ -65,6 +67,7 @@ export async function runDocsGit(first: string, argv: string[]): Promise<number>
     if (first === 'git') return await runInit(ctx, json)
     if (first === 'status') return await runStatus(ctx, json)
     if (first === 'commit') return await runCommit(ctx, args, json)
+    if (first === 'normalize') return await runNormalize(ctx, args, json)
     if (first === 'propose') return await runPropose(ctx, args, json)
     if (action === 'ls') return await runBranchList(ctx, json)
     if (action === 'diff') return await runBranchDiff(ctx, args, json)
@@ -119,6 +122,32 @@ async function runCommit(ctx: LocalContext, args: ParsedArgs, json: boolean): Pr
     return 0
   }
   writeOut(sha === null ? 'Nothing to commit.' : `Committed ${paths.length} path${paths.length === 1 ? '' : 's'} as ${sha.slice(0, 7)}.`)
+  return 0
+}
+
+async function runNormalize(ctx: LocalContext, args: ParsedArgs, json: boolean): Promise<number> {
+  const dryRun = readBoolean(args, 'dry-run')
+  const files = await normalizeDocFiles(ctx.docsRoot, dryRun)
+  const columns = normalizeDatabaseText(ctx.db, dryRun)
+  const sha =
+    dryRun || files.length === 0
+      ? null
+      : await commitDocs(ctx.docsRoot, files, { source: 'manual', subject: 'docs: normalize text to nfc', reason: 'unicode normalization' })
+  const data = { dryRun, sha, files, columns }
+
+  if (json) {
+    writeJson(successEnvelope('docs normalize', data, { root: ctx.docsRoot }))
+    return 0
+  }
+  const rows = columns.reduce((total, column) => total + column.rows, 0)
+  if (files.length === 0 && rows === 0) {
+    writeOut('Every document and database value is already in NFC.')
+    return 0
+  }
+  const verb = dryRun ? 'Would normalize' : 'Normalized'
+  writeOut(`${verb} ${files.length} document${files.length === 1 ? '' : 's'} and ${rows} database value${rows === 1 ? '' : 's'}.`)
+  for (const column of columns) writeOut(`  ${column.table}.${column.column}: ${column.rows}`)
+  if (sha !== null) writeOut(`Committed as ${sha.slice(0, 7)}.`)
   return 0
 }
 

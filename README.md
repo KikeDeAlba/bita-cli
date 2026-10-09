@@ -410,6 +410,14 @@ mismo camino que `docs page write`, así que la base y el commit en `main` queda
 al día. Si la página cambió en las mismas líneas después de la propuesta, falla
 con `MERGE_CONFLICT` (salida 9 y `error.paths`) sin escribir nada.
 
+**Texto en Unicode NFC.** macOS entrega los argumentos de otros procesos con los
+acentos descompuestos (`ó` como `o` + tilde combinada), así que bita normaliza a
+NFC todo argumento de texto y compara los encabezados normalizados. Un
+`--section "Ejecución…"` que llegue descompuesto reemplaza la sección y no crea
+una segunda. `bita docs normalize [--dry-run]` reescribe en NFC los documentos y
+el texto de la base que se hayan guardado descompuestos antes, en un solo
+commit; las rutas y los slugs no se tocan.
+
 ### Pendientes y hallazgos
 
 Lo que queda por hacer y lo que se descubrió de paso **no va en las páginas**:
