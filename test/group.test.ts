@@ -144,3 +144,49 @@ test('sums seconds rather than rounded hours', () => {
   assert.equal(groups[0]?.totalSeconds, 3620)
   assert.equal(groups[0]?.totalHuman, '1h')
 })
+
+test('groups carry their kind and meetings carry the meeting they come from', () => {
+  const groups = groupEntries(
+    [
+      makeEntry({ id: 10, description: 'Revisión de descargas', kind: 'in-person-meeting', start: '2026-10-08T17:13:00Z', durationSeconds: 1620 }),
+      makeEntry({ id: 11, description: 'ajustar pipeline', start: '2026-10-08T19:00:00Z', durationSeconds: 3600 }),
+    ],
+    options,
+  )
+  const meeting = groups.find((group) => group.entryIds.includes(10))
+  const work = groups.find((group) => group.entryIds.includes(11))
+
+  assert.equal(meeting?.kind, 'in-person-meeting')
+  assert.deepEqual(meeting?.meeting, { entryId: 10, startedAt: meeting?.firstStart, durationSeconds: 1620, mode: 'in-person' })
+  assert.equal(meeting?.meetings?.length, 1)
+  assert.equal(work?.kind, null)
+  assert.equal(work?.meeting, undefined)
+  assert.equal('meetings' in (work ?? {}), false)
+})
+
+test('a meeting and a work block with the same title are separate groups', () => {
+  const groups = groupEntries(
+    [
+      makeEntry({ id: 1, description: 'Sincronizar catálogo', kind: 'remote-meeting', start: '2026-10-08T16:00:00Z' }),
+      makeEntry({ id: 2, description: 'Sincronizar catálogo', start: '2026-10-08T18:00:00Z' }),
+      makeEntry({ id: 3, description: 'Sincronizar catálogo', start: '2026-10-09T18:00:00Z' }),
+    ],
+    options,
+  )
+
+  assert.equal(groups.length, 2)
+  const meeting = groups.find((group) => group.kind === 'remote-meeting')
+  const work = groups.find((group) => group.kind === null)
+  assert.deepEqual(meeting?.entryIds, [1])
+  assert.equal(meeting?.meeting?.mode, 'remote')
+  assert.deepEqual(work?.entryIds, [2, 3])
+  assert.notEqual(meeting?.key, work?.key)
+  assert.equal(work?.key, '789\u0000Sincronizar catálogo')
+})
+
+test('kinds that are not meetings group apart but carry no meeting', () => {
+  const groups = groupEntries([makeEntry({ id: 1, kind: 'review' }), makeEntry({ id: 2, start: '2026-09-16T19:00:00Z' })], options)
+  assert.equal(groups.length, 2)
+  const review = groups.find((group) => group.kind === 'review')
+  assert.equal(review?.meeting, undefined)
+})

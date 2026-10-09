@@ -1,4 +1,4 @@
-import type { EnrichedTimeEntry, TaskGroup, WorklogSlice } from './types.ts'
+import type { EnrichedTimeEntry, MeetingInfo, MeetingMode, TaskGroup, WorklogSlice } from './types.ts'
 import { formatDuration, roundUpToStep, toDecimalHours } from './duration.ts'
 import { localDay, toJiraStarted, toLocalIso } from './timezone.ts'
 import { ESTIMATE_STEP_SECONDS, MAX_TASK_SECONDS } from '../config/constants.ts'
@@ -8,6 +8,19 @@ export interface GroupOptions {
   maxTaskSeconds?: number
   estimateStepSeconds?: number
   caseInsensitive?: boolean
+}
+
+export const MEETING_KINDS: Readonly<Record<string, MeetingMode>> = {
+  'remote-meeting': 'remote',
+  'in-person-meeting': 'in-person',
+}
+
+export function meetingMode(kind: string | null): MeetingMode | null {
+  return kind === null ? null : (MEETING_KINDS[kind] ?? null)
+}
+
+function meetingInfo(entry: EnrichedTimeEntry, mode: MeetingMode): MeetingInfo {
+  return { entryId: entry.id, startedAt: entry.startLocal, durationSeconds: entry.durationSeconds, mode }
 }
 
 export function groupingKey(description: string, caseInsensitive: boolean): string {
@@ -94,6 +107,8 @@ function buildGroup(
   const entryIds = [...new Set(worklogs.map((slice) => slice.entryId))]
   const entriesInPart = base.entries.filter((entry) => entryIds.includes(entry.id))
   const days = [...new Set(worklogs.map((slice) => slice.localDay))].sort()
+  const mode = meetingMode(base.sample.kind)
+  const meetings = mode === null ? [] : entriesInPart.map((entry) => meetingInfo(entry, mode))
   const stops = entriesInPart
     .map((entry) => entry.stop)
     .filter((stop): stop is string => stop !== null)
@@ -120,6 +135,8 @@ function buildGroup(
     partCount,
     splitReason: partCount > 1 ? 'max-task-hours' : 'none',
     jira,
+    kind: base.sample.kind,
+    ...(meetings[0] !== undefined ? { meeting: meetings[0], meetings } : {}),
   }
 }
 
@@ -134,7 +151,8 @@ export function groupEntries(
   const buckets = new Map<string, EnrichedTimeEntry[]>()
 
   for (const entry of entries) {
-    const key = `${entry.projectId ?? 'none'}\u0000${groupingKey(entry.description, caseInsensitive)}`
+    const base = `${entry.projectId ?? 'none'}\u0000${groupingKey(entry.description, caseInsensitive)}`
+    const key = entry.kind === null ? base : `${base}\u0000${entry.kind}`
     const bucket = buckets.get(key)
     if (bucket) bucket.push(entry)
     else buckets.set(key, [entry])

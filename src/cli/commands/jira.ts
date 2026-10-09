@@ -1,11 +1,11 @@
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { NotFoundError, UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readInteger, readString, readStringList, type ParsedArgs } from '../args.ts'
 import { createLocalContext } from '../local-context.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { atlassianRuntime } from '../../atlassian/runtime.ts'
 import { chooseSite, credentialsFor, loadAtlassianConfig, projectSiteHint } from '../../atlassian/sites.ts'
-import { JiraClient } from '../../jira/client.ts'
+import { JiraClient, type JiraAttachment } from '../../jira/client.ts'
 import { markdownToAdf, type AdfDocument } from '../../jira/adf.ts'
 
 const OPTIONS = {
@@ -44,6 +44,9 @@ const USAGE = `Usage:
   bita jira issue createmeta --project KEY [--type T]
   bita jira worklog add KEY --started ISO --seconds N [--comment S]
   bita jira comment add KEY --body S|--body-file F
+  bita jira comment ls KEY
+  bita jira comment rm KEY ID
+  bita jira attach KEY <files...>
   bita jira link --from KEY --to KEY --type NAME`
 
 export async function runJira(argv: string[]): Promise<number> {
@@ -56,6 +59,9 @@ export async function runJira(argv: string[]): Promise<number> {
   if (scope === 'issue' && action !== undefined) return runIssue(args, json, action, target)
   if (scope === 'worklog' && action === 'add') return runWorklog(args, json, target)
   if (scope === 'comment' && action === 'add') return runComment(args, json, target)
+  if (scope === 'comment' && (action === 'ls' || action === 'list')) return runCommentList(args, json, target)
+  if (scope === 'comment' && (action === 'rm' || action === 'delete')) return runCommentRemove(args, json, target, args.positionals[3])
+  if (scope === 'attach') return runAttach(args, json, action, args.positionals.slice(2))
   if (scope === 'link') return runLink(args, json)
   throw new UsageError(USAGE)
 }
@@ -275,6 +281,57 @@ async function runComment(args: ParsedArgs, json: boolean, target: string | unde
   const client = await clientFor(args, key)
   const comment = await client.addComment(key, body)
   return emit(json, 'jira comment add', { key, commentId: comment.id, created: comment.created, url: client.issueUrl(key) }, `Commented on ${key} (${comment.id}).`)
+}
+
+async function runCommentList(args: ParsedArgs, json: boolean, target: string | undefined): Promise<number> {
+  const key = requireKey(target, 'Usage: bita jira comment ls KEY')
+  const client = await clientFor(args, key)
+  const comments = await client.comments(key)
+  if (json) {
+    writeJson(successEnvelope('jira comment ls', comments, { key, url: client.issueUrl(key) }))
+    return 0
+  }
+  if (comments.length === 0) {
+    writeOut(`${key} has no comments.`)
+    return 0
+  }
+  for (const comment of comments) {
+    writeOut(`${comment.id}  ${comment.author ?? '?'}  ${comment.created ?? ''}`)
+    writeOut(comment.body.split('\n').map((line) => `    ${line}`).join('\n'))
+    writeOut('')
+  }
+  return 0
+}
+
+async function runCommentRemove(args: ParsedArgs, json: boolean, target: string | undefined, commentId: string | undefined): Promise<number> {
+  const usage = 'Usage: bita jira comment rm KEY ID'
+  const key = requireKey(target, usage)
+  if (commentId === undefined || !/^\d+$/.test(commentId)) throw new UsageError(usage)
+  const client = await clientFor(args, key)
+  await client.deleteComment(key, commentId)
+  return emit(json, 'jira comment rm', { key, commentId }, `Deleted comment ${commentId} from ${key}.`)
+}
+
+async function runAttach(args: ParsedArgs, json: boolean, target: string | undefined, files: readonly string[]): Promise<number> {
+  const usage = 'Usage: bita jira attach KEY <files...>'
+  const key = requireKey(target, usage)
+  if (files.length === 0) throw new UsageError(usage)
+  for (const file of files) {
+    try {
+      await access(file)
+    } catch {
+      throw new NotFoundError(`${file} does not exist.`, 'FILE_NOT_FOUND')
+    }
+  }
+  const client = await clientFor(args, key)
+  const attachments: JiraAttachment[] = []
+  for (const file of files) attachments.push(...(await client.attach(key, file)))
+  if (json) {
+    writeJson(successEnvelope('jira attach', { key, url: client.issueUrl(key), attachments }))
+    return 0
+  }
+  for (const attachment of attachments) writeOut(`Attached ${attachment.filename} to ${key} (${attachment.id}).`)
+  return 0
 }
 
 async function runLink(args: ParsedArgs, json: boolean): Promise<number> {

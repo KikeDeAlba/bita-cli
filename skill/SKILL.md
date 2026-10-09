@@ -123,6 +123,8 @@ escritura y de jerarquía son las mismas: solo cambia el transporte.
 | `getConfluencePage` | `bita confluence page get <id> [--markdown] --site <site> --json` (`data.storage`, y `data.markdown` con `--markdown`) |
 | `updateConfluencePage` | `bita confluence page update <id> --file <archivo.md> [--title "<título>"] [--message "<nota>"] --site <site> --json` (con `--storage` si el archivo ya es storage) |
 | `searchConfluenceUsingCql` | `bita confluence page search --cql "<CQL>" [--limit <n>] --site <site> --json` |
+| — (el MCP no sube adjuntos) | `bita jira attach <KEY> <archivos...> --site <site> --json`: **siempre por la CLI**, también en proyectos con `via: mcp` |
+| — (el MCP no lista ni borra comentarios) | `bita jira comment ls <KEY> --site <site> --json` y `bita jira comment rm <KEY> <id> --site <site> --json` |
 
 Para crear páginas: `bita confluence page create --parent <id>|--space <KEY>
 --title "<título>" --file <archivo.md> --site <site> --json`, y `bita confluence
@@ -233,6 +235,15 @@ entera, no suavizarla:
   segunda persona** dirigida al lector o al usuario. Un issue no le habla a
   nadie: dice qué se necesita y qué quedó.
 
+### La excepción: el acta de una reunión
+
+La descripción de la subtarea de una **reunión** (paso 8, «Si el grupo es
+reunión») es un acta, y solo ahí se permite su registro: «se acordó», «se
+revisó», «se presentó», «se decidió», «se planteó». Todo lo demás de la lista
+negra sigue prohibido también ahí: nada de primera ni segunda persona, ni el
+usuario, ni el asistente, ni la conversación con el agente, ni reparto del
+trabajo. Las páginas y los issues que no son reuniones no cambian.
+
 ### Así no / así sí
 
 | Así no | Así sí |
@@ -269,7 +280,9 @@ Antes de guardar el documento y otra vez antes de crear el issue, lee cada
 párrafo y pregunta:
 
 1. **¿Esto lo escribiría alguien en su bitácora técnica, sin haber estado en la
-   conversación?** Si suena a acta de reunión, fuera.
+   conversación?** Si suena a acta de reunión, fuera. La única excepción es la
+   descripción de una reunión, que es un acta por definición: ahí la pregunta
+   es si lo entendería alguien que no estuvo en la reunión.
 2. **Si borro la primera mitad de la frase, ¿se pierde información técnica?** Si
    no se pierde nada, esa mitad era relleno o era la conversación.
 3. **¿Queda alguna palabra de la lista negra?** Si sí, reescribe la frase
@@ -383,6 +396,11 @@ Devuelve un envelope con `data.groups`. Cada grupo es **una tarea de Jira**:
   y su `timeSpent` ya formateados.
 - `entryIds[]` — las entradas que hay que atar con `bita link` al terminar.
 - `jiraProjectKey` — `null` si el proyecto aún no está mapeado.
+- `kind` — el tipo de las entradas (`null` si no llevan). Las reuniones
+  (`remote-meeting`, `in-person-meeting`) traen además `meeting`
+  (`entryId`, `startedAt`, `durationSeconds`, `mode`) y `meetings[]` si el grupo
+  junta varias. Una reunión y un trabajo con el mismo título son grupos
+  distintos.
 - `partIndex` / `partCount` / `splitReason` — ver el tope de 8 horas.
 
 En `meta` vienen `excluded`, `alreadyRegistered`, `unmappedProjects`,
@@ -574,7 +592,9 @@ aquí**: eso es el reporte, no hay escritura.
 ### 8. Escribir, grupo por grupo
 
 Todos los grupos, uno detrás de otro, sin parar a confirmar entre medias. Y dentro
-de cada grupo, este orden, sin paralelismo:
+de cada grupo, este orden, sin paralelismo. **Si el grupo es reunión** (`kind`
+`remote-meeting` o `in-person-meeting`), la descripción, el comentario y el
+adjunto cambian: ver «Si el grupo es reunión» al final de este paso.
 
 0. **La Historia ya está resuelta** en el paso 5.5 y persistida en el mapeo.
    Si tuviste que crearla, no le pongas estimación ni la cierres nunca. Si el
@@ -692,9 +712,72 @@ de cada grupo, este orden, sin paralelismo:
    donde atar: sáltalo y dilo en el resumen final, para que se vea que quedó sin
    documentar.
 
+#### Si el grupo es reunión
+
+Una reunión no es una actividad entregable: su subtarea lleva la información de
+la reunión y la minuta adjunta en PDF, no un requerimiento ni un comentario de
+resultados. Los grupos que no son reuniones siguen exactamente como arriba.
+
+- **Historia**: «Sesiones y reuniones», siempre. Se resuelve como cualquier
+  otra en el paso 5.5, pero el tema no se elige: es ese.
+- **`summary`**: el título de la reunión, que es el del grupo, literal.
+- **`description`**: sale de la minuta, no de las páginas ni de los `--did`.
+  `recap show --bita-entry <meeting.entryId> --json` → `data.summary` es la ruta
+  de `summary.md`; léelo con Read. Plantilla:
+
+  ```
+  ## Reunión
+  - Fecha: <día y hora local>
+  - Duración: <h m>
+  - Modalidad: Remota | Presencial
+
+  ## Resumen
+  <el resumen de la minuta>
+
+  ## Temas tratados
+  - <tema>
+
+  ## Acuerdos
+  1. <acuerdo>
+
+  ## Minuta
+  Adjunta en PDF.
+  ```
+
+  La fecha y la hora son las de `meeting.startedAt`, que ya viene en hora local
+  («8 de octubre de 2026, 10:13»); la duración es el `totalHuman` del grupo; la
+  modalidad, `Remota` si `mode` es `remote` y `Presencial` si es `in-person`.
+  El resumen, los temas y los acuerdos salen de las secciones «Resumen», «Temas»
+  y «Acuerdos» de la minuta, redactados como reunión: un tema por viñeta, sin
+  las marcas de minuto (`[00:01:31]`), y los acuerdos **numerados** en el mismo
+  orden. Si no hubo acuerdos, la sección dice «Sin acuerdos.».
+- **Los pendientes y las preguntas abiertas no van a la descripción.** Se
+  quedan en el PDF y en el backlog de bita, donde recap ya los dejó: es la
+  regla 12.
+- **Redacción**: se permite el registro de acta («se acordó», «se revisó»);
+  ver «La excepción: el acta de una reunión». El resto de la lista negra y la
+  prueba de olfato siguen valiendo.
+- **No se escribe el comentario de resultados**: el paso 4 se salta.
+- **La minuta en PDF**, después de los worklogs y antes de cerrar, una vez por
+  cada entrada de `meetings[]`:
+
+  ```
+  bita meeting export <entryId> --json
+  bita jira attach <ISSUE-KEY> <data.path> --site <site> --json
+  ```
+
+  Va **siempre por la CLI**, aunque el proyecto use `via: mcp`: el MCP de
+  Atlassian no sube adjuntos. Si `meeting export` falla con
+  `MEETING_NOT_FOUND` (la reunión no se grabó), la descripción se arma con el
+  título y lo que haya en la página, sin la sección «Minuta», y se dice en el
+  resumen final. Con `CHROME_MISSING` o `RECAP_MISSING`, la subtarea se crea
+  igual sin el PDF, y se reporta para adjuntarlo después.
+- **Igual que cualquier grupo**: asignado, fecha de inicio, estimación,
+  worklogs, cierre, `bita link` y `bita docs page link`.
+
 Al terminar, una tabla con una fila por tarea y una columna por paso —crear,
-asignar, fechar, estimar, worklog, comentar, cerrar, atar las entradas, atar la
-página—,
+asignar, fechar, estimar, worklog, comentar (o adjuntar la minuta, en las
+reuniones), cerrar, atar las entradas, atar la página—,
 la key enlazada y el total registrado. Debajo, lo que se saltó y por qué. Es el
 único sitio donde se ve que un paso no corrió, así que una casilla vacía se deja
 vacía: no se rellena por simetría.

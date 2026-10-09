@@ -22,7 +22,7 @@ import { runBacklog } from './commands/backlog.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '0.16.1'
+export const VERSION = '0.17.0'
 
 const HELP = `bita ${VERSION}
 
@@ -68,7 +68,13 @@ Jira (every command takes --site; default: the project's site, then the first):
   jira issue createmeta --project KEY [--type T]
   jira worklog add KEY --started ISO --seconds N [--comment S]
   jira comment add KEY --body S|--body-file F
+  jira comment ls KEY        Comments with id, author, date and body as markdown
+  jira comment rm KEY ID     Delete one comment
+  jira attach KEY <files...> Upload files to the issue as attachments
   jira link --from KEY --to KEY --type NAME
+
+Meetings (recorded with recap):
+  meeting export <entryId>   Print the meeting minutes to PDF with Chrome (--out FILE; default ~/Downloads/minuta-<day>-<title>.pdf)
 
 Confluence (every command takes --site):
   confluence login           Alias of "atlassian site add"
@@ -324,6 +330,8 @@ export async function route(argv: string[]): Promise<number> {
       return (await import('./commands/atlassian.ts')).runAtlassian(rest)
     case 'jira':
       return (await import('./commands/jira.ts')).runJira(rest)
+    case 'meeting':
+      return (await import('./commands/meeting.ts')).runMeeting(rest)
     case 'start':
       return runStart(rest)
     case 'stop':

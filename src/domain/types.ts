@@ -32,6 +32,15 @@ export interface WorklogSlice {
   partial: boolean
 }
 
+export type MeetingMode = 'remote' | 'in-person'
+
+export interface MeetingInfo {
+  entryId: number
+  startedAt: string
+  durationSeconds: number
+  mode: MeetingMode
+}
+
 export interface TaskGroup {
   key: string
   summary: string
@@ -53,6 +62,9 @@ export interface TaskGroup {
   partCount: number
   splitReason: 'none' | 'max-task-hours'
   jira: boolean
+  kind: string | null
+  meeting?: MeetingInfo
+  meetings?: MeetingInfo[]
 }
 
 export interface ExcludedEntry {
