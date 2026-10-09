@@ -577,6 +577,9 @@ bita jira issue search --jql "project = DPP AND statusCategory != Done" --limit 
 bita jira issue createmeta --project DPP [--type Subtarea]
 bita jira worklog add DPP-12 --started 2026-10-06T09:30:00-06:00 --seconds 5400 --comment "…"
 bita jira comment add DPP-12 --body-file resultado.md
+bita jira comment ls DPP-12                                  # id, autor, fecha y cuerpo en markdown
+bita jira comment rm DPP-12 10234
+bita jira attach DPP-12 minuta.pdf [otro.png ...]            # adjuntos (el MCP no los sube)
 bita jira link --from DPP-12 --to DPP-13 --type Blocks      # DPP-12 blocks DPP-13
 
 bita confluence page get 1010794497 --markdown
@@ -660,6 +663,25 @@ bita log "Retro" --kind remote-meeting --from 16:00 --for 45m
 
 El tipo queda en la columna `entries.kind`, en el JSON de `start`, `stop`, `ls` y
 compañía, y en el front matter del documento.
+
+### La minuta en PDF
+
+```sh
+bita meeting export 853 [--out minuta.pdf] [--json]
+```
+
+Toma la reunión que recap grabó para la entrada (`recap show --bita-entry 853`),
+quita el encabezado de `summary.md` y la imprime con Chrome headless con la misma
+hoja que el export de bita-desktop: portada con título, fecha y hora, duración,
+modalidad y proyecto, y después «Minuta de la reunión». Los bloques mermaid se
+dibujan como SVG (si fallan, queda el código) y las imágenes relativas se buscan
+en la carpeta de la reunión. El título es el que dejó el cierre de recap o el de
+la entrada, nunca el genérico «Remote meeting». Por defecto se guarda en
+`~/Downloads/minuta-<día>-<título>.pdf`; con `--json` devuelve
+`{path, title, entryId}`. Sin Chrome falla con `CHROME_MISSING`. recap se busca en
+`RECAP_CLI`, `~/.local/bin`, `~/Applications/Recap.app`, Homebrew y
+`/Applications`. Las fuentes (Instrument Sans e IBM Plex Mono, OFL) van en
+`assets/export/fonts`.
 
 ### Hooks
 
@@ -751,8 +773,13 @@ la primera vez.
 
 ## Cómo se agrupa
 
-Un grupo es **proyecto + título**, a lo largo de todo el rango, y se convierte en
-un issue de Jira. Cada entrada del grupo es un worklog con su hora real.
+Un grupo es **proyecto + título + tipo**, a lo largo de todo el rango, y se
+convierte en un issue de Jira. Cada entrada del grupo es un worklog con su hora
+real. Una reunión y un trabajo con el mismo título quedan en grupos distintos.
+En `bita summary --json` cada grupo trae su `kind`, y las reuniones
+(`remote-meeting`, `in-person-meeting`) traen además
+`meeting: {entryId, startedAt, durationSeconds, mode}` y la lista `meetings`
+cuando son varias.
 
 La estimación original se redondea **hacia arriba** al siguiente medio punto: 3h
 43m medidas se registran como 4h de estimación con worklogs que suman 3h 43m. Un
@@ -763,6 +790,11 @@ aceptación— y los **resultados** van en un comentario —Resultado, Verificac
 Referencias—. Ni uno ni otro reparte el trabajo entre quien lo hizo y quien
 tiene que terminarlo: todo es de quien tiene asignada la tarea, y lo que falte
 va al backlog de bita, no a Jira.
+
+Las reuniones no: su subtarea va bajo la historia «Sesiones y reuniones», con
+una descripción de reunión —fecha, duración, modalidad, resumen, temas y
+acuerdos—, la minuta en PDF adjunta (`bita meeting export` y `bita jira attach`)
+y sin comentario de resultado.
 
 ## Solapes
 
@@ -820,6 +852,8 @@ src/docs/      los documentos de cada entrada: rutas, markdown y escritura
 src/atlassian/ sitios, tokens y la configuración Atlassian de cada proyecto
 src/jira/      cliente REST de Jira y markdown a ADF
 src/confluence/ cliente REST de Confluence, conversión a storage y sincronización
+src/export/    la minuta de una reunión a HTML y a PDF con Chrome
+assets/export/ la hoja de impresión y las fuentes de la minuta
 src/state/     configuración y notas heredadas en disco
 src/integrations/ adaptadores para OpenCode y otros agentes
 skill/         la skill de Claude

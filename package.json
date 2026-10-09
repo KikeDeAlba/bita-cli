@@ -33,6 +33,7 @@
   },
   "files": [
     "dist",
+    "assets",
     "skill",
     "skill-opencode",
     "skill-codex",

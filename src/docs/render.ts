@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -67,8 +67,24 @@ export async function isFresh(block: DiagramBlock, assetsDir: string): Promise<b
 async function renderMermaid(block: DiagramBlock, assetsDir: string, env: RenderEnvironment): Promise<void> {
   const sourcePath = join(assetsDir, block.sourceFile)
   await writeFile(sourcePath, `${block.source.trim()}\n`, { mode: 0o600 })
+  await runMermaidCli(sourcePath, join(assetsDir, block.imageFile), env)
+}
 
-  const args = ['-y', MERMAID_CLI, '-i', sourcePath, '-o', join(assetsDir, block.imageFile), '-s', '2', '-b', 'white', '-t', 'default', '-q']
+export async function renderMermaidSvg(
+  source: string,
+  workDir: string,
+  name: string,
+  env: RenderEnvironment = defaultEnvironment,
+): Promise<string> {
+  const sourcePath = join(workDir, `${name}.mmd`)
+  const svgPath = join(workDir, `${name}.svg`)
+  await writeFile(sourcePath, `${source.trim()}\n`, { mode: 0o600 })
+  await runMermaidCli(sourcePath, svgPath, env, ['-I', name])
+  return readFile(svgPath, 'utf8')
+}
+
+async function runMermaidCli(sourcePath: string, outputPath: string, env: RenderEnvironment, extraArgs: readonly string[] = []): Promise<void> {
+  const args = ['-y', MERMAID_CLI, '-i', sourcePath, '-o', outputPath, '-s', '2', '-b', 'white', '-t', 'default', '-q', ...extraArgs]
   const extra: NodeJS.ProcessEnv = {}
   if (env.exists(env.chromeApp)) {
     const config = join(tmpdir(), 'bita-mermaid-puppeteer.json')
