@@ -40,6 +40,18 @@ export interface ParsedArgs {
   positionals: string[]
 }
 
+function nfc(value: string): string {
+  return value.normalize('NFC')
+}
+
+function normalizeValues(values: ParsedArgs['values']): ParsedArgs['values'] {
+  const normalized: ParsedArgs['values'] = {}
+  for (const [key, value] of Object.entries(values)) {
+    normalized[key] = typeof value === 'string' ? nfc(value) : Array.isArray(value) ? value.map(nfc) : value
+  }
+  return normalized
+}
+
 export function parseCommandArgs(
   argv: string[],
   options: OptionConfig,
@@ -52,7 +64,7 @@ export function parseCommandArgs(
       allowPositionals: true,
       strict: true,
     })
-    return { values: parsed.values as ParsedArgs['values'], positionals: parsed.positionals }
+    return { values: normalizeValues(parsed.values as ParsedArgs['values']), positionals: parsed.positionals.map(nfc) }
   } catch (error) {
     throw new UsageError(error instanceof Error ? error.message : String(error))
   }

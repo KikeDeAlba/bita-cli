@@ -22,7 +22,7 @@ import { runBacklog } from './commands/backlog.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '0.16.0'
+export const VERSION = '0.16.1'
 
 const HELP = `bita ${VERSION}
 
@@ -112,6 +112,7 @@ Documents:
 Docs history (the docs root is a local git repository; every bita write is a commit on main):
   docs git init              Start the history, committing what is there (also run by setup and the first write)
   docs status                Files edited outside bita and not committed yet
+  docs normalize             Rewrite documents and database text in Unicode NFC (--dry-run)
   docs commit [<path>...]    Commit them (all of them without paths; --message M)
   docs propose --branch B <pageId> (--md F|--body S) [--section H] --reason R --source meeting:<id>|manual
                              Commit a change to a branch without touching the files on disk
