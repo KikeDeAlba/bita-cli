@@ -76,6 +76,27 @@ Todo es local: no hay red, ni token, ni cuota (salvo `bita jira` y `bita
 confluence`, que hablan con Atlassian). Un comando de lectura no cuesta nada,
 así que consulta las veces que haga falta.
 
+## atl e inkwell, si están instalados
+
+Al empezar, `bita doctor --json` dice qué herramientas hermanas encontró
+(`data.tools[]`: `found`, `version`, `delegating`).
+
+- **atl** encontrado: para Jira y Confluence prefiere sus herramientas MCP
+  (`jira_*`, `confluence_*`) o su CLI con `--json` (`atl jira issue get <KEY>`,
+  `atl jira worklog add <KEY> --started <ISO> --time-spent 1h30m`,
+  `atl confluence page update <id> --body @archivo.md`), sea el proyecto
+  `via: mcp` o `via: cli`. Su `--site` acepta el nombre o la URL del sitio. Si
+  responde `LOGIN_REQUIRED`, corre `atl site import --from-bita`.
+- **inkwell** con `delegating: true` (instalado y con los documentos ya
+  migrados): los comandos de documentos son los mismos sin el prefijo `docs`
+  (`inkwell page write <id> --md <archivo>`, `inkwell backlog add …`,
+  `inkwell diagrams render <id>`, `inkwell confluence sync <espacio>`,
+  `inkwell export meeting --bita-entry <id>`).
+- Sin ellos, todo sigue como describe el resto de esta skill: el MCP de
+  Atlassian (Rovo) o `bita jira …`/`bita confluence …`, y `bita docs …`/`bita
+  backlog …`. Con ellos, esos comandos de bita también funcionan: se reenvían a
+  atl o inkwell y avisan por stderr que son obsoletos.
+
 ## Atlassian por proyecto: MCP o CLI
 
 Cada proyecto dice cómo se habla con su Jira y su Confluence. **Antes de la

@@ -19,6 +19,7 @@ import { runMerge } from './commands/merge.ts'
 import { runBacklog } from './commands/backlog.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
+import { DELEGATED_COMMANDS, tryDelegate } from './delegate.ts'
 
 export const VERSION = '0.17.0'
 
@@ -129,6 +130,7 @@ Docs history (the docs root is a local git repository; every bita write is a com
 
   setup                      Register bita and install the integration for Claude Code, OpenCode, Codex and Gemini CLI
   capabilities               What this bita offers to the other tools (--json)
+  doctor                     Which sibling tools (atl, inkwell, recap) kit found, and what bita hands over to them
 
 Reporting:
   entries [preset]           List time entries
@@ -281,7 +283,14 @@ export async function route(argv: string[]): Promise<number> {
     return 0
   }
 
+  if (DELEGATED_COMMANDS.has(command)) {
+    const delegated = await tryDelegate(argv)
+    if (delegated !== null) return delegated
+  }
+
   switch (command) {
+    case 'doctor':
+      return (await import('./commands/doctor.ts')).runDoctor(rest)
     case 'projects':
       return runProjects(rest)
     case 'project':

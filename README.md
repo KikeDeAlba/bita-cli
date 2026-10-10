@@ -502,6 +502,23 @@ Todos los comandos aceptan `--json` y emiten un solo documento en stdout:
 Los errores salen con `ok: false` y un `error.code` estable. Los avisos van a
 stderr, nunca a stdout, para que el JSON se pueda parsear tal cual.
 
+## atl e inkwell
+
+Si están instalados ([atl](https://github.com/KikeDeAlba/atl) para Atlassian,
+[inkwell](https://github.com/KikeDeAlba/inkwell) para los documentos), bita los
+encuentra con `@kikedealba/kit` y les reenvía sus comandos:
+
+| Comando de bita | Va a |
+|---|---|
+| `jira …`, `confluence page\|attach\|login\|status`, `atlassian site …` | atl |
+| `docs …` (menos `docs migrate`), `backlog …`, `meeting export`, `confluence sync\|conflict` | inkwell, solo si `inkwell migrate status` dice `migrated: true` |
+
+Con `--json` sale el sobre del proveedor con el `command` de bita y
+`meta.delegatedTo`; el código de salida es el suyo, y un aviso de comando obsoleto
+va a stderr. Si la herramienta no está, es vieja o no tiene la capacidad, bita usa
+su propio código como siempre. `--db-path`/`--docs-dir` y `BITA_NO_DELEGATE=1`
+también lo fuerzan. `bita doctor` dice qué encontró y si está delegando.
+
 ## Atlassian: sitios, MCP o CLI
 
 bita guarda uno o varios **sitios** de Atlassian, cada uno con su correo; el
