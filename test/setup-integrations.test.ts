@@ -150,6 +150,20 @@ test('running setup twice keeps the settings and hooks without duplicates', () =
   }
 })
 
+test('an Atlassian MCP the user already configured in Codex is left alone', () => {
+  const box = sandbox()
+  try {
+    mkdirSync(box.codex, { recursive: true })
+    const own = '[mcp_servers.atlassian]\nurl = "https://example.com/mcp"\nbearer_token_env_var = "MINE"\n'
+    writeFileSync(join(box.codex, 'config.toml'), own)
+    setup(box, '--target', 'codex')
+    assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), own)
+    assert.ok(existsSync(join(box.agentsSkills, 'bita', 'SKILL.md')))
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
 test('the old draw.io and recap flags are accepted and ignored with a warning', () => {
   const box = sandbox()
   try {
@@ -172,7 +186,7 @@ test('the old draw.io and recap flags are accepted and ignored with a warning', 
 test('app install points to the Den release page instead of installing', () => {
   const box = sandbox()
   try {
-    const run = spawnSync(process.execPath, [bin, 'app', 'install', '--json'], { cwd: box.root, env: box.env, encoding: 'utf8' })
+    const run = spawnSync(process.execPath, [bin, 'app', '--json'], { cwd: box.root, env: box.env, encoding: 'utf8' })
     assert.equal(run.status, 0, run.stderr)
     const envelope = JSON.parse(run.stdout) as { data: { installed: boolean; url: string } }
     assert.equal(envelope.data.installed, false)

@@ -81,7 +81,12 @@ bita setup --target all
 | Gemini CLI | La extensión `~/.gemini/extensions/bita`: skill, comandos, hooks (`bita hook gemini`) y el MCP de Atlassian |
 
 Hay una sola skill (`skill/SKILL.md`); lo que solo aplica a un agente va en
-bloques `::: agent <nombre>` y kit genera la copia de cada uno.
+bloques `::: agent <nombre>` y kit genera la copia de cada uno. Esas copias no
+siguen al paquete solas: **después de actualizar bita, vuelve a correr
+`bita setup`** para que los agentes lean la skill nueva. Los comandos y el
+plugin de OpenCode sí son symlinks al paquete.
+
+Si OpenCode o Codex ya tienen un MCP llamado `atlassian`, se respeta tal cual.
 
 El MCP de Atlassian usa OAuth y `bita` no guarda esas credenciales: en OpenCode
 se autentica desde `/mcps`, en Codex con `codex mcp login atlassian` y en
@@ -148,8 +153,9 @@ quieras.
 | Binario | Enlaza `bita` en tu directorio de binarios (`$PNPM_HOME/bin`, o `~/.local/bin`) |
 | Setup | El registro en kit y la integración con los agentes (ver «Desde npm») |
 
-Las skills, comandos y plugins son **symlinks al repo**, a propósito: cuando
-actualizas el repo se actualizan contigo. Los archivos de configuración se
+Los comandos y plugins son **symlinks al repo**, a propósito: cuando actualizas
+el repo se actualizan contigo. La skill se genera por agente, así que tras
+editar `skill/SKILL.md` hay que volver a correr `bita setup`. Los archivos de configuración se
 fusionan sin duplicar hooks y conservan el resto de sus entradas, con una copia
 `.backup` antes de escribir; si no los puede parsear, no los tocan.
 

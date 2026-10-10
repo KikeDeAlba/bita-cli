@@ -114,12 +114,22 @@ export function eventsDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 export function configListeners(hooks: readonly HookConfig[]): KitListener[] {
-  return hooks.map((hook) => ({
+  const grouped = new Map<string, { events: string[]; command: string[]; kinds: Set<string> | null }>()
+  for (const hook of hooks) {
+    const events = [...new Set(hook.on)].sort()
+    const key = `${events.join(',')}|${hook.command.join('\u0000')}`
+    const existing = grouped.get(key)
+    const kinds = hook.when?.kind ? new Set(hook.when.kind) : null
+    if (!existing) grouped.set(key, { events, command: [...hook.command], kinds })
+    else if (existing.kinds === null || kinds === null) existing.kinds = null
+    else for (const kind of kinds) existing.kinds.add(kind)
+  }
+  return [...grouped.values()].map((group) => ({
     source: 'config',
     owner: 'config.json',
-    events: [...hook.on],
-    ...(hook.when?.kind ? { filter: { kind: [...hook.when.kind] } } : {}),
-    command: [...hook.command],
+    events: group.events,
+    ...(group.kinds ? { filter: { kind: [...group.kinds] } } : {}),
+    command: group.command,
   }))
 }
 

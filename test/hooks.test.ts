@@ -135,6 +135,13 @@ test('config hooks become kit listeners with the kind filter', () => {
     { source: 'config', owner: 'config.json', events: ['stop'], filter: { kind: MEETINGS }, command: ['/bin/echo'] },
     { source: 'config', owner: 'config.json', events: ['delete', 'merge'], command: ['x'] },
   ])
+  assert.deepEqual(
+    configListeners([
+      { on: ['stop'], when: { kind: ['remote-meeting'] }, command: ['x'] },
+      { on: ['stop'], when: { kind: ['in-person-meeting'] }, command: ['x'] },
+    ]),
+    [{ source: 'config', owner: 'config.json', events: ['stop'], filter: { kind: MEETINGS }, command: ['x'] }],
+  )
 })
 
 test('a registry subscriber filtered by kind hears an amend that leaves a meeting', async () => {

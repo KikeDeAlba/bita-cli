@@ -121,7 +121,7 @@ export async function runSiteAdd(args: ParsedArgs, json: boolean, command: strin
     writeJson(successEnvelope(command, data))
     return 0
   }
-  writeOut(`Logged in to ${site} as ${check.displayName ?? email} (${email}). The token lives in the system credential store.`)
+  writeOut(`Logged in to ${site} as ${check.displayName ?? email} (${email}). The token is kept in the credential store.`)
   writeOut(`Jira: ${check.jira ? 'yes' : 'no'}, Confluence: ${check.confluence ? 'yes' : 'no'}.`)
   return 0
 }

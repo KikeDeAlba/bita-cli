@@ -2,7 +2,7 @@ import { UsageError, NotFoundError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean } from '../args.ts'
 import { createLocalContext, withLocalContext, type LocalContext } from '../local-context.ts'
 import { findEntryWithProject } from '../../db/entries.ts'
-import { listDocsForEntry } from '../../db/docs.ts'
+import { findDocForEntry } from '../../db/docs.ts'
 import { readEntryDoc } from '../../docs/record.ts'
 import { collectEntries } from '../collect.ts'
 import { renderTable } from '../table.ts'
@@ -25,8 +25,7 @@ export interface EntryDetail {
 export async function readEntryDetail(ctx: LocalContext, id: number): Promise<EntryDetail> {
   const row = findEntryWithProject(ctx.db, id)
   if (!row) throw new NotFoundError(`No entry #${id}.`, 'ENTRY_NOT_FOUND', 'Run "bita entries" to see them.')
-  const docs = listDocsForEntry(ctx.db, row.id)
-  const primary = docs.find((doc) => doc.kind === 'note') ?? docs[0]
+  const primary = findDocForEntry(ctx.db, row.id)
   const note = primary ? (await readEntryDoc(ctx, primary)).markdown : null
   return {
     id: row.id,

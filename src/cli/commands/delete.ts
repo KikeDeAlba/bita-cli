@@ -15,7 +15,7 @@ import {
   unsetScopeMapping,
   type AppConfig,
 } from '../../state/config.ts'
-import { listDocsForEntry } from '../../db/docs.ts'
+import { findDocForEntry, listDocsForEntry } from '../../db/docs.ts'
 import { listTouches } from '../../db/touches.ts'
 import { resolveDocPath } from '../../docs/paths.ts'
 import { removeDocument } from '../../docs/store.ts'
@@ -221,10 +221,11 @@ function deletionPayloads(ctx: LocalContext, targets: DeletionTarget[]): HookPay
   for (const target of targets) {
     const row = findEntryWithProject(ctx.db, target.id)
     if (!row) continue
+    const note = findDocForEntry(ctx.db, target.id)
     payloads.push({
       event: 'delete',
       entry: enrichEntry(row, ctx.timezone, ctx.now),
-      docPath: target.docPaths[0] ?? null,
+      docPath: note ? resolveDocPath(ctx.docsRoot, note.relPath) : null,
       pageIds: pagesOfEntry(ctx.db, target.id).map((link) => link.pageId),
     })
   }
@@ -325,7 +326,13 @@ export async function runDelete(argv: string[]): Promise<number> {
     const payloads = deletionPayloads(ctx, plan.targets)
     const outcome = await applyDeletions(ctx.db, plan.targets, keepDoc, ctx.docsRoot)
     const deletedIds = new Set(outcome.deleted.map((target) => target.id))
-    const hooksFired = await emitHooks(ctx, payloads.filter((payload) => deletedIds.has(payload.entry.id)))
+    const kept = new Set(outcome.docsKept)
+    const hooksFired = await emitHooks(
+      ctx,
+      payloads
+        .filter((payload) => deletedIds.has(payload.entry.id))
+        .map((payload) => ({ ...payload, docPath: payload.docPath !== null && kept.has(payload.docPath) ? payload.docPath : null })),
+    )
 
     if (json) {
       writeJson(

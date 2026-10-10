@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString, type ParsedArgs } from '../args.ts'
@@ -69,6 +69,32 @@ function homeOverrides(args: ParsedArgs): Record<string, string> {
   return homes
 }
 
+function readText(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+export function hasAtlassianMcp(agent: AgentName, homes: { opencode: string; codex: string }): boolean {
+  if (agent === 'codex') {
+    const text = readText(join(homes.codex, 'config.toml'))
+    return text !== null && /^\s*\[mcp_servers\.atlassian(?:\.[^\]]+)?\]\s*$/m.test(text)
+  }
+  if (agent === 'opencode') {
+    const text = readText(join(homes.opencode, 'opencode.json'))
+    if (text === null) return false
+    try {
+      const parsed = JSON.parse(text) as { mcp?: Record<string, unknown> }
+      return typeof parsed.mcp === 'object' && parsed.mcp !== null && Object.hasOwn(parsed.mcp, 'atlassian')
+    } catch {
+      return false
+    }
+  }
+  return false
+}
+
 interface DocsGitStep {
   state: 'initialized' | 'present' | 'failed'
   root: string
@@ -108,8 +134,13 @@ export async function runSetup(argv: string[]): Promise<number> {
     steps.push(...(await kit.agents.installIntegration(wanted, { agents: ['claude'], ctx, homes, skipMcp: true })))
   }
   const others = agents.filter((agent) => agent !== 'claude')
-  if (others.length > 0) {
-    steps.push(...(await kit.agents.installIntegration(wanted, { agents: others, ctx, homes, skipMcp: !atlassian })))
+  const keepOwnMcp = others.filter((agent) => hasAtlassianMcp(agent, homes))
+  const withMcp = others.filter((agent) => !keepOwnMcp.includes(agent))
+  if (withMcp.length > 0) {
+    steps.push(...(await kit.agents.installIntegration(wanted, { agents: withMcp, ctx, homes, skipMcp: !atlassian })))
+  }
+  if (keepOwnMcp.length > 0) {
+    steps.push(...(await kit.agents.installIntegration(wanted, { agents: keepOwnMcp, ctx, homes, skipMcp: true })))
   }
 
   const docsGit = readBoolean(args, 'no-docs-git') ? null : await setupDocsGit(args)
