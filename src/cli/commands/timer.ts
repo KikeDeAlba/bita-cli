@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { LEGACY_ENTRY_DOC_SECTIONS } from '../../config/constants.ts'
 import { ConflictError, UsageError } from '../../errors.ts'
 import {
   BASE_OPTIONS,
@@ -26,19 +24,7 @@ import {
 } from '../../db/entries.ts'
 import { findProjectByName, listProjects } from '../../db/projects.ts'
 import type { EntryWithProjectRow } from '../../db/rows.ts'
-import type { NoteSource } from '../../state/notes.ts'
-import { findEntryWithProject } from '../../db/entries.ts'
-import { recordEntryDoc } from '../../docs/record.ts'
 import { recordTouch } from '../../db/touches.ts'
-import { insertPage, requirePage, uniqueSiblingSlug } from '../../db/pages.ts'
-import { linkEntryToPage, pagesOfEntry } from '../../db/page-links.ts'
-import { pageRelPath } from '../../docs/layout.ts'
-import { titleSlug } from '../../docs/slug.ts'
-import { DID_MAX } from '../../config/constants.ts'
-import { checkpointStatus, findDocForEntry, listDocsForEntry, type CheckpointStatus } from '../../db/docs.ts'
-import { resolveDocPath } from '../../docs/paths.ts'
-import { removeDocument } from '../../docs/store.ts'
-import { commitDocs } from '../../docs/git.ts'
 import { readConfig, setScopeMapping } from '../../state/config.ts'
 import { currentRepoIdentity } from './repo.ts'
 import { resolveMappedProject } from '../resolve-project.ts'
@@ -51,13 +37,7 @@ import type { HookPayload } from '../../hooks/hooks.ts'
 
 const TIMER_OPTIONS = {
   project: { type: 'string' as const },
-  'note-json': { type: 'string' as const },
-  'note-file': { type: 'string' as const },
-  'note-md': { type: 'string' as const },
-  section: { type: 'string' as const },
   file: { type: 'string' as const, multiple: true },
-  command: { type: 'string' as const, multiple: true },
-  resource: { type: 'string' as const, multiple: true },
   all: { type: 'boolean' as const, default: false },
   last: { type: 'boolean' as const, default: false },
   at: { type: 'string' as const },
@@ -65,69 +45,12 @@ const TIMER_OPTIONS = {
   to: { type: 'string' as const },
   for: { type: 'string' as const },
   'require-running': { type: 'boolean' as const, default: false },
-  did: { type: 'string' as const },
-  page: { type: 'string' as const },
-  'page-new': { type: 'string' as const },
   kind: { type: 'string' as const },
 }
 
 function readKind(args: ParsedArgs): string | null {
   const raw = readString(args, 'kind')
   return raw === undefined ? null : parseKind(raw)
-}
-
-function assertDidHasPage(ctx: LocalContext, entryIds: readonly number[], args: ParsedArgs): void {
-  if (readString(args, 'did') === undefined) return
-  for (const entryId of entryIds) {
-    if (pagesOfEntry(ctx.db, entryId).length === 0) {
-      throw new ConflictError(
-        `Entry #${entryId} does not belong to a page yet.`,
-        'ENTRY_WITHOUT_PAGE',
-        'bita docs page link <pageId> --entry ' + String(entryId),
-      )
-    }
-  }
-}
-
-function recordDid(ctx: LocalContext, entryId: number, args: ParsedArgs): void {
-  const did = readString(args, 'did')
-  if (did === undefined) return
-
-  assertDidHasPage(ctx, [entryId], args)
-  const links = pagesOfEntry(ctx.db, entryId)
-  const summary = did.trim().slice(0, DID_MAX)
-  for (const link of links) linkEntryToPage(ctx.db, link.pageId, entryId, summary, ctx.now.toISOString())
-}
-
-async function attachToPage(ctx: LocalContext, entryId: number, args: ParsedArgs): Promise<number | null> {
-  const fresh = readString(args, 'page-new')
-  if (fresh !== undefined) {
-    const entry = findEntryWithProject(ctx.db, entryId)
-    const projectId = entry?.projectId ?? null
-    const slug = uniqueSiblingSlug(ctx.db, projectId, null, titleSlug(fresh))
-    const projectName = entry?.projectName ?? null
-    const id = insertPage(ctx.db, {
-      projectId,
-      parentId: null,
-      slug,
-      title: fresh.trim(),
-      relPath: pageRelPath({ projectName, ancestorSlugs: [], slug }),
-      depth: 0,
-      source: 'cli',
-      now: ctx.now.toISOString(),
-    })
-    linkEntryToPage(ctx.db, id, entryId, '', ctx.now.toISOString())
-    return id
-  }
-
-  const raw = readString(args, 'page')
-  if (raw === undefined) return null
-
-  const pageId = Number(raw)
-  if (!Number.isInteger(pageId) || pageId <= 0) throw new UsageError(`"${raw}" is not a page id.`)
-  requirePage(ctx.db, pageId)
-  linkEntryToPage(ctx.db, pageId, entryId, '', ctx.now.toISOString())
-  return pageId
 }
 
 function readTitle(args: ParsedArgs): string {
@@ -198,80 +121,6 @@ async function resolveProjectId(
   return projectId
 }
 
-interface DocSeed {
-  heading: string
-  body: string
-}
-
-async function loadDocSeed(args: ParsedArgs): Promise<DocSeed | null> {
-  const markdownPath = readString(args, 'note-md')
-  const jsonPath = readString(args, 'note-json')
-  const filePath = readString(args, 'note-file')
-
-  if (markdownPath) {
-    return { heading: readString(args, 'section') ?? 'Qué se hizo', body: await readSeedFile(markdownPath) }
-  }
-
-  if (filePath) return { heading: 'Qué se hizo', body: await readSeedFile(filePath) }
-
-  if (jsonPath) {
-    let raw: unknown
-    try {
-      raw = JSON.parse(await readFile(jsonPath, 'utf8')) as unknown
-    } catch (error) {
-      throw new UsageError(`Could not read the note at ${jsonPath}: ${String(error)}`)
-    }
-    const body = (raw as { body?: unknown })?.body
-    if (typeof body !== 'string') throw new UsageError('The note needs a "body" string.')
-    return { heading: 'Resumen', body }
-  }
-
-  return null
-}
-
-async function readSeedFile(path: string): Promise<string> {
-  try {
-    return await readFile(path, 'utf8')
-  } catch (error) {
-    throw new UsageError(`Could not read ${path}: ${String(error)}`)
-  }
-}
-
-async function repoIdentity() {
-  const found = await currentRepoIdentity()
-  if (!found) return null
-  return {
-    slug: found.slug,
-    ...(found.branch !== undefined ? { branch: found.branch } : {}),
-    ...(found.headSha !== undefined ? { headSha: found.headSha } : {}),
-  }
-}
-
-async function recordDoc(
-  ctx: LocalContext,
-  entryId: number,
-  seed: DocSeed | null,
-  source: NoteSource,
-  create: boolean,
-): Promise<string | null> {
-  const entry = findEntryWithProject(ctx.db, entryId)
-  if (!entry) return null
-
-  const recorded = await recordEntryDoc(ctx, entry, {
-    source,
-    identity: await repoIdentity(),
-    create,
-    ...(seed ? { section: seed } : {}),
-  })
-  return recorded?.path ?? null
-}
-
-function checkpointNote(state: CheckpointStatus | undefined): string {
-  if (!state) return 'none'
-  if (!state.lastNoteAt) return 'not written yet'
-  return state.touchedSinceNote === 0 ? 'up to date' : `${state.touchedSinceNote} files since`
-}
-
 function recordArtifacts(ctx: LocalContext, entryId: number, args: ParsedArgs): void {
   const now = ctx.now.toISOString()
   for (const file of readStringList(args, 'file')) recordTouch(ctx.db, entryId, file, now)
@@ -300,11 +149,9 @@ export async function runStart(argv: string[]): Promise<number> {
       now: ctx.now.toISOString(),
     })
 
-    const pageId = await attachToPage(ctx, created.id, args)
     const row = listRunning(ctx.db).find((entry) => entry.id === created.id)
     const enriched = row ? enrich(ctx, row) : null
-    const docPath = isDraft ? null : await recordDoc(ctx, created.id, null, 'start', true)
-    const hooksFired = enriched ? await emitHooks(ctx, [{ event: 'start', entry: enriched, docPath }]) : 0
+    const hooksFired = enriched ? await emitHooks(ctx, [{ event: 'start', entry: enriched, docPath: null }]) : 0
 
     if (json) {
       writeJson(
@@ -315,8 +162,6 @@ export async function runStart(argv: string[]): Promise<number> {
           })),
           runningCount: countRunning(ctx.db),
           draft: isDraft,
-          docPath,
-          pageId,
           hooksFired,
         }),
       )
@@ -325,10 +170,9 @@ export async function runStart(argv: string[]): Promise<number> {
       if (enriched?.projectName) writeOut(`Project : ${enriched.projectName}`)
       if (kind) writeOut(`Kind    : ${kind}`)
       writeOut(`Since   : ${enriched?.startLocal.slice(11, 16) ?? ''}`)
-      if (docPath) writeOut(`Document: ${docPath}`)
       if (isDraft) {
         writeOut('')
-        writeOut('It has no title yet, so it stays out of any Jira summary.')
+        writeOut('It has no title yet.')
         writeOut(`Name it with: bita amend ${created.id} --title "..."`)
       }
       if (alreadyRunning.length > 0) {
@@ -363,16 +207,8 @@ export async function runStop(argv: string[]): Promise<number> {
     const targets = await chooseTargets(ctx, args, running, json)
     const at = readString(args, 'at')
     const stoppedAt = at === undefined ? ctx.now.toISOString() : parseClockTime(at, ctx.now, '--at').toISOString()
-    const seed = await loadDocSeed(args)
-    assertDidHasPage(
-      ctx,
-      targets.map((target) => target.id),
-      args,
-    )
-
     const stopped: EnrichedTimeEntry[] = []
     const payloads: HookPayload[] = []
-    let docPath: string | null = null
     let hooksFired = 0
     try {
       for (const target of targets) {
@@ -380,14 +216,8 @@ export async function runStop(argv: string[]): Promise<number> {
         stopEntry(ctx.db, target.id, stoppedAt, ctx.now.toISOString())
         const payload: HookPayload = { event: 'stop', entry: snapshot, docPath: null }
         payloads.push(payload)
-        if (targets.length === 1) {
-          recordArtifacts(ctx, target.id, args)
-          docPath = await recordDoc(ctx, target.id, seed, 'stop', seed !== null)
-        }
-        recordDid(ctx, target.id, args)
+        if (targets.length === 1) recordArtifacts(ctx, target.id, args)
         stopped.push(snapshot)
-        const stored = findDocForEntry(ctx.db, target.id)
-        payload.docPath = stored ? resolveDocPath(ctx.docsRoot, stored.relPath) : null
       }
     } finally {
       hooksFired = await emitHooks(ctx, payloads)
@@ -398,7 +228,6 @@ export async function runStop(argv: string[]): Promise<number> {
         successEnvelope('stop', stopped, {
           stopped: stopped.length,
           stillRunning: countRunning(ctx.db),
-          docPath,
           hooksFired,
           repoSuggestions: await unmappedRepoSuggestions(ctx, stopped),
         }),
@@ -407,7 +236,6 @@ export async function runStop(argv: string[]): Promise<number> {
       for (const entry of stopped) {
         writeOut(`Stopped #${entry.id}: ${entry.description} (${entry.durationHuman})`)
       }
-      if (docPath) writeOut(`Document: ${docPath}`)
       const left = countRunning(ctx.db)
       if (left > 0) writeOut(`${left} still running.`)
     }
@@ -487,38 +315,16 @@ export function runCurrent(argv: string[]): number {
   const ctx = createLocalContext(args)
 
   try {
-    const rows = listRunning(ctx.db)
-    const running = rows.map((row) => enrich(ctx, row))
+    const running = listRunning(ctx.db).map((row) => enrich(ctx, row))
     const totalSeconds = running.reduce((sum, entry) => sum + entry.durationSeconds, 0)
-    const status = checkpointStatus(
-      ctx.db,
-      rows.map((row) => row.id),
-    )
 
     if (json) {
       writeJson(
-        successEnvelope(
-          'current',
-          running.map((entry) => {
-            const state = status.get(entry.id)
-            const stored = findDocForEntry(ctx.db, entry.id)
-            return {
-              ...entry,
-              docPath: stored ? resolveDocPath(ctx.docsRoot, stored.relPath) : null,
-              docRelPath: stored?.relPath ?? null,
-              sectionsWritten: stored?.sectionCount ?? 0,
-              sectionsTotal: LEGACY_ENTRY_DOC_SECTIONS.length,
-              lastNoteAt: state?.lastNoteAt ?? null,
-              touchedSinceNote: state?.touchedSinceNote ?? 0,
-            }
-          }),
-          {
-            runningCount: running.length,
-            totalSeconds,
-            totalHuman: formatDuration(totalSeconds),
-            docsRoot: ctx.docsRoot,
-          },
-        ),
+        successEnvelope('current', running, {
+          runningCount: running.length,
+          totalSeconds,
+          totalHuman: formatDuration(totalSeconds),
+        }),
       )
       return 0
     }
@@ -536,22 +342,16 @@ export function runCurrent(argv: string[]): number {
           { header: 'PROJECT' },
           { header: 'DESCRIPTION' },
           { header: 'ELAPSED', align: 'right' },
-          { header: 'DOCUMENT' },
         ],
         running.map((entry) => [
           String(entry.id),
           entry.startLocal.slice(11, 16),
           entry.projectName ?? '(no project)',
-          entry.description,
+          entry.description || '(no title)',
           entry.durationHuman,
-          checkpointNote(status.get(entry.id)),
         ]),
       ),
     )
-    for (const entry of running) {
-      const stored = findDocForEntry(ctx.db, entry.id)
-      if (stored) writeOut(`  #${entry.id} ${resolveDocPath(ctx.docsRoot, stored.relPath)}`)
-    }
     if (running.length > 1) {
       writeOut('')
       writeOut(`${running.length} timers, ${formatDuration(totalSeconds)} of overlapping time.`)
@@ -576,40 +376,23 @@ export async function runCancel(argv: string[]): Promise<number> {
     }
 
     const targets = await chooseTargets(ctx, args, running, json)
-    const docPaths: string[] = []
     const discarded = targets.map((target) => {
       const snapshot = enrich(ctx, target)
-      for (const doc of listDocsForEntry(ctx.db, target.id)) {
-        docPaths.push(resolveDocPath(ctx.docsRoot, doc.relPath))
-      }
       deleteEntry(ctx.db, target.id)
       return snapshot
     })
 
-    const docsRemoved: string[] = []
-    for (const path of docPaths) {
-      if (await removeDocument(path)) docsRemoved.push(path)
-    }
-    if (docsRemoved.length > 0) {
-      await commitDocs(ctx.docsRoot, docsRemoved, {
-        source: 'note',
-        subject: `docs: remove the documents of ${discarded.length === 1 ? 'a cancelled timer' : `${discarded.length} cancelled timers`}`,
-        entryId: discarded.length === 1 ? (discarded[0]?.id ?? null) : null,
-        reason: 'timer cancelled',
-      })
-    }
     const hooksFired = await emitHooks(
       ctx,
       discarded.map((entry) => ({ event: 'cancel' as const, entry, docPath: null })),
     )
 
     if (json) {
-      writeJson(successEnvelope('cancel', discarded, { discarded: discarded.length, docsRemoved, hooksFired }))
+      writeJson(successEnvelope('cancel', discarded, { discarded: discarded.length, hooksFired }))
     } else {
       for (const entry of discarded) {
         writeOut(`Discarded #${entry.id}: ${entry.description} (${entry.durationHuman} lost)`)
       }
-      for (const path of docsRemoved) writeOut(`  Document removed: ${path}`)
     }
     return 0
   } finally {
@@ -657,20 +440,15 @@ export async function runLog(argv: string[]): Promise<number> {
       now: ctx.now.toISOString(),
     })
 
-    const seed = await loadDocSeed(args)
     recordArtifacts(ctx, created.id, args)
-    const docPath = await recordDoc(ctx, created.id, seed, 'log', seed !== null)
-    const pageId = await attachToPage(ctx, created.id, args)
-    recordDid(ctx, created.id, args)
 
     const row = findEntryById(ctx.db, created.id)
     const seconds = row ? Math.round((Date.parse(stoppedAt) - Date.parse(startedAt)) / 1000) : 0
 
     if (json) {
-      writeJson(successEnvelope('log', { ...created, durationSeconds: seconds }, { docPath, pageId }))
+      writeJson(successEnvelope('log', { ...created, durationSeconds: seconds }))
     } else {
       writeOut(`Logged #${created.id}: ${title} (${formatDuration(seconds)})`)
-      if (docPath) writeOut(`Document: ${docPath}`)
     }
     return 0
   } finally {

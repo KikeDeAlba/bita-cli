@@ -1,15 +1,13 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { openMemoryDatabase } from '../src/db/open.ts'
 import { findEntryWithProject, insertEntry } from '../src/db/entries.ts'
 import { insertProject } from '../src/db/projects.ts'
 import { readConfig } from '../src/state/config.ts'
-import { findLink, linkEntry } from '../src/db/jira-links.ts'
 import { listTouches, recordTouch } from '../src/db/touches.ts'
-import { listDocsForEntry, upsertDoc } from '../src/db/docs.ts'
 import {
   applyDeletions,
   applyProjectDeletion,
@@ -28,8 +26,12 @@ function scratch(): string {
   return mkdtempSync(join(tmpdir(), 'bita-delete-'))
 }
 
-function context(db: ReturnType<typeof openMemoryDatabase>, docsRoot = scratch()): PlanContext {
-  return { db, timezone: TEST_TZ, now: new Date(NOW), docsRoot }
+function context(db: ReturnType<typeof openMemoryDatabase>): PlanContext {
+  return { db, timezone: TEST_TZ, now: new Date(NOW) }
+}
+
+function linkLegacy(db: ReturnType<typeof openMemoryDatabase>, entryId: number): void {
+  db.prepare('INSERT INTO jira_links (entry_id, issue_key, linked_at) VALUES (?, ?, ?)').run(entryId, 'INN-1', NOW)
 }
 
 function seedStopped(db: ReturnType<typeof openMemoryDatabase>, description = 'work') {
@@ -43,29 +45,6 @@ function seedStopped(db: ReturnType<typeof openMemoryDatabase>, description = 'w
   })
 }
 
-function seedDoc(
-  db: ReturnType<typeof openMemoryDatabase>,
-  docsRoot: string,
-  entryId: number,
-  relPath: string,
-): string {
-  upsertDoc(db, {
-    entryId,
-    relPath,
-    title: 'Thing',
-    titleSlug: 'thing',
-    source: 'stop',
-    sectionCount: 1,
-    byteSize: 10,
-    checksum: 'abc',
-    now: NOW,
-  })
-  const absolute = join(docsRoot, relPath)
-  mkdirSync(dirname(absolute), { recursive: true })
-  writeFileSync(absolute, '# Thing\n')
-  return absolute
-}
-
 test('reads ids from positionals and --ids without repeating them', () => {
   const ids = readIds({ values: { ids: '3, 4 ,3' }, positionals: ['1', '2', '1'] })
   assert.deepEqual(ids, [1, 2, 3, 4])
@@ -77,9 +56,8 @@ test('refuses anything that is not an entry id', () => {
   assert.throws(() => readIds({ values: {}, positionals: [] }), /Usage: bita delete/)
 })
 
-test('plans a stopped entry with its documents resolved against the docs root', () => {
+test('plans a stopped entry with its duration and touches', () => {
   const db = openMemoryDatabase()
-  const docsRoot = scratch()
   const project = insertProject(db, { name: 'bita', createdAt: NOW })
   const entry = insertEntry(db, {
     description: '  spaced   title ',
@@ -89,10 +67,9 @@ test('plans a stopped entry with its documents resolved against the docs root', 
     source: 'manual',
     now: NOW,
   })
-  const docPath = seedDoc(db, docsRoot, entry.id, 'bita/2026/09/20-1-thing.md')
   recordTouch(db, entry.id, '/tmp/a.ts', NOW)
 
-  const plan = planDeletions(context(db, docsRoot), [entry.id], false)
+  const plan = planDeletions(context(db), [entry.id])
 
   assert.deepEqual(plan.missing, [])
   assert.deepEqual(plan.running, [])
@@ -101,13 +78,12 @@ test('plans a stopped entry with its documents resolved against the docs root', 
   assert.equal(plan.targets[0]?.projectName, 'bita')
   assert.equal(plan.targets[0]?.durationHuman, '1h')
   assert.equal(plan.targets[0]?.touchedCount, 1)
-  assert.deepEqual(plan.targets[0]?.docPaths, [docPath])
   db.close()
 })
 
 test('reports an id that no entry answers to', () => {
   const db = openMemoryDatabase()
-  const plan = planDeletions(context(db), [404], false)
+  const plan = planDeletions(context(db), [404])
   assert.deepEqual(plan.missing, [404])
   assert.throws(() => assertPlanIsSafe(plan), /No entry with id 404/)
   db.close()
@@ -123,101 +99,39 @@ test('sends a running timer to cancel instead of deleting it', () => {
     now: NOW,
   })
 
-  const plan = planDeletions(context(db), [running.id], false)
+  const plan = planDeletions(context(db), [running.id])
   assert.deepEqual(plan.running, [running.id])
   assert.equal(plan.targets.length, 0)
   assert.throws(() => assertPlanIsSafe(plan), { code: 'ENTRY_RUNNING' })
   db.close()
 })
 
-test('holds back an entry already registered in jira until it is forced', () => {
+test('deletes an entry that tally already sent to jira, with its legacy link and touches', () => {
   const db = openMemoryDatabase()
   const entry = seedStopped(db)
-  linkEntry(db, { entryId: entry.id, issueKey: 'INN-1225', linkedAt: NOW })
-
-  const guarded = planDeletions(context(db), [entry.id], false)
-  assert.equal(guarded.targets.length, 0)
-  assert.equal(guarded.registered[0]?.issueKey, 'INN-1225')
-  assert.throws(() => assertPlanIsSafe(guarded), { code: 'ENTRY_REGISTERED' })
-
-  const forced = planDeletions(context(db), [entry.id], true)
-  assert.equal(forced.registered.length, 0)
-  assert.equal(forced.targets[0]?.id, entry.id)
-  assert.doesNotThrow(() => assertPlanIsSafe(forced))
-  db.close()
-})
-
-test('takes the link, the touches, the doc row and the file with the entry', async () => {
-  const db = openMemoryDatabase()
-  const docsRoot = scratch()
-  const entry = seedStopped(db)
-  const docPath = seedDoc(db, docsRoot, entry.id, 'bita/2026/09/20-1-thing.md')
-  linkEntry(db, { entryId: entry.id, issueKey: 'INN-1', linkedAt: NOW })
+  linkLegacy(db, entry.id)
   recordTouch(db, entry.id, '/tmp/a.ts', NOW)
 
-  const plan = planDeletions(context(db, docsRoot), [entry.id], true)
-  const outcome = await applyDeletions(db, plan.targets, false)
+  const plan = planDeletions(context(db), [entry.id])
+  assert.doesNotThrow(() => assertPlanIsSafe(plan))
+  const outcome = applyDeletions(db, plan.targets)
 
   assert.deepEqual(
     outcome.deleted.map((target) => target.id),
     [entry.id],
   )
-  assert.deepEqual(outcome.docsRemoved, [docPath])
-  assert.deepEqual(outcome.docsOrphaned, [])
-  assert.equal(existsSync(docPath), false)
-  assert.equal(findLink(db, entry.id), undefined)
   assert.deepEqual(listTouches(db, entry.id), [])
-  assert.deepEqual(listDocsForEntry(db, entry.id), [])
   db.close()
 })
 
-test('leaves the document on disk when asked to keep it', async () => {
-  const db = openMemoryDatabase()
-  const docsRoot = scratch()
-  const entry = seedStopped(db)
-  const docPath = seedDoc(db, docsRoot, entry.id, 'bita/2026/09/20-1-thing.md')
-
-  const plan = planDeletions(context(db, docsRoot), [entry.id], false)
-  const outcome = await applyDeletions(db, plan.targets, true)
-
-  assert.deepEqual(outcome.docsKept, [docPath])
-  assert.deepEqual(outcome.docsRemoved, [])
-  assert.equal(existsSync(docPath), true)
-  db.close()
-})
-
-test('says which documents it could not remove instead of claiming it did', async () => {
-  const db = openMemoryDatabase()
-  const docsRoot = scratch()
-  const entry = seedStopped(db)
-  upsertDoc(db, {
-    entryId: entry.id,
-    relPath: 'bita/2026/09/20-1-gone.md',
-    title: 'Gone',
-    titleSlug: 'gone',
-    source: 'stop',
-    sectionCount: 0,
-    byteSize: 0,
-    checksum: '',
-    now: NOW,
-  })
-
-  const plan = planDeletions(context(db, docsRoot), [entry.id], false)
-  const outcome = await applyDeletions(db, plan.targets, false)
-
-  assert.deepEqual(outcome.docsRemoved, [])
-  assert.deepEqual(outcome.docsOrphaned, [join(docsRoot, 'bita/2026/09/20-1-gone.md')])
-  db.close()
-})
-
-test('deletes every entry it was given or none at all', async () => {
+test('deletes every entry it was given or none at all', () => {
   const db = openMemoryDatabase()
   const first = seedStopped(db, 'first')
   const second = seedStopped(db, 'second')
   const survivor = seedStopped(db, 'survivor')
 
-  const plan = planDeletions(context(db), [first.id, second.id], false)
-  const outcome = await applyDeletions(db, plan.targets, false)
+  const plan = planDeletions(context(db), [first.id, second.id])
+  const outcome = applyDeletions(db, plan.targets)
 
   assert.equal(outcome.deleted.length, 2)
   assert.notEqual(
@@ -233,7 +147,7 @@ function configWith(scope: Record<string, number>, mapped: number[] = []) {
     version: 1,
     projectMapping: Object.fromEntries(
       mapped.map((id) => [String(id), { projectName: 'x', jiraProjectKey: 'INN' }]),
-    ),
+    ) as Record<string, unknown>,
     scopeMapping: Object.fromEntries(
       Object.entries(scope).map(([slug, projectId]) => [
         slug,
@@ -254,7 +168,7 @@ test('plans a project with everything that hangs off it', () => {
     source: 'manual',
     now: NOW,
   })
-  linkEntry(db, { entryId: entry.id, issueKey: 'INN-1', linkedAt: NOW })
+  linkLegacy(db, entry.id)
 
   const plan = planProjectDeletion(
     context(db),
@@ -264,9 +178,7 @@ test('plans a project with everything that hangs off it', () => {
 
   assert.equal(plan.name, 'bita')
   assert.deepEqual(plan.entryIds, [entry.id])
-  assert.deepEqual(plan.registeredIds, [entry.id])
   assert.deepEqual(plan.scopeSlugs, ['github.com/me/bita'])
-  assert.equal(plan.mapped, true)
   db.close()
 })
 
@@ -314,10 +226,9 @@ test('refuses a project id nothing answers to', () => {
   db.close()
 })
 
-test('drops the project and its config mappings, keeping the entries without one', async () => {
+test('drops the project and its scopes, keeping the entries and the jira mapping', async () => {
   const db = openMemoryDatabase()
-  const docsRoot = scratch()
-  const configPath = join(docsRoot, 'config.json')
+  const configPath = join(scratch(), 'config.json')
   const project = insertProject(db, { name: 'bita', createdAt: NOW })
   const entry = insertEntry(db, {
     description: 'done',
@@ -334,16 +245,16 @@ test('drops the project and its config mappings, keeping the entries without one
     ),
   )
 
-  const plan = planProjectDeletion(context(db, docsRoot), project.id, await readConfig(configPath))
+  const plan = planProjectDeletion(context(db), project.id, await readConfig(configPath))
   const outcome = await applyProjectDeletion(db, plan, configPath)
 
   assert.equal(outcome.removed, true)
   assert.deepEqual(outcome.scopeSlugs, ['github.com/me/bita'])
-  assert.equal(outcome.mappingRemoved, true)
 
   const after = await readConfig(configPath)
   assert.deepEqual(Object.keys(after.scopeMapping), ['github.com/me/keep'])
-  assert.deepEqual(Object.keys(after.projectMapping), [])
+  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as { projectMapping: Record<string, unknown> }
+  assert.deepEqual(Object.keys(raw.projectMapping), [String(project.id)])
 
   const survivor = findEntryWithProject(db, entry.id)
   assert.equal(survivor?.projectId, null)

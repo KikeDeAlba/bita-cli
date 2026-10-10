@@ -11,12 +11,9 @@ export interface EntryOverrides {
   projectName?: string | null
   start?: string
   durationSeconds?: number
-  registered?: boolean
-  issueKey?: string | null
   running?: boolean
   mergedInto?: number | null
   kind?: string | null
-  jira?: boolean
 }
 
 export function makeEntry(overrides: EntryOverrides = {}): EnrichedTimeEntry {
@@ -32,8 +29,6 @@ export function makeEntry(overrides: EntryOverrides = {}): EnrichedTimeEntry {
     projectName: overrides.projectName === undefined ? 'Plataforma' : overrides.projectName,
     clientName: null,
     billable: false,
-    registered: overrides.registered ?? false,
-    issueKey: overrides.issueKey ?? null,
     start,
     stop: overrides.running ? null : stop,
     startLocal: toLocalIso(start, TEST_TZ),
@@ -45,6 +40,5 @@ export function makeEntry(overrides: EntryOverrides = {}): EnrichedTimeEntry {
     running: overrides.running ?? false,
     mergedInto: overrides.mergedInto ?? null,
     kind: overrides.kind ?? null,
-    jira: overrides.jira ?? true,
   }
 }

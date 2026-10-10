@@ -1,15 +1,12 @@
 import { UsageError, NotFoundError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean } from '../args.ts'
-import { createLocalContext, withLocalContext, type LocalContext } from '../local-context.ts'
+import { withLocalContext, type LocalContext } from '../local-context.ts'
 import { findEntryWithProject } from '../../db/entries.ts'
-import { findDocForEntry } from '../../db/docs.ts'
-import { readEntryDoc } from '../../docs/record.ts'
 import { collectEntries } from '../collect.ts'
 import { renderTable } from '../table.ts'
 import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { formatDuration } from '../../domain/duration.ts'
-import { collapseSegments } from '../logical-entry.ts'
-import { summarizeNonJira } from '../../domain/no-jira.ts'
+import { collapseSegments, enrichLogical, type LogicalEntry } from '../logical-entry.ts'
 
 export interface EntryDetail {
   id: number
@@ -19,14 +16,15 @@ export interface EntryDetail {
   projectName: string | null
   startedAt: string
   stoppedAt: string | null
-  note: string | null
+  durationSeconds: number
+  mergedInto: number | null
+  segments: LogicalEntry['segments']
 }
 
-export async function readEntryDetail(ctx: LocalContext, id: number): Promise<EntryDetail> {
+export function readEntryDetail(ctx: LocalContext, id: number): EntryDetail {
   const row = findEntryWithProject(ctx.db, id)
   if (!row) throw new NotFoundError(`No entry #${id}.`, 'ENTRY_NOT_FOUND', 'Run "bita entries" to see them.')
-  const primary = findDocForEntry(ctx.db, row.id)
-  const note = primary ? (await readEntryDoc(ctx, primary)).markdown : null
+  const logical = enrichLogical(ctx.db, row, ctx.timezone, ctx.now)
   return {
     id: row.id,
     description: row.description,
@@ -35,18 +33,21 @@ export async function readEntryDetail(ctx: LocalContext, id: number): Promise<En
     projectName: row.projectName,
     startedAt: row.startedAt,
     stoppedAt: row.stoppedAt,
-    note,
+    durationSeconds: logical.durationSeconds,
+    mergedInto: row.mergedInto,
+    segments: logical.segments,
   }
 }
 
-async function runEntryGet(argv: string[]): Promise<number> {
+function runEntryGet(argv: string[]): number {
   const args = parseCommandArgs(argv, {}, BASE_OPTIONS)
   const raw = args.positionals[0]
   const id = Number(raw)
-  if (raw === undefined || !Number.isInteger(id) || id <= 0) throw new UsageError('Usage: bita entries get <id> [--json]')
-  const ctx = createLocalContext(args)
-  try {
-    const detail = await readEntryDetail(ctx, id)
+  if (raw === undefined || !Number.isInteger(id) || id <= 0 || args.positionals.length > 1) {
+    throw new UsageError('Usage: bita entries get <id> [--json]')
+  }
+  return withLocalContext(args, (ctx) => {
+    const detail = readEntryDetail(ctx, id)
     if (readBoolean(args, 'json')) {
       writeJson(successEnvelope('entries get', detail))
       return 0
@@ -56,45 +57,28 @@ async function runEntryGet(argv: string[]): Promise<number> {
     if (detail.kind) writeOut(`Kind    : ${detail.kind}`)
     writeOut(`Started : ${detail.startedAt}`)
     writeOut(`Stopped : ${detail.stoppedAt ?? '(running)'}`)
-    if (detail.note !== null) {
-      writeOut('')
-      writeOut(detail.note)
-    }
+    writeOut(`Time    : ${formatDuration(detail.durationSeconds)}${detail.segments.length > 0 ? ` in ${detail.segments.length} blocks` : ''}`)
+    if (detail.mergedInto !== null) writeOut(`Part of : #${detail.mergedInto}`)
     return 0
-  } finally {
-    ctx.db.close()
-  }
+  })
 }
 
-export function runEntries(argv: string[]): number | Promise<number> {
+export function runEntries(argv: string[]): number {
   if (argv[0] === 'get') return runEntryGet(argv.slice(1))
   const args = parseCommandArgs(argv, {})
 
   return withLocalContext(args, (ctx) => {
-    const result = collectEntries(ctx, args, {
-      includeRunning: true,
-      requireDescription: false,
-      requireProject: false,
-    })
-
+    const result = collectEntries(ctx, args)
     const selected = collapseSegments(result.selected)
     const totalSeconds = selected.reduce((sum, entry) => sum + entry.durationSeconds, 0)
-    const jiraSeconds = selected.filter((entry) => entry.jira).reduce((sum, entry) => sum + entry.durationSeconds, 0)
-    const nonJira = summarizeNonJira([...result.nonJira, ...selected.filter((entry) => !entry.jira)])
 
     if (readBoolean(args, 'json')) {
       writeJson(
         successEnvelope('entries', selected, {
           range: { fromDay: result.range.fromDay, toDay: result.range.toDay, timezone: ctx.timezone },
-          filter: result.filter,
           entryCount: selected.length,
           totalSeconds,
           totalHuman: formatDuration(totalSeconds),
-          jiraSeconds,
-          nonJiraSeconds: nonJira.totalSeconds,
-          nonJira,
-          excluded: result.excluded,
-          alreadyRegistered: result.alreadyRegistered,
           overlaps: result.overlaps,
           warnings: result.warnings,
         }),
@@ -111,7 +95,6 @@ export function runEntries(argv: string[]): number | Promise<number> {
           { header: 'START' },
           { header: 'PROJECT' },
           { header: 'DESCRIPTION' },
-          { header: 'STATE' },
           { header: 'TIME', align: 'right' },
         ],
         selected.map((entry) => [
@@ -120,7 +103,6 @@ export function runEntries(argv: string[]): number | Promise<number> {
           entry.startLocal.slice(11, 16),
           entry.projectName ?? '(no project)',
           entry.description || '(no description)',
-          entry.registered ? (entry.issueKey ?? 'registered') : entry.jira ? 'pending' : 'no-jira',
           entry.running
             ? `${entry.durationHuman} (running)`
             : entry.segments.length > 0
@@ -131,7 +113,6 @@ export function runEntries(argv: string[]): number | Promise<number> {
     )
     writeOut('')
     writeOut(`${selected.length} entries, ${formatDuration(totalSeconds)} total.`)
-    if (nonJira.entryCount > 0) writeOut(`Outside Jira: ${nonJira.totalHuman}, never uploaded.`)
     for (const warning of result.warnings) writeErr(`Warning: ${warning}`)
     return 0
   })

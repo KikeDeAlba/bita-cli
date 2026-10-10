@@ -1,14 +1,11 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString, type ParsedArgs } from '../args.ts'
 import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
-import { initDocsRepo } from '../../docs/git.ts'
-import { docsRoot } from '../../docs/paths.ts'
-import { databasePath } from '../../db/paths.ts'
-import { DEN_RELEASES, MOVED_OUT, RECAP_INSTALL, TOOL_NAME, binCommand, packageRoot } from '../../kit/manifest.ts'
+import { MOVED_OUT, SIBLING_INSTALLS, TOOL_NAME, binCommand, packageRoot } from '../../kit/manifest.ts'
 import { VERSION } from '../router.ts'
-import { integration, manifest } from '../../kit/integration.ts'
+import { RETIRED_CLAUDE_ALLOW, RETIRED_COMMANDS, integration, manifest, retiredIntegration } from '../../kit/integration.ts'
 
 export { packageRoot }
 
@@ -24,12 +21,19 @@ const OPTIONS = {
   'agents-home': { type: 'string' as const },
   'gemini-home': { type: 'string' as const },
   'no-settings': { type: 'boolean' as const, default: false },
-  'no-atlassian': { type: 'boolean' as const, default: false },
   'no-register': { type: 'boolean' as const, default: false },
+  'no-atlassian': { type: 'boolean' as const, default: false },
   'no-docs-git': { type: 'boolean' as const, default: false },
   'no-drawio': { type: 'boolean' as const, default: false },
   'no-recap': { type: 'boolean' as const, default: false },
 }
+
+const IGNORED_FLAGS: ReadonlyArray<readonly [string, string]> = [
+  ['no-atlassian', MOVED_OUT.atlassian],
+  ['no-docs-git', MOVED_OUT.docs],
+  ['no-drawio', MOVED_OUT.drawio],
+  ['no-recap', MOVED_OUT.recap],
+]
 
 type KitModule = typeof import('@kikedealba/kit')
 type Step = Awaited<ReturnType<KitModule['agents']['installIntegration']>>[number]
@@ -70,37 +74,32 @@ function homeOverrides(args: ParsedArgs): Record<string, string> {
   return homes
 }
 
-function readText(path: string): string | null {
+function present(path: string): boolean {
   try {
-    return readFileSync(path, 'utf8')
+    lstatSync(path)
+    return true
   } catch {
-    return null
+    return false
   }
 }
 
-export function hasAtlassianMcp(agent: AgentName, homes: { opencode: string; codex: string }): boolean {
-  if (agent === 'codex') {
-    const text = readText(join(homes.codex, 'config.toml'))
-    return text !== null && /^\s*\[mcp_servers\.atlassian(?:\.[^\]]+)?\]\s*$/m.test(text)
-  }
-  if (agent === 'opencode') {
-    const text = readText(join(homes.opencode, 'opencode.json'))
-    if (text === null) return false
-    try {
-      const parsed = JSON.parse(text) as { mcp?: Record<string, unknown> }
-      return typeof parsed.mcp === 'object' && parsed.mcp !== null && Object.hasOwn(parsed.mcp, 'atlassian')
-    } catch {
-      return false
-    }
-  }
-  return false
+export function retiredCommandsPresent(homes: { claude: string; opencode: string; codex: string }): boolean {
+  return RETIRED_COMMANDS.some(
+    (name) =>
+      present(join(homes.claude, 'commands', `${name}.md`)) ||
+      present(join(homes.opencode, 'commands', `${name}.md`)) ||
+      present(join(homes.codex, 'prompts', `${name}.md`)),
+  )
 }
 
-interface DocsGitStep {
-  state: 'initialized' | 'present' | 'failed'
-  root: string
-  head: string | null
-  detail: string
+export function retiredSettingsPresent(claudeHome: string): boolean {
+  let text: string
+  try {
+    text = readFileSync(join(claudeHome, 'settings.json'), 'utf8')
+  } catch {
+    return false
+  }
+  return text.includes('bita hook ref') || RETIRED_CLAUDE_ALLOW.some((rule) => text.includes(JSON.stringify(rule)))
 }
 
 export async function runSetup(argv: string[]): Promise<number> {
@@ -115,9 +114,7 @@ export async function runSetup(argv: string[]): Promise<number> {
     )
   }
 
-  const warnings: string[] = []
-  if (readBoolean(args, 'no-drawio')) warnings.push(`--no-drawio is ignored: ${MOVED_OUT.drawio}`)
-  if (readBoolean(args, 'no-recap')) warnings.push(`--no-recap is ignored: ${MOVED_OUT.recap}`)
+  const warnings = IGNORED_FLAGS.filter(([flag]) => readBoolean(args, flag)).map(([flag, reason]) => `--${flag} is ignored: ${reason}`)
   for (const warning of warnings) writeErr(`Warning: ${warning}`)
 
   const kit = await loadKit()
@@ -130,36 +127,19 @@ export async function runSetup(argv: string[]): Promise<number> {
     ? null
     : await kit.registerTool(manifest(root, await kit.stableBin(TOOL_NAME, VERSION, binCommand(root), ctx)), ctx)
 
-  const atlassian = !readBoolean(args, 'no-atlassian')
-  const wanted = integration(root, { settings: !readBoolean(args, 'no-settings'), atlassian })
-  const steps: Step[] = []
-  if (agents.includes('claude')) {
-    steps.push(...(await kit.agents.installIntegration(wanted, { agents: ['claude'], ctx, homes, skipMcp: true })))
-  }
-  const others = agents.filter((agent) => agent !== 'claude')
-  const keepOwnMcp = others.filter((agent) => hasAtlassianMcp(agent, homes))
-  const withMcp = others.filter((agent) => !keepOwnMcp.includes(agent))
-  if (withMcp.length > 0) {
-    steps.push(...(await kit.agents.installIntegration(wanted, { agents: withMcp, ctx, homes, skipMcp: !atlassian })))
-  }
-  if (keepOwnMcp.length > 0) {
-    steps.push(...(await kit.agents.installIntegration(wanted, { agents: keepOwnMcp, ctx, homes, skipMcp: true })))
-  }
-
-  const docsGit = readBoolean(args, 'no-docs-git') ? null : await setupDocsGit(args)
+  const settings = !readBoolean(args, 'no-settings')
+  const wanted = integration(root, { settings })
+  const cleanSettings = settings && agents.includes('claude') && retiredSettingsPresent(homes.claude)
+  const retired =
+    cleanSettings || retiredCommandsPresent(homes)
+      ? (await kit.agents.uninstallIntegration(retiredIntegration(root, cleanSettings), { agents: agents.filter((agent) => agent !== 'gemini'), ctx, homes })).filter(
+          (step) => step.state === 'removed' && step.item !== 'extension',
+        )
+      : []
+  const steps: Step[] = [...retired, ...(await kit.agents.installIntegration(wanted, { agents, ctx, homes, skipMcp: true }))]
 
   if (json) {
-    writeJson(
-      successEnvelope('setup', {
-        root,
-        agents,
-        registered,
-        steps,
-        docsGit,
-        movedOut: MOVED_OUT,
-        warnings,
-      }),
-    )
+    writeJson(successEnvelope('setup', { root, agents, registered, steps, movedOut: MOVED_OUT, warnings }))
     return 0
   }
 
@@ -167,29 +147,12 @@ export async function runSetup(argv: string[]): Promise<number> {
   for (const step of steps) {
     writeOut(`${step.state === 'failed' || step.state === 'unavailable' ? '!' : '-'} ${step.agent}: ${step.detail}`)
   }
-  if (docsGit !== null) writeOut(`${docsGit.state === 'failed' ? '!' : '-'} ${docsGit.detail}`)
   writeOut('')
-  writeOut('Installed apart, if you want them:')
-  writeOut(`  recap   ${RECAP_INSTALL}`)
-  writeOut(`  Den     ${DEN_RELEASES}`)
+  writeOut('bita only keeps the time. The rest is installed apart, if you want it:')
+  for (const [name, install] of Object.entries(SIBLING_INSTALLS)) writeOut(`  ${name.padEnd(8)}${install}`)
   writeOut('')
   writeOut('Next:')
   writeOut('  bita project add "<name>"     create a project')
   writeOut('  bita scope set . <projectId>  map this repository to it')
   return 0
-}
-
-async function setupDocsGit(args: ParsedArgs): Promise<DocsGitStep> {
-  const root = readString(args, 'docs-dir') ?? docsRoot(process.env, readString(args, 'db-path') ?? databasePath())
-  try {
-    const state = await initDocsRepo(root)
-    return {
-      state: state.initialized ? 'initialized' : 'present',
-      root,
-      head: state.head,
-      detail: state.initialized ? `docs history started in ${root}` : `docs history already in ${root}`,
-    }
-  } catch (error) {
-    return { state: 'failed', root, head: null, detail: `docs history not started: ${error instanceof Error ? error.message : String(error)}` }
-  }
 }

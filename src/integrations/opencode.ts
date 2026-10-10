@@ -92,12 +92,6 @@ export default {
       for (const file of filePaths(event.input)) {
         await runBita(['hook', 'touched', '--file', file])
       }
-      await runBita(['hook', 'ref'], JSON.stringify({
-        cwd: ctx.location.directory,
-        tool_name: event.tool,
-        tool_input: event.input,
-        tool_response: event.result,
-      }))
     })
 
     return () => {

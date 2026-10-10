@@ -1,29 +1,20 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { test } from 'node:test'
 import type { DatabaseSync } from 'node:sqlite'
 import { openMemoryDatabase } from '../src/db/open.ts'
 import {
   findEntryWithProject,
   insertEntry,
-  listPendingEntries,
+  listEntriesStartedBetween,
   listSegments,
   updateEntry,
 } from '../src/db/entries.ts'
 import { insertProject } from '../src/db/projects.ts'
-import { linkEntry } from '../src/db/jira-links.ts'
 import { listTouches, recordTouch } from '../src/db/touches.ts'
-import { listDocsForEntry, upsertDoc } from '../src/db/docs.ts'
-import { insertPage } from '../src/db/pages.ts'
-import { entriesOfPage, linkEntryToPage, pagesOfEntry, talliesByPage } from '../src/db/page-links.ts'
-import { joinSummaries } from '../src/db/merge.ts'
 import { applyMerge, planMerge, type MergeContext } from '../src/cli/commands/merge.ts'
 import { applyDeletions, assertPlanIsSafe, planDeletions } from '../src/cli/commands/delete.ts'
 import { collapseSegments } from '../src/cli/logical-entry.ts'
 import { enrichEntries } from '../src/domain/enrich.ts'
-import { groupEntries } from '../src/domain/group.ts'
 
 const NOW = '2026-09-27T20:00:00.000Z'
 const TEST_TZ = 'America/Mazatlan'
@@ -54,19 +45,6 @@ function project(db: DatabaseSync, id: number, name: string): void {
   insertProject(db, { id, name, createdAt: NOW })
 }
 
-function page(db: DatabaseSync, slug: string): number {
-  return insertPage(db, {
-    projectId: 1,
-    parentId: null,
-    slug,
-    title: slug,
-    relPath: `apartados/${slug}.md`,
-    depth: 0,
-    source: 'test',
-    now: NOW,
-  })
-}
-
 test('merging keeps every block as a segment of the oldest entry', () => {
   const db = openMemoryDatabase()
   project(db, 1, 'Apartados')
@@ -87,18 +65,15 @@ test('merging keeps every block as a segment of the oldest entry', () => {
   db.close()
 })
 
-test('summary still sees one task with one worklog per block', () => {
+test('entries collapse the merged blocks into one logical entry', () => {
   const db = openMemoryDatabase()
   project(db, 1, 'Apartados')
   const first = seed(db, 'Remediación auth', '2026-09-27T15:00:00.000Z', 40)
   const second = seed(db, 'otra cosa', '2026-09-27T16:00:00.000Z', 30)
   applyMerge(context(db), planMerge(context(db), { ids: [first.id, second.id] }))
 
-  const enriched = enrichEntries(listPendingEntries(db), TEST_TZ, new Date(NOW))
-  const groups = groupEntries(enriched, { timezone: TEST_TZ })
-  assert.equal(groups.length, 1)
-  assert.equal(groups[0]?.worklogs.length, 2)
-  assert.deepEqual(groups[0]?.entryIds, [first.id, second.id])
+  const rows = listEntriesStartedBetween(db, '2026-09-27T00:00:00.000Z', '2026-09-28T00:00:00.000Z')
+  const enriched = enrichEntries(rows, TEST_TZ, new Date(NOW))
 
   const collapsed = collapseSegments(enriched)
   assert.equal(collapsed.length, 1)
@@ -107,46 +82,22 @@ test('summary still sees one task with one worklog per block', () => {
   db.close()
 })
 
-test('touches, documents and pages move to the survivor, with the dids joined', () => {
+test('touches move to the survivor, keeping the earliest sighting', () => {
   const db = openMemoryDatabase()
   project(db, 1, 'Apartados')
   const first = seed(db, 'Remediación auth', '2026-09-27T15:00:00.000Z', 40)
   const second = seed(db, 'Remediación auth', '2026-09-27T16:00:00.000Z', 30)
-  const shared = page(db, 'auth')
-  const other = page(db, 'despliegue')
-  linkEntryToPage(db, shared, first.id, 'Se quitó el login local.', NOW)
-  linkEntryToPage(db, shared, second.id, 'Se cargó MS_CLIENT_ID.', NOW)
-  linkEntryToPage(db, other, second.id, 'Se desplegó en dev.', NOW)
   recordTouch(db, first.id, '/repo/a.ts', '2026-09-27T15:10:00.000Z')
   recordTouch(db, second.id, '/repo/a.ts', '2026-09-27T15:05:00.000Z')
   recordTouch(db, second.id, '/repo/b.ts', '2026-09-27T16:10:00.000Z')
-  upsertDoc(db, {
-    entryId: second.id,
-    relPath: 'apartados/2026-09/27-auth.md',
-    title: 'auth',
-    titleSlug: 'auth',
-    source: 'manual',
-    sectionCount: 1,
-    byteSize: 10,
-    checksum: 'x',
-    now: NOW,
-  })
 
-  applyMerge(context(db), planMerge(context(db), { ids: [first.id, second.id] }))
+  const plan = planMerge(context(db), { ids: [first.id, second.id] })
+  assert.equal(plan.touchedFiles, 2)
+  const outcome = applyMerge(context(db), plan)
 
+  assert.equal(outcome.touchesMoved, 2)
   assert.deepEqual(listTouches(db, first.id).sort(), ['/repo/a.ts', '/repo/b.ts'])
   assert.deepEqual(listTouches(db, second.id), [])
-  assert.deepEqual(listDocsForEntry(db, first.id).map((doc) => doc.kind), ['appendix'])
-  assert.deepEqual(
-    pagesOfEntry(db, first.id).map((link) => [link.pageId, link.summary]).sort(),
-    [
-      [shared, 'Se quitó el login local. Se cargó MS_CLIENT_ID.'],
-      [other, 'Se desplegó en dev.'],
-    ].sort(),
-  )
-  assert.deepEqual(pagesOfEntry(db, second.id), [])
-  assert.equal(entriesOfPage(db, shared).length, 1)
-  assert.equal(talliesByPage(db).get(shared)?.durationSeconds, 70 * 60)
   db.close()
 })
 
@@ -179,7 +130,7 @@ test('renaming the survivor renames its blocks, so they keep grouping together',
   db.close()
 })
 
-test('running, registered, already merged and cross-project entries are refused', () => {
+test('running, already merged and cross-project entries are refused; legacy jira links are not', () => {
   const db = openMemoryDatabase()
   project(db, 1, 'Apartados')
   project(db, 2, 'Pharma')
@@ -188,11 +139,11 @@ test('running, registered, already merged and cross-project entries are refused'
   const running = seed(db, 'R', '2026-09-27T17:00:00.000Z', 0, 1, true)
   const registered = seed(db, 'J', '2026-09-27T14:00:00.000Z', 10)
   const elsewhere = seed(db, 'P', '2026-09-27T13:00:00.000Z', 10, 2)
-  linkEntry(db, { entryId: registered.id, issueKey: 'VBAA-1', linkedAt: NOW })
+  db.prepare('INSERT INTO jira_links (entry_id, issue_key, linked_at) VALUES (?, ?, ?)').run(registered.id, 'VBAA-1', NOW)
 
   assert.throws(() => planMerge(context(db), { ids: [a.id] }), /at least two/)
   assert.throws(() => planMerge(context(db), { ids: [a.id, running.id] }), /still running/)
-  assert.throws(() => planMerge(context(db), { ids: [a.id, registered.id] }), /VBAA-1/)
+  assert.equal(planMerge(context(db), { ids: [a.id, registered.id] }).segments.length, 2)
   assert.throws(() => planMerge(context(db), { ids: [a.id, elsewhere.id] }), /different projects/)
   assert.equal(planMerge(context(db), { ids: [a.id, elsewhere.id], projectId: 2 }).projectId, 2)
 
@@ -201,24 +152,19 @@ test('running, registered, already merged and cross-project entries are refused'
   db.close()
 })
 
-test('deleting a block is refused, deleting the survivor takes every block', async () => {
+test('deleting a block is refused, deleting the survivor takes every block', () => {
   const db = openMemoryDatabase()
   project(db, 1, 'Apartados')
   const a = seed(db, 'A', '2026-09-27T15:00:00.000Z', 10)
   const b = seed(db, 'B', '2026-09-27T16:00:00.000Z', 20)
   applyMerge(context(db), planMerge(context(db), { ids: [a.id, b.id] }))
 
-  const docsRoot = mkdtempSync(join(tmpdir(), 'bita-merge-'))
-  const ctx = { db, timezone: TEST_TZ, now: new Date(NOW), docsRoot }
-  assert.throws(() => assertPlanIsSafe(planDeletions(ctx, [b.id], false)), /merged entry/)
+  const ctx = { db, timezone: TEST_TZ, now: new Date(NOW) }
+  assert.throws(() => assertPlanIsSafe(planDeletions(ctx, [b.id])), /merged entry/)
 
-  const plan = planDeletions(ctx, [a.id], false)
+  const plan = planDeletions(ctx, [a.id])
   assert.equal(plan.targets[0]?.durationSeconds, 30 * 60)
-  await applyDeletions(db, plan.targets, false)
+  applyDeletions(db, plan.targets)
   assert.equal(findEntryWithProject(db, b.id), undefined)
   db.close()
-})
-
-test('joined dids drop blanks and repeats, and keep their order', () => {
-  assert.equal(joinSummaries(['Uno.', '', 'Dos.', 'Uno.']), 'Uno. Dos.')
 })

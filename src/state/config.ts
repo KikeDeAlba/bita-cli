@@ -1,40 +1,12 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { DEFAULT_STORY_THEMES, type StoryTheme } from '../config/constants.ts'
-import { parseHooks, type HookConfig } from '../hooks/hooks.ts'
 import os from 'node:os'
 import path from 'node:path'
+import { UsageError } from '../errors.ts'
+import { parseHooks, type HookConfig } from '../hooks/hooks.ts'
 
 export const CONFIG_DIR = path.join(os.homedir(), '.config', 'bita')
 export const CONFIG_PATH_ENV_VAR = 'BITA_CONFIG_PATH'
 export const CONFIG_PATH = process.env[CONFIG_PATH_ENV_VAR] ?? path.join(CONFIG_DIR, 'config.json')
-
-export type HierarchyStrategy = 'epic-story-subtask' | 'story-subtask' | 'flat-task'
-
-export type EpicMode = 'fixed' | 'per-run' | 'flat'
-
-export const NO_EPIC = ''
-
-export interface StoryRef {
-  key: string
-  summary: string
-  verifiedAt: string
-}
-
-export interface ProjectMapping {
-  projectName: string
-  jiraProjectKey: string
-  hierarchy?: HierarchyStrategy
-  epicResolved?: boolean
-  storiesByEpic?: Record<string, Record<string, StoryRef>>
-  storyIssueTypeName?: string
-  workIssueTypeName?: string
-  parentKey?: string
-  issueTypeName?: string
-  issueTypeId?: string
-  doneTransition?: { id: string; name: string }
-  timetrackingAvailable?: boolean
-  verifiedAt?: string
-}
 
 export type RepoSlugSource = 'remote' | 'path' | 'basename'
 
@@ -46,148 +18,82 @@ export interface ScopeMapping {
   verifiedAt?: string
 }
 
-export interface JiraConfig {
-  cloudId?: string
-  siteUrl?: string
-  accountId?: string
-  email?: string
-}
-
-export interface AtlassianSiteConfig {
-  site: string
-  email: string
-  jira?: boolean | null
-  confluence?: boolean | null
-  displayName?: string
-  checkedAt?: string
-}
-
-export interface AtlassianConfig {
-  sites: AtlassianSiteConfig[]
-}
-
 export interface AppConfig {
   version: number
-  workspaceId?: number
   timezone?: string
-  jira?: JiraConfig
-  atlassian?: AtlassianConfig
-  defaults?: { issueTypeName?: string; pendingTagName?: string; storyThemes?: StoryTheme[] }
-  projectMapping: Record<string, ProjectMapping>
   scopeMapping: Record<string, ScopeMapping>
   hooks?: HookConfig[]
+  [key: string]: unknown
 }
 
 export function emptyConfig(): AppConfig {
-  return { version: 1, projectMapping: {}, scopeMapping: {} }
+  return { version: 1, scopeMapping: {} }
 }
 
-export const LEGACY_CONFIG_PATH = path.join(
-  os.homedir(),
-  '.config',
-  'toggl-track-cli',
-  'config.json',
-)
-
-interface LegacyProjectMapping extends ProjectMapping {
-  togglProjectName?: string
-  stories?: Record<string, StoryRef>
-}
+export const LEGACY_CONFIG_PATH = path.join(os.homedir(), '.config', 'toggl-track-cli', 'config.json')
 
 interface LegacyScopeMapping extends ScopeMapping {
   togglProjectId?: number
   togglProjectName?: string
-  workspaceId?: number
 }
 
-export function migrateLegacyKeys(parsed: Partial<AppConfig>): Partial<AppConfig> {
-  const projectMapping: Record<string, ProjectMapping> = {}
-  for (const [key, value] of Object.entries(parsed.projectMapping ?? {})) {
-    const legacy = value as LegacyProjectMapping
-    const { togglProjectName, stories, ...rest } = legacy
-    const migrated: ProjectMapping = { ...rest, projectName: rest.projectName ?? togglProjectName ?? '' }
-    if (stories && Object.keys(stories).length > 0) {
-      const epicKey = rest.parentKey ?? NO_EPIC
-      migrated.storiesByEpic = {
-        ...rest.storiesByEpic,
-        [epicKey]: { ...stories, ...rest.storiesByEpic?.[epicKey] },
-      }
-    }
-    projectMapping[key] = migrated
-  }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
-  const legacyScopes = (parsed as { repoMapping?: Record<string, unknown> }).repoMapping
+export function migrateScopes(raw: unknown): Record<string, ScopeMapping> {
   const scopeMapping: Record<string, ScopeMapping> = {}
-  for (const [key, value] of Object.entries(parsed.scopeMapping ?? legacyScopes ?? {})) {
-    const legacy = value as LegacyScopeMapping
-    const { togglProjectId, togglProjectName, workspaceId, ...rest } = legacy
+  if (!isRecord(raw)) return scopeMapping
+  for (const [key, value] of Object.entries(raw)) {
+    if (!isRecord(value)) continue
+    const { togglProjectId, togglProjectName, workspaceId: _workspace, ...rest } = value as unknown as LegacyScopeMapping
     scopeMapping[key] = {
       ...rest,
       projectId: rest.projectId ?? togglProjectId ?? 0,
       projectName: rest.projectName ?? togglProjectName ?? '',
     }
   }
-
-  const { repoMapping: _dropped, ...withoutLegacy } = parsed as Partial<AppConfig> & {
-    repoMapping?: unknown
-  }
-  return { ...withoutLegacy, projectMapping, scopeMapping }
+  return scopeMapping
 }
 
-export function normalizeSiteUrl(raw: string): string | null {
-  const trimmed = raw.trim()
-  if (trimmed.length === 0) return null
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
-  let parsed: URL
-  try {
-    parsed = new URL(withScheme)
-  } catch {
-    return null
+export function parseConfig(raw: unknown): AppConfig {
+  if (!isRecord(raw)) return emptyConfig()
+  const { repoMapping, scopeMapping, hooks: rawHooks, version, ...rest } = raw
+  const hooks = parseHooks(rawHooks)
+  return {
+    ...rest,
+    version: typeof version === 'number' ? version : 1,
+    scopeMapping: migrateScopes(scopeMapping ?? repoMapping),
+    ...(hooks.length > 0 ? { hooks } : {}),
   }
-  if (parsed.protocol !== 'https:' || parsed.hostname.length === 0 || !parsed.hostname.includes('.')) return null
-  return `https://${parsed.host.toLowerCase()}`
 }
 
-function atlassianSection(parsed: Partial<AppConfig>): AtlassianConfig | undefined {
-  const sites = Array.isArray(parsed.atlassian?.sites)
-    ? parsed.atlassian.sites.filter(
-        (entry): entry is AtlassianSiteConfig => typeof entry?.site === 'string' && typeof entry.email === 'string',
-      )
-    : undefined
-  if (sites !== undefined) return { sites }
-
-  const siteUrl = parsed.jira?.siteUrl
-  const email = parsed.jira?.email
-  if (!siteUrl || !email) return undefined
-  const site = normalizeSiteUrl(siteUrl)
-  if (site === null) return undefined
-  return { sites: [{ site, email }] }
+async function readRaw(configPath: string): Promise<{ path: string; text: string } | null> {
+  for (const candidate of [configPath, LEGACY_CONFIG_PATH]) {
+    try {
+      return { path: candidate, text: await readFile(candidate, 'utf8') }
+    } catch {
+      continue
+    }
+  }
+  return null
 }
 
 export async function readConfig(configPath = CONFIG_PATH): Promise<AppConfig> {
   try {
-    let raw: string
-    try {
-      raw = await readFile(configPath, 'utf8')
-    } catch {
-      raw = await readFile(LEGACY_CONFIG_PATH, 'utf8')
-    }
-    const parsed = migrateLegacyKeys(JSON.parse(raw) as Partial<AppConfig>)
-    const hooks = parseHooks(parsed.hooks)
-    const atlassian = atlassianSection(parsed)
-    return {
-      version: parsed.version ?? 1,
-      ...(parsed.workspaceId !== undefined ? { workspaceId: parsed.workspaceId } : {}),
-      ...(parsed.timezone !== undefined ? { timezone: parsed.timezone } : {}),
-      ...(parsed.jira !== undefined ? { jira: parsed.jira } : {}),
-      ...(atlassian !== undefined ? { atlassian } : {}),
-      ...(parsed.defaults !== undefined ? { defaults: parsed.defaults } : {}),
-      projectMapping: parsed.projectMapping ?? {},
-      scopeMapping: parsed.scopeMapping ?? {},
-      ...(hooks.length > 0 ? { hooks } : {}),
-    }
+    return await readConfigForUpdate(configPath)
   } catch {
     return emptyConfig()
+  }
+}
+
+export async function readConfigForUpdate(configPath = CONFIG_PATH): Promise<AppConfig> {
+  const raw = await readRaw(configPath)
+  if (raw === null) return emptyConfig()
+  try {
+    return parseConfig(JSON.parse(raw.text) as unknown)
+  } catch (error) {
+    throw new UsageError(`${raw.path} is not valid JSON, so bita will not rewrite it: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -196,135 +102,17 @@ export async function writeConfig(config: AppConfig, configPath = CONFIG_PATH): 
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
 }
 
-export type ProjectMappingUpdate = Omit<ProjectMapping, 'parentKey'> & { parentKey?: string | null }
-
-const BOARD_SCOPED_FIELDS = [
-  'storiesByEpic',
-  'doneTransition',
-  'issueTypeId',
-  'timetrackingAvailable',
-] as const satisfies readonly (keyof ProjectMapping)[]
-
-export function mergeProjectMapping(
-  existing: ProjectMapping | undefined,
-  update: ProjectMappingUpdate,
-): ProjectMapping {
-  const { parentKey, ...fields } = update
-  const merged: ProjectMapping = { ...existing, ...fields }
-
-  if (parentKey === null) delete merged.parentKey
-  else if (parentKey !== undefined) merged.parentKey = parentKey
-
-  if (existing && existing.jiraProjectKey !== update.jiraProjectKey) {
-    for (const field of BOARD_SCOPED_FIELDS) {
-      if (!(field in fields)) delete merged[field]
-    }
-    if (parentKey === undefined) delete merged.parentKey
-  }
-
-  return merged
-}
-
-export async function setProjectMapping(
-  projectId: number,
-  update: ProjectMappingUpdate,
-  configPath = CONFIG_PATH,
-): Promise<AppConfig> {
-  const config = await readConfig(configPath)
-  const key = String(projectId)
-  config.projectMapping[key] = mergeProjectMapping(config.projectMapping[key], update)
-  await writeConfig(config, configPath)
-  return config
-}
-
-export function epicMode(mapping: ProjectMapping): EpicMode {
-  if (mapping.parentKey) return 'fixed'
-  if (mapping.hierarchy === 'flat-task') return 'flat'
-  return 'per-run'
-}
-
-export function storiesForEpic(mapping: ProjectMapping, epicKey: string): Record<string, StoryRef> {
-  return mapping.storiesByEpic?.[epicKey] ?? {}
-}
-
-export function jiraTarget(mapping: ProjectMapping | undefined) {
-  if (!mapping) {
-    return {
-      jiraProjectKey: null,
-      epicMode: null,
-      hierarchy: 'story-subtask' as HierarchyStrategy,
-      jiraEpicKey: null,
-      jiraParentKey: null,
-      epicResolved: false,
-      jiraStories: {},
-      jiraStoriesByEpic: {},
-    }
-  }
-
-  const parentKey = mapping.parentKey ?? null
-  return {
-    jiraProjectKey: mapping.jiraProjectKey,
-    epicMode: epicMode(mapping),
-    hierarchy: mapping.hierarchy ?? (parentKey ? 'epic-story-subtask' : 'story-subtask'),
-    jiraEpicKey: parentKey,
-    jiraParentKey: parentKey,
-    epicResolved: mapping.epicResolved ?? false,
-    jiraStories: storiesForEpic(mapping, parentKey ?? NO_EPIC),
-    jiraStoriesByEpic: mapping.storiesByEpic ?? {},
-  }
-}
-
-export async function unsetProjectMapping(
-  projectId: number,
-  configPath = CONFIG_PATH,
-): Promise<boolean> {
-  const config = await readConfig(configPath)
-  const key = String(projectId)
-  if (!(key in config.projectMapping)) return false
-  delete config.projectMapping[key]
-  await writeConfig(config, configPath)
-  return true
-}
-
-export async function setScopeMapping(
-  slug: string,
-  mapping: ScopeMapping,
-  configPath = CONFIG_PATH,
-): Promise<AppConfig> {
-  const config = await readConfig(configPath)
+export async function setScopeMapping(slug: string, mapping: ScopeMapping, configPath = CONFIG_PATH): Promise<AppConfig> {
+  const config = await readConfigForUpdate(configPath)
   config.scopeMapping[slug] = mapping
   await writeConfig(config, configPath)
   return config
 }
 
 export async function unsetScopeMapping(slug: string, configPath = CONFIG_PATH): Promise<boolean> {
-  const config = await readConfig(configPath)
+  const config = await readConfigForUpdate(configPath)
   if (!(slug in config.scopeMapping)) return false
   delete config.scopeMapping[slug]
   await writeConfig(config, configPath)
   return true
-}
-
-export function storyThemes(config: AppConfig): StoryTheme[] {
-  const configured = config.defaults?.storyThemes
-  return configured && configured.length > 0 ? configured : [...DEFAULT_STORY_THEMES]
-}
-
-export async function setStory(
-  projectId: number,
-  themeId: string,
-  story: StoryRef,
-  epicKey: string,
-  configPath = CONFIG_PATH,
-): Promise<AppConfig> {
-  const config = await readConfig(configPath)
-  const key = String(projectId)
-  const mapping = config.projectMapping[key]
-  if (!mapping) throw new Error(`Toggl project ${projectId} is not mapped to a Jira project.`)
-  mapping.storiesByEpic = {
-    ...mapping.storiesByEpic,
-    [epicKey]: { ...mapping.storiesByEpic?.[epicKey], [themeId]: story },
-  }
-  await writeConfig(config, configPath)
-  return config
 }

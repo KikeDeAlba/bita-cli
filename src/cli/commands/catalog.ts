@@ -1,27 +1,15 @@
 import { parseCommandArgs, readBoolean } from '../args.ts'
-import { createLocalContext } from '../local-context.ts'
+import { withLocalContext } from '../local-context.ts'
 import { renderTable } from '../table.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { listProjects } from '../../db/projects.ts'
-import { readConfig } from '../../state/config.ts'
-import { atlassianOf } from './project.ts'
+import { projectView } from './project.ts'
 
-export async function runProjects(argv: string[]): Promise<number> {
+export function runProjects(argv: string[]): number {
   const args = parseCommandArgs(argv, { all: { type: 'boolean', default: false } })
-  const ctx = createLocalContext(args)
 
-  try {
-    const config = await readConfig()
-    const projects = listProjects(ctx.db, readBoolean(args, 'all')).map((project) => ({
-      id: project.id,
-      key: project.key,
-      name: project.name,
-      active: project.active,
-      jira: project.jira,
-      clientName: project.clientName,
-      jiraProjectKey: config.projectMapping[String(project.id)]?.jiraProjectKey ?? null,
-      atlassian: atlassianOf(project, config),
-    }))
+  return withLocalContext(args, (ctx) => {
+    const projects = listProjects(ctx.db, readBoolean(args, 'all')).map(projectView)
 
     if (readBoolean(args, 'json')) {
       writeJson(successEnvelope('projects', projects))
@@ -32,24 +20,18 @@ export async function runProjects(argv: string[]): Promise<number> {
       renderTable(
         [
           { header: 'ID', align: 'right' },
-          { header: 'KEY' },
           { header: 'PROJECT' },
           { header: 'CLIENT' },
           { header: 'ACTIVE' },
-          { header: 'JIRA' },
         ],
         projects.map((project) => [
           String(project.id),
-          project.key ?? '',
           project.name,
           project.clientName ?? '',
           project.active ? 'yes' : 'no',
-          project.jira ? (project.jiraProjectKey ?? '') : 'never',
         ]),
       ),
     )
     return 0
-  } finally {
-    ctx.db.close()
-  }
+  })
 }

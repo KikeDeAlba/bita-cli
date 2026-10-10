@@ -3,7 +3,7 @@ import { parseKind } from '../../domain/kind.ts'
 import type { Listener } from '@kikedealba/kit/events'
 import { EVENT_SOURCE, HOOK_EVENTS, hooksLogPath, isHookEvent, loadKitEvents, type HookConfig, type HookEvent } from '../../hooks/hooks.ts'
 import { databasePath } from '../../db/paths.ts'
-import { readConfig, writeConfig } from '../../state/config.ts'
+import { readConfig, readConfigForUpdate, writeConfig } from '../../state/config.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString } from '../args.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 
@@ -41,7 +41,7 @@ export async function runHooks(argv: string[]): Promise<number> {
   const args = parseCommandArgs(own, OPTIONS, BASE_OPTIONS)
   const json = readBoolean(args, 'json')
   const [action = 'list', ...rest] = args.positionals
-  const config = await readConfig()
+  const config = action === 'list' || action === 'ls' ? await readConfig() : await readConfigForUpdate()
   const hooks = config.hooks ?? []
   const logPath = hooksLogPath(readString(args, 'db-path') ?? databasePath())
 
