@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@kikedealba/kit':
+        specifier: ^0.1.1
+        version: 0.1.1
       '@mixmark-io/domino':
         specifier: ^2.2.0
         version: 2.2.0
@@ -29,6 +32,11 @@ importers:
         version: 5.9.3
 
 packages:
+
+  '@kikedealba/kit@0.1.1':
+    resolution: {integrity: sha512-o0CZ4NKoXexn0KRnyVPwEZPpdxFspJfUWa8BksYH2XT4n+XLO4FqpC6m+hT1NgbWSWtXNBpR2ED4dLPslvVsvQ==}
+    engines: {node: '>=24'}
+    hasBin: true
 
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
@@ -57,6 +65,8 @@ packages:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
 snapshots:
+
+  '@kikedealba/kit@0.1.1': {}
 
   '@mixmark-io/domino@2.2.0': {}
 

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { ConflictError, UsageError } from '../../errors.ts'
 import { parseCommandArgs, readBoolean, readString, type ParsedArgs } from '../args.ts'
-import { withLocalContext } from '../local-context.ts'
+import { createLocalContext } from '../local-context.ts'
 import { successEnvelope, writeJson, writeOut } from '../output.ts'
 import { renderTable } from '../table.ts'
 import { resolveProjectArg } from '../project-arg.ts'
@@ -14,6 +14,9 @@ import { writeMerge } from '../../db/merge.ts'
 import type { EntryWithProjectRow } from '../../db/rows.ts'
 import { enrichEntry, normalizeDescription } from '../../domain/enrich.ts'
 import { formatDuration } from '../../domain/duration.ts'
+import { findDocForEntry } from '../../db/docs.ts'
+import { resolveDocPath } from '../../docs/paths.ts'
+import { emitHooks } from '../../hooks/emit.ts'
 
 const OPTIONS = {
   into: { type: 'string' as const },
@@ -224,14 +227,15 @@ function renderPlan(plan: MergePlan): string {
   )
 }
 
-export function runMerge(argv: string[]): number {
+export async function runMerge(argv: string[]): Promise<number> {
   const args = parseCommandArgs(argv, OPTIONS)
   const json = readBoolean(args, 'json')
   const dryRun = readBoolean(args, 'dry-run')
   const ids = readMergeIds(args)
   const rawInto = readString(args, 'into')
+  const ctx = createLocalContext(args)
 
-  return withLocalContext(args, (ctx) => {
+  try {
     const rawProject = readString(args, 'project')
     const request: MergeRequest = {
       ids,
@@ -254,9 +258,21 @@ export function runMerge(argv: string[]): number {
     }
 
     const outcome = applyMerge(ctx, plan)
+    const survivor = findEntryWithProject(ctx.db, plan.targetId)
+    const stored = findDocForEntry(ctx.db, plan.targetId)
+    const hooksFired = survivor
+      ? await emitHooks(ctx, [
+          {
+            event: 'merge',
+            entry: enrichEntry(survivor, ctx.timezone, ctx.now),
+            docPath: stored ? resolveDocPath(ctx.docsRoot, stored.relPath) : null,
+            mergedIds: plan.sourceIds,
+          },
+        ])
+      : 0
 
     if (json) {
-      writeJson(successEnvelope('merge', { ...plan, ...outcome, dryRun: false }))
+      writeJson(successEnvelope('merge', { ...plan, ...outcome, dryRun: false }, { hooksFired }))
       return 0
     }
 
@@ -268,5 +284,7 @@ export function runMerge(argv: string[]): number {
     }
     writeOut(`Jira will get one task with ${plan.segments.length} worklogs.`)
     return 0
-  })
+  } finally {
+    ctx.db.close()
+  }
 }

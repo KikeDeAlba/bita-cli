@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { ConfluenceClient, mediaTypeOf, siteBase, type Fetch } from '../src/confluence/client.ts'
 import { adfImage, displaySize, pngSize, storageImage } from '../src/confluence/fragments.ts'
-import { deleteToken, KEYCHAIN_SERVICE, readToken, storeToken } from '../src/state/keychain.ts'
+import { fileStore, macosKeychain } from '@kikedealba/kit/credentials'
+import { deleteToken, KEYCHAIN_SERVICE, readToken, storeToken } from '../src/state/credentials.ts'
 
 const SITE = 'https://gruposti.atlassian.net'
 
@@ -35,26 +36,36 @@ function fakeFetch(calls: Call[], respond: (call: Call) => { status?: number; bo
 
 test('the token goes to and comes from the Keychain under the bita service', async () => {
   const calls: string[][] = []
-  const run = async (args: readonly string[]) => {
-    calls.push([...args])
+  const store = macosKeychain(async (command, args) => {
+    calls.push([command, ...args])
     return 'secret-token\n'
-  }
-  await storeToken('me@x.com', 'secret-token', run)
-  assert.equal(await readToken('me@x.com', run), 'secret-token')
-  assert.deepEqual(calls[0], ['add-generic-password', '-U', '-s', KEYCHAIN_SERVICE, '-a', 'me@x.com', '-w', 'secret-token'])
-  assert.deepEqual(calls[1], ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', 'me@x.com', '-w'])
+  })
+  await storeToken('me@x.com', 'secret-token', store)
+  assert.equal(await readToken('me@x.com', store), 'secret-token')
+  assert.deepEqual(calls[0], ['/usr/bin/security', 'add-generic-password', '-U', '-s', KEYCHAIN_SERVICE, '-a', 'me@x.com', '-w', 'secret-token'])
+  assert.deepEqual(calls[1], ['/usr/bin/security', 'find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', 'me@x.com', '-w'])
 })
 
 test('a missing Keychain item reads as no token, other failures are errors', async () => {
-  const missing = async () => {
+  const missing = macosKeychain(async () => {
     throw Object.assign(new Error('failed'), { code: 44, stderr: 'security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.' })
-  }
+  })
   assert.equal(await readToken('me@x.com', missing), null)
   assert.equal(await deleteToken('me@x.com', missing), false)
-  const locked = async () => {
+  const locked = macosKeychain(async () => {
     throw Object.assign(new Error('failed'), { code: 51, stderr: 'User interaction is not allowed.' })
-  }
+  })
   await assert.rejects(readToken('me@x.com', locked), /User interaction is not allowed/)
+})
+
+test('the file store keeps the token outside macOS under the same service and account', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bita-credentials-'))
+  const store = fileStore(join(dir, 'credentials.json'))
+  await storeToken('https://acme.atlassian.net|me@x.com', 'tok', store)
+  assert.equal(await store.get(KEYCHAIN_SERVICE, 'https://acme.atlassian.net|me@x.com'), 'tok')
+  assert.equal(await readToken('https://acme.atlassian.net|me@x.com', store), 'tok')
+  assert.equal(await deleteToken('https://acme.atlassian.net|me@x.com', store), true)
+  assert.equal(await readToken('https://acme.atlassian.net|me@x.com', store), null)
 })
 
 test('requests carry basic auth and hit the wiki api of the site', async () => {

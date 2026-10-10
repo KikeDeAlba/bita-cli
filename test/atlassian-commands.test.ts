@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import { FakeConfluence } from './helpers/fake-confluence.ts'
+import { macosKeychain } from '@kikedealba/kit/credentials'
 
 const dir = mkdtempSync(join(tmpdir(), 'bita-atlassian-cmd-'))
 const configPath = join(dir, 'config.json')
@@ -26,7 +27,7 @@ fake.add({ id: '101', title: 'Arquitectura', parentId: '100', storage: '<p>uno</
 const restore = setAtlassianRuntime({
   fetch: fake.fetch,
   configPath,
-  security: async (args) => {
+  credentials: async () => macosKeychain(async (_command, args) => {
     const account = args[args.indexOf('-a') + 1] ?? ''
     if (args[0] === 'find-generic-password') {
       const token = keychain.get(account)
@@ -42,7 +43,7 @@ const restore = setAtlassianRuntime({
       return ''
     }
     throw new Error(`unexpected security call ${args.join(' ')}`)
-  },
+  }),
 })
 
 after(() => {
