@@ -58,6 +58,7 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "@kikedealba/kit": "^0.1.1",
     "@mixmark-io/domino": "^2.2.0",
     "marked": "^18.1.0",
     "turndown": "^7.2.4"

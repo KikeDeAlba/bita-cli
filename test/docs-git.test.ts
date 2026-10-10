@@ -8,6 +8,7 @@ import { test } from 'node:test'
 const base = mkdtempSync(join(tmpdir(), 'bita-docs-git-'))
 process.env['GIT_CONFIG_GLOBAL'] = join(base, 'gitconfig')
 process.env['GIT_CONFIG_NOSYSTEM'] = '1'
+process.env['BITA_NO_DELEGATE'] = '1'
 process.env['BITA_CONFIG_PATH'] = join(base, 'config.json')
 process.env['BITA_DB_PATH'] = join(base, 'unused.db')
 process.env['BITA_DOCS_DIR'] = join(base, 'unused-docs')
