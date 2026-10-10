@@ -15,5 +15,5 @@ Resume en dos o tres líneas: qué está corriendo y desde cuándo, y cuánto ll
 hoy en total. Si el aviso de solapes apareció arriba, dilo con las horas exactas
 y no lo escondas. Si no hay nada corriendo, dilo y para ahí.
 
-Si algún cronómetro lleva archivos tocados sin checkpoint, dilo con su id y
-cuántos, y ofrece `/bita-check`. Si todos están al día, no lo menciones.
+Si hay un borrador sin título, dilo con su id y ofrece rellenarlo con
+`/bita-amend`.

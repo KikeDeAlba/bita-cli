@@ -82,7 +82,7 @@ test('capabilities answers the kit envelope with what bita offers', () => {
     name: 'bita',
     version: manifest(packageRoot()).version,
     envelope: 1,
-    capabilities: ['time.entries.read', 'time.entries.write', 'time.notes', 'time.events'],
+    capabilities: ['time.entries.read', 'time.entries.write', 'time.events'],
     emits: ['start', 'stop', 'cancel', 'amend', 'delete', 'merge'],
   })
 })
@@ -92,7 +92,7 @@ test('bita passes the kit conformance checks', async () => {
   await assertConformance([process.execPath, bin], manifest(packageRoot()), platformContext({ env, home: env['HOME'] ?? '' }))
 })
 
-test('entries get returns one entry with its note', () => {
+test('entries get returns one entry without a note', () => {
   const { dir, env } = sandbox('entries-get')
   assert.equal(bita(env, dir, 'project', 'add', 'Kit').status, 0)
   const started = bita(env, dir, 'start', 'Wire kit', '--project', 'Kit')
@@ -102,12 +102,11 @@ test('entries get returns one entry with its note', () => {
   assert.equal(detail.status, 0, detail.stderr)
   assert.equal(detail.json['command'], 'entries get')
   const data = detail.json['data'] as Record<string, unknown>
-  assert.deepEqual(Object.keys(data).sort(), ['description', 'id', 'kind', 'note', 'projectId', 'projectName', 'startedAt', 'stoppedAt'])
+  assert.deepEqual(Object.keys(data).sort(), ['description', 'durationSeconds', 'id', 'kind', 'mergedInto', 'projectId', 'projectName', 'segments', 'startedAt', 'stoppedAt'])
   assert.equal(data['id'], id)
   assert.equal(data['description'], 'Wire kit')
   assert.equal(data['projectName'], 'Kit')
   assert.equal(data['stoppedAt'], null)
-  assert.equal(typeof data['note'], 'string')
 
   const missing = bita(env, dir, 'entries', 'get', '9999')
   assert.notEqual(missing.status, 0)
@@ -128,7 +127,7 @@ test('events reach registry subscribers and config hooks with the bita document'
       envelope: 1,
       capabilities: [],
       emits: [],
-      subscribes: [{ tool: 'bita', events: ['start', 'stop', 'delete', 'merge'], command: recorder(dir, fromRegistry) }],
+      subscribes: [{ tool: 'bita', events: ['start', 'stop', 'amend', 'delete', 'merge'], command: recorder(dir, fromRegistry) }],
     }),
   )
   writeFileSync(
@@ -142,6 +141,11 @@ test('events reach registry subscribers and config hooks with the bita document'
   const firstId = (first.json['data'] as { id: number }).id
   assert.equal((first.json['meta'] as { hooksFired: number }).hooksFired, 1)
   assert.equal(bita(env, dir, 'stop', String(firstId)).status, 0)
+  const amended = bita(env, dir, 'amend', String(firstId), '--title', 'First renamed')
+  assert.equal(amended.status, 0, amended.stderr)
+  assert.equal((amended.json['data'] as { hooksFired: number }).hooksFired, 1)
+  const unchanged = bita(env, dir, 'amend', String(firstId), '--title', 'First renamed')
+  assert.equal((unchanged.json['data'] as { hooksFired: number }).hooksFired, 0)
   const second = bita(env, dir, 'start', 'Second', '--project', 'Events')
   const secondId = (second.json['data'] as { id: number }).id
   assert.equal(bita(env, dir, 'stop', String(secondId)).status, 0)
@@ -154,8 +158,8 @@ test('events reach registry subscribers and config hooks with the bita document'
   assert.equal(deleted.status, 0, deleted.stderr)
   assert.equal((deleted.json['meta'] as { hooksFired: number }).hooksFired, 1)
 
-  const events = await received(fromRegistry, 8)
-  assert.deepEqual(events.map((event) => String(event['event'])).sort(), ['delete', 'merge', 'start', 'start', 'start', 'stop', 'stop', 'stop'])
+  const events = await received(fromRegistry, 9)
+  assert.deepEqual(events.map((event) => String(event['event'])).sort(), ['amend', 'delete', 'merge', 'start', 'start', 'start', 'stop', 'stop', 'stop'])
   const find = (name: string, id: number) =>
     events.find((event) => event['event'] === name && (event['entry'] as { id: number }).id === id) ?? {}
   const start = find('start', firstId)
@@ -164,9 +168,18 @@ test('events reach registry subscribers and config hooks with the bita document'
   assert.equal((start['entry'] as { id: number }).id, firstId)
   assert.equal(start['databasePath'], env['BITA_DB_PATH'])
   assert.equal(start['docsRoot'], env['BITA_DOCS_DIR'])
-  assert.ok(Array.isArray(start['pageIds']))
+  for (const event of events) {
+    assert.deepEqual(event['pageIds'], [])
+    assert.equal(event['docPath'], null)
+    const entry = event['entry'] as Record<string, unknown>
+    assert.equal('registered' in entry, false)
+    assert.equal('issueKey' in entry, false)
+  }
   assert.ok('previousKind' in start)
-  assert.ok('docPath' in start)
+  const amend = find('amend', firstId)
+  assert.equal(amend['previousTitle'], 'First')
+  assert.equal((amend['entry'] as { description: string }).description, 'First renamed')
+  assert.equal(typeof amend['previousProjectId'], 'number')
   assert.deepEqual(start['kitEnv'], { event: 'start', source: 'bita', entry: String(firstId) })
   assert.deepEqual(find('merge', firstId)['mergedIds'], [secondId])
   assert.equal(find('delete', thirdId)['event'], 'delete')

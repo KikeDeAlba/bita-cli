@@ -1,10 +1,4 @@
 export const EXIT_OK = 0
 export const EXIT_GENERIC = 1
 export const EXIT_USAGE = 2
-export const EXIT_MISSING_TOKEN = 3
-export const EXIT_AUTH = 4
-export const EXIT_RATE_LIMITED = 5
-export const EXIT_NETWORK = 6
-export const EXIT_PARTIAL_WRITE = 7
-export const EXIT_QUOTA = 8
 export const EXIT_CONFLICT = 9

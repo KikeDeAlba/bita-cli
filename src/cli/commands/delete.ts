@@ -8,29 +8,16 @@ import { promptConfirm } from '../prompt.ts'
 import { inTransaction } from '../../db/open.ts'
 import { deleteEntry, findEntryWithProject, listEntriesForProject, listSegments } from '../../db/entries.ts'
 import { deleteProject, findProjectById, findProjectByName } from '../../db/projects.ts'
-import {
-  CONFIG_PATH,
-  readConfig,
-  unsetProjectMapping,
-  unsetScopeMapping,
-  type AppConfig,
-} from '../../state/config.ts'
-import { findDocForEntry, listDocsForEntry } from '../../db/docs.ts'
+import { CONFIG_PATH, readConfig, unsetScopeMapping, type AppConfig } from '../../state/config.ts'
 import { listTouches } from '../../db/touches.ts'
-import { resolveDocPath } from '../../docs/paths.ts'
-import { removeDocument } from '../../docs/store.ts'
-import { commitDocs } from '../../docs/git.ts'
 import { enrichEntry } from '../../domain/enrich.ts'
 import { formatDuration } from '../../domain/duration.ts'
-import { pagesOfEntry } from '../../db/page-links.ts'
 import { emitHooks } from '../../hooks/emit.ts'
 import type { HookPayload } from '../../hooks/hooks.ts'
 
 const OPTIONS = {
   ids: { type: 'string' as const },
-  force: { type: 'boolean' as const, default: false },
   yes: { type: 'boolean' as const, default: false },
-  'keep-doc': { type: 'boolean' as const, default: false },
   'dry-run': { type: 'boolean' as const, default: false },
 }
 
@@ -38,12 +25,9 @@ export interface DeletionTarget {
   id: number
   description: string
   projectName: string | null
-  issueKey: string | null
-  registered: boolean
   localDay: string
   durationSeconds: number
   durationHuman: string
-  docPaths: string[]
   touchedCount: number
 }
 
@@ -51,22 +35,17 @@ export interface PlanContext {
   db: DatabaseSync
   timezone: string
   now: Date
-  docsRoot: string
 }
 
 export interface DeletionPlan {
   targets: DeletionTarget[]
   missing: number[]
   running: number[]
-  registered: DeletionTarget[]
   merged: { id: number; mergedInto: number }[]
 }
 
 export interface DeletionOutcome {
   deleted: DeletionTarget[]
-  docsRemoved: string[]
-  docsKept: string[]
-  docsOrphaned: string[]
 }
 
 export function readIds(args: ParsedArgs): number[] {
@@ -87,11 +66,10 @@ export function readIds(args: ParsedArgs): number[] {
   return ids
 }
 
-export function planDeletions(ctx: PlanContext, ids: number[], force: boolean): DeletionPlan {
+export function planDeletions(ctx: PlanContext, ids: number[]): DeletionPlan {
   const targets: DeletionTarget[] = []
   const missing: number[] = []
   const running: number[] = []
-  const registered: DeletionTarget[] = []
   const merged: { id: number; mergedInto: number }[] = []
 
   for (const id of ids) {
@@ -119,25 +97,16 @@ export function planDeletions(ctx: PlanContext, ids: number[], force: boolean): 
       id: row.id,
       description: enriched.description,
       projectName: row.projectName,
-      issueKey: row.issueKey,
-      registered: row.registered,
       localDay: enriched.localDay,
       durationSeconds,
       durationHuman: formatDuration(durationSeconds),
-      docPaths: listDocsForEntry(ctx.db, row.id).map((doc) =>
-        resolveDocPath(ctx.docsRoot, doc.relPath),
-      ),
       touchedCount: listTouches(ctx.db, row.id).length,
     }
 
-    if (row.registered && !force) {
-      registered.push(target)
-      continue
-    }
     targets.push(target)
   }
 
-  return { targets, missing, running, registered, merged }
+  return { targets, missing, running, merged }
 }
 
 export function assertPlanIsSafe(plan: DeletionPlan): void {
@@ -161,59 +130,16 @@ export function assertPlanIsSafe(plan: DeletionPlan): void {
       `bita cancel ${plan.running[0]} discards a running timer; bita stop records it first.`,
     )
   }
-  if (plan.registered.length > 0) {
-    const ids = plan.registered.map((target) => `#${target.id} (${target.issueKey ?? 'linked'})`)
-    throw new ConflictError(
-      `${ids.join(', ')} already reached Jira.`,
-      'ENTRY_REGISTERED',
-      'The worklog stays in Jira and has to be removed by hand there. Pass --force to delete the local entry anyway.',
-    )
-  }
 }
 
-export async function applyDeletions(
-  db: DatabaseSync,
-  targets: DeletionTarget[],
-  keepDoc: boolean,
-  docsRoot?: string,
-): Promise<DeletionOutcome> {
+export function applyDeletions(db: DatabaseSync, targets: DeletionTarget[]): DeletionOutcome {
   const deleted: DeletionTarget[] = []
-
   inTransaction(db, () => {
     for (const target of targets) {
       if (deleteEntry(db, target.id)) deleted.push(target)
     }
   })
-
-  const docsRemoved: string[] = []
-  const docsKept: string[] = []
-  const docsOrphaned: string[] = []
-
-  for (const target of deleted) {
-    for (const path of target.docPaths) {
-      if (keepDoc) {
-        docsKept.push(path)
-        continue
-      }
-      try {
-        if (await removeDocument(path)) docsRemoved.push(path)
-        else docsOrphaned.push(path)
-      } catch {
-        docsOrphaned.push(path)
-      }
-    }
-  }
-
-  if (docsRoot !== undefined && docsRemoved.length > 0) {
-    await commitDocs(docsRoot, docsRemoved, {
-      source: 'note',
-      subject: `docs: remove the documents of ${deleted.length === 1 ? 'a deleted entry' : `${deleted.length} deleted entries`}`,
-      entryId: deleted.length === 1 ? (deleted[0]?.id ?? null) : null,
-      reason: 'entry deleted',
-    })
-  }
-
-  return { deleted, docsRemoved, docsKept, docsOrphaned }
+  return { deleted }
 }
 
 function deletionPayloads(ctx: LocalContext, targets: DeletionTarget[]): HookPayload[] {
@@ -221,13 +147,7 @@ function deletionPayloads(ctx: LocalContext, targets: DeletionTarget[]): HookPay
   for (const target of targets) {
     const row = findEntryWithProject(ctx.db, target.id)
     if (!row) continue
-    const note = findDocForEntry(ctx.db, target.id)
-    payloads.push({
-      event: 'delete',
-      entry: enrichEntry(row, ctx.timezone, ctx.now),
-      docPath: note ? resolveDocPath(ctx.docsRoot, note.relPath) : null,
-      pageIds: pagesOfEntry(ctx.db, target.id).map((link) => link.pageId),
-    })
+    payloads.push({ event: 'delete', entry: enrichEntry(row, ctx.timezone, ctx.now), docPath: null })
   }
   return payloads
 }
@@ -244,8 +164,6 @@ function renderPlan(targets: DeletionTarget[]): string {
       { header: 'PROJECT' },
       { header: 'DESCRIPTION' },
       { header: 'ELAPSED', align: 'right' },
-      { header: 'JIRA' },
-      { header: 'DOCS', align: 'right' },
     ],
     targets.map((target) => [
       String(target.id),
@@ -253,8 +171,6 @@ function renderPlan(targets: DeletionTarget[]): string {
       target.projectName ?? '(no project)',
       describe(target),
       target.durationHuman,
-      target.issueKey ?? '',
-      String(target.docPaths.length),
     ]),
   )
 }
@@ -262,14 +178,12 @@ function renderPlan(targets: DeletionTarget[]): string {
 export async function runDelete(argv: string[]): Promise<number> {
   const args = parseCommandArgs(argv, OPTIONS, BASE_OPTIONS)
   const json = readBoolean(args, 'json')
-  const force = readBoolean(args, 'force')
-  const keepDoc = readBoolean(args, 'keep-doc')
   const dryRun = readBoolean(args, 'dry-run')
   const ids = readIds(args)
   const ctx = createLocalContext(args)
 
   try {
-    const plan = planDeletions(ctx, ids, force)
+    const plan = planDeletions(ctx, ids)
 
     if (dryRun) {
       if (json) {
@@ -277,12 +191,8 @@ export async function runDelete(argv: string[]): Promise<number> {
           successEnvelope('delete', plan.targets, {
             dryRun: true,
             wouldDelete: plan.targets.length,
-            wouldRemoveDocs: keepDoc
-              ? 0
-              : plan.targets.reduce((sum, target) => sum + target.docPaths.length, 0),
             missing: plan.missing,
             running: plan.running,
-            heldBack: plan.registered.map((target) => target.id),
           }),
         )
         return 0
@@ -291,9 +201,6 @@ export async function runDelete(argv: string[]): Promise<number> {
       if (plan.targets.length > 0) writeOut(renderPlan(plan.targets))
       if (plan.missing.length > 0) writeOut(`No entry with id ${plan.missing.join(', ')}.`)
       for (const id of plan.running) writeOut(`#${id} is running; bita cancel or bita stop it first.`)
-      for (const target of plan.registered) {
-        writeOut(`#${target.id} reached ${target.issueKey ?? 'Jira'}; only --force would delete it.`)
-      }
       writeOut('')
       writeOut('Nothing was deleted: --dry-run.')
       return 0
@@ -313,10 +220,6 @@ export async function runDelete(argv: string[]): Promise<number> {
       const total = plan.targets.reduce((sum, target) => sum + target.durationSeconds, 0)
       writeErr('')
       writeErr(`This removes ${plan.targets.length} entries and ${total} seconds of tracked time.`)
-      if (!keepDoc) {
-        const docs = plan.targets.reduce((sum, target) => sum + target.docPaths.length, 0)
-        if (docs > 0) writeErr(`${docs} documents go with them. Keep them with --keep-doc.`)
-      }
       if (!(await promptConfirm('Delete them?'))) {
         writeOut('Nothing was deleted.')
         return 0
@@ -324,24 +227,17 @@ export async function runDelete(argv: string[]): Promise<number> {
     }
 
     const payloads = deletionPayloads(ctx, plan.targets)
-    const outcome = await applyDeletions(ctx.db, plan.targets, keepDoc, ctx.docsRoot)
+    const outcome = applyDeletions(ctx.db, plan.targets)
     const deletedIds = new Set(outcome.deleted.map((target) => target.id))
-    const kept = new Set(outcome.docsKept)
     const hooksFired = await emitHooks(
       ctx,
-      payloads
-        .filter((payload) => deletedIds.has(payload.entry.id))
-        .map((payload) => ({ ...payload, docPath: payload.docPath !== null && kept.has(payload.docPath) ? payload.docPath : null })),
+      payloads.filter((payload) => deletedIds.has(payload.entry.id)),
     )
 
     if (json) {
       writeJson(
         successEnvelope('delete', outcome.deleted, {
           deleted: outcome.deleted.length,
-          docsRemoved: outcome.docsRemoved,
-          docsKept: outcome.docsKept,
-          docsOrphaned: outcome.docsOrphaned,
-          forced: force,
           hooksFired,
         }),
       )
@@ -350,11 +246,6 @@ export async function runDelete(argv: string[]): Promise<number> {
 
     for (const target of outcome.deleted) {
       writeOut(`Deleted #${target.id}: ${describe(target)} (${target.durationHuman} lost)`)
-    }
-    for (const path of outcome.docsRemoved) writeOut(`  Document removed: ${path}`)
-    for (const path of outcome.docsKept) writeOut(`  Document kept: ${path}`)
-    for (const path of outcome.docsOrphaned) {
-      writeErr(`  Document left behind, remove it by hand: ${path}`)
     }
     return 0
   } finally {
@@ -367,9 +258,7 @@ export interface ProjectDeletionPlan {
   name: string
   entryIds: number[]
   runningIds: number[]
-  registeredIds: number[]
   scopeSlugs: string[]
-  mapped: boolean
 }
 
 export function planProjectDeletion(
@@ -387,11 +276,9 @@ export function planProjectDeletion(
     name: project.name,
     entryIds: entries.map((entry) => entry.id),
     runningIds: entries.filter((entry) => entry.stoppedAt === null).map((entry) => entry.id),
-    registeredIds: entries.filter((entry) => entry.registered).map((entry) => entry.id),
     scopeSlugs: Object.entries(config.scopeMapping)
       .filter(([, mapping]) => mapping.projectId === id)
       .map(([slug]) => slug),
-    mapped: String(id) in config.projectMapping,
   }
 }
 
@@ -417,17 +304,16 @@ export async function applyProjectDeletion(
   db: DatabaseSync,
   plan: ProjectDeletionPlan,
   configPath = CONFIG_PATH,
-): Promise<{ removed: boolean; scopeSlugs: string[]; mappingRemoved: boolean }> {
+): Promise<{ removed: boolean; scopeSlugs: string[] }> {
   const removed = deleteProject(db, plan.id)
-  if (!removed) return { removed, scopeSlugs: [], mappingRemoved: false }
+  if (!removed) return { removed, scopeSlugs: [] }
 
   const scopeSlugs: string[] = []
   for (const slug of plan.scopeSlugs) {
     if (await unsetScopeMapping(slug, configPath)) scopeSlugs.push(slug)
   }
-  const mappingRemoved = await unsetProjectMapping(plan.id, configPath)
 
-  return { removed, scopeSlugs, mappingRemoved }
+  return { removed, scopeSlugs }
 }
 
 function blockerFor(plan: ProjectDeletionPlan, force: boolean): string | null {
@@ -466,7 +352,6 @@ export async function runProjectDelete(args: ParsedArgs, rest: string[]): Promis
       writeOut(`Would delete project ${plan.id}: ${plan.name}`)
       writeOut(`  entries left without a project: ${plan.entryIds.length}`)
       writeOut(`  scope mappings dropped: ${plan.scopeSlugs.join(', ') || 'none'}`)
-      writeOut(`  jira mapping dropped: ${plan.mapped ? 'yes' : 'no'}`)
       if (blocked) writeOut(`  it would refuse: ${blocked}`)
       return 0
     }
@@ -484,7 +369,6 @@ export async function runProjectDelete(args: ParsedArgs, rest: string[]): Promis
       writeErr(`Project ${plan.id}: ${plan.name}`)
       writeErr(`  ${plan.entryIds.length} entries would be left without a project`)
       if (plan.scopeSlugs.length > 0) writeErr(`  scope mappings dropped: ${plan.scopeSlugs.join(', ')}`)
-      if (plan.mapped) writeErr('  its Jira mapping and cached stories go too')
       if (!(await promptConfirm('Delete it?'))) {
         writeOut('Nothing was deleted.')
         return 0
@@ -503,7 +387,6 @@ export async function runProjectDelete(args: ParsedArgs, rest: string[]): Promis
       writeOut(`  ${plan.entryIds.length} entries kept, now without a project`)
     }
     for (const slug of outcome.scopeSlugs) writeOut(`  Scope mapping dropped: ${slug}`)
-    if (outcome.mappingRemoved) writeOut('  Jira mapping and cached stories dropped')
     return 0
   } finally {
     ctx.db.close()

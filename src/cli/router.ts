@@ -1,159 +1,91 @@
-import { UsageError } from '../errors.ts'
+import { UnknownCommandError, UsageError } from '../errors.ts'
 import { runProjects } from './commands/catalog.ts'
 import { runProject } from './commands/project.ts'
 import { runEntries } from './commands/entries.ts'
-import { runSummary } from './commands/summary.ts'
-import { runMap } from './commands/map.ts'
-import { runConfig } from './commands/config.ts'
 import { runRepo } from './commands/repo.ts'
 import { runScope } from './commands/scope.ts'
 import { runAmend } from './commands/amend.ts'
 import { runDelete } from './commands/delete.ts'
-import { runDocs } from './commands/docs.ts'
-import { runNote } from './commands/note.ts'
-import { runNotes } from './commands/notes.ts'
 import { runHook } from './commands/hook.ts'
 import { runHooks } from './commands/hooks.ts'
-import { runLink } from './commands/link.ts'
 import { runMerge } from './commands/merge.ts'
-import { runBacklog } from './commands/backlog.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
-import { DELEGATED_COMMANDS, tryDelegate } from './delegate.ts'
 
-export const VERSION = '0.18.1'
+export const VERSION = '1.0.0'
+
+export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
+  jira: 'Jira lives in atl now. Use atl jira … (atl jira --help).',
+  confluence: 'Confluence lives in atl now (atl confluence …); page sync lives in inkwell (inkwell confluence …).',
+  atlassian: 'Atlassian sites live in atl now. Use atl site … (atl site import --from-bita copies the old ones).',
+  docs: 'Documents live in inkwell now. Use inkwell … (inkwell page, inkwell note, inkwell search).',
+  backlog: 'The backlog lives in inkwell now. Use inkwell backlog ….',
+  diagrams: 'Diagrams live in inkwell now. Use inkwell diagrams ….',
+  meeting: 'Meetings live in recap now. Use recap … (the minutes PDF: inkwell export meeting …).',
+  note: 'Entry notes live in inkwell now. Use inkwell note … (inkwell note save <entryId> --section "…" --md -).',
+  notes: 'Entry notes live in inkwell now. Use inkwell note … (inkwell migrate notes --from-bita copies the old ones).',
+  summary: 'Grouping the time for Jira lives in tally now. Use tally summary.',
+  groups: 'Grouping the time for Jira lives in tally now. Use tally groups.',
+  map: 'Jira mappings live in tally now. Use tally map ….',
+  link: 'Marking entries as sent to Jira lives in tally now. Use tally link ….',
+  config: 'The Jira configuration lives in tally now. Use tally config ….',
+  app: 'bita no longer installs the desktop app. Download Den from https://github.com/KikeDeAlba/bita-desktop/releases/latest',
+}
+
+const MOVED_TIMER_FLAGS: Readonly<Record<string, string>> = {
+  '--did': 'Write what happened in the entry note with inkwell: inkwell note save <entryId> --section "…" --md -',
+  '--page': 'Pages live in inkwell now: inkwell page link <pageId> --entry <entryId>',
+  '--page-new': 'Pages live in inkwell now: inkwell page new "<title>", then inkwell page link <pageId> --entry <entryId>',
+  '--note-md': 'Entry notes live in inkwell now: inkwell note save <entryId> --section "…" --md <file>',
+  '--note-json': 'Entry notes live in inkwell now: inkwell note save <entryId> --section "…" --md <file>',
+  '--note-file': 'Entry notes live in inkwell now: inkwell note save <entryId> --section "…" --md <file>',
+}
+
+const TIMER_COMMANDS = new Set(['start', 'stop', 'log', 'amend', 'cancel', 'discard'])
 
 const HELP = `bita ${VERSION}
 
+bita keeps the time and nothing else. Documents: inkwell. Jira hours: tally.
+Jira and Confluence: atl. Meetings: recap.
+
 Usage: bita <command> [options]
 
-Tracking:
+Timers:
   start ["<title>"]          Start a timer, blank or titled; several may run at once
-  ls                         Show every running timer
+  ls                         Show every running timer (also: current, running)
   stop [id]                  Stop one timer (--last, --all, or pick when ambiguous)
-  cancel [id]                Discard a running timer without recording it
+  cancel [id]                Discard a running timer without recording it (also: discard)
   log "<title>"              Record a block that already happened
-  amend <id|--draft>         Fill in the title, project or document of an entry
-  delete <ids...>            Remove entries that should never have been recorded
-  merge <ids...>             Fold several pending entries into one, keeping every block
-  note path <id> --create    Where the entry's document lives, creating it
-  note save <id>             Record the document after editing it
-  note get|ls <id>           Read the document, or list the ones an entry has
-  notes migrate              Turn the legacy NDJSON notes into documents
-  link <ids...> --issue K    Mark entries as registered in a Jira issue (--force for a project outside Jira)
+  amend <id|--draft>         Set the title, project or kind of an entry
+  delete <ids...>            Remove entries that should never have been recorded (also: rm)
+  merge <ids...>             Fold several entries into one, keeping every block
 
-Backlog (pending work and findings, kept out of the pages):
-  backlog ls                 Open items across projects (--project, --page, --kind, --status)
-  backlog add --kind K       Record a pending item or a finding (--title, --md, --page, --entry)
-  backlog resolve|reopen <key> Close an item, like STI-14 (--resolution "..."), or open it again
-  backlog edit|rm <key>      Change or remove an item (edit --project moves it and gives it that project's key)
-  backlog extract            Move the pending and findings sections out of the pages (--dry-run)
+Entries:
+  entries [preset]           List time entries (--from, --to, --last-days)
+  entries get <id>           One entry with its blocks
 
-Atlassian sites (REST API, token in the system credential store under <site>|<email>):
-  atlassian site add         Add a site: --site URL --email E (asks for the token; --token-stdin without a terminal)
-  atlassian site ls          Sites, whether the token is stored, and which projects use them (--check hits the network)
-  atlassian site test <site> Check Jira and Confluence with the stored token
-  atlassian site rm <site>   Forget the site and its token (--force when a project uses it)
-  project atlassian <p>      --site S|none, --via mcp|cli, --confluence URL|SPACEKEY|none, --pull on|off, --push on|off
-  project show <p>           A project and its Atlassian settings
-
-Jira (every command takes --site; default: the project's site, then the first):
-  jira myself | jira project ls [--query Q]
-  jira issue get KEY         Summary, status, parent, description as markdown
-  jira issue create --project KEY --type T --summary S [--description-file F] [--parent KEY] [--field k=v ...]
-  jira issue edit KEY        --summary, --description[-file], --field k=v
-  jira issue transitions KEY | jira issue transition KEY --to NAME|ID
-  jira issue search --jql Q [--limit N]
-  jira issue createmeta --project KEY [--type T]
-  jira worklog add KEY --started ISO --seconds N [--comment S]
-  jira comment add KEY --body S|--body-file F
-  jira comment ls KEY        Comments with id, author, date and body as markdown
-  jira comment rm KEY ID     Delete one comment
-  jira attach KEY <files...> Upload files to the issue as attachments
-  jira link --from KEY --to KEY --type NAME
-
-Meetings (recorded with recap):
-  meeting export <entryId>   Print the meeting minutes to PDF with Chrome (--out FILE; default ~/Downloads/minuta-<day>-<title>.pdf)
-
-Confluence (every command takes --site):
-  confluence login           Alias of "atlassian site add"
-  confluence status|logout   Check the login, or forget the token
-  confluence attach <id> <files...>   Upload or replace attachments on a Confluence page
-  confluence publish-diagrams <pageId> --to <id>   Render a page's diagrams and upload PNG + source
-  confluence page get <id> [--markdown]
-  confluence page create --space KEY|--parent ID --title T (--file F|--body S)
-  confluence page update <id> (--file F|--body S) [--title T] [--message M]   Markdown; --storage sends it as is
-  confluence page search --cql Q | confluence page children <id>
-  confluence sync <project>|--all [--dry-run]   Mirror the page tree with its Confluence page or space
-  confluence sync status <project>              Each tied page and which way it would go (--offline)
-  confluence conflict ls [project] | conflict resolve <pageId> --keep local|remote|both
-
-Documents:
-  docs tree [--months]       Projects with their document and entry counts
-  docs tree --pages          The same, plus the page tree of every space
-  docs ls [--project X]      Entries and their documents, newest first
-  docs show <id|--path P>    One document: markdown, front matter, sections
-  docs search "<text>"       Search every document, with snippets
-  docs search "<text>" --pages  Search by page: its markdown plus the notes of its entries
-  docs page ls [--tree]      Pages, flat or as the tree
-  docs page show <id>        One page: outline, tasks, work log, subpages
-  docs page new "<title>"    A page in a space, or under --parent
-  docs page write <id>       Write the body, or one --section, from --md
-  docs page rename <id> "<t>"
-  docs page move <id> [--parent <id|->] [--project X] [--position N]
-  docs page link <id>        Tie entries or Jira issues to the page
-  docs page unlink <id>      Untie them
-  docs page ref add <id>     Record a link the page relates to (--url, --title, --kind)
-  docs page ref ls|rm <id>   List the page's links, or drop one (--url)
-  docs page asset path <id> <file>  Where a page's asset lives (--create makes the folder)
-  docs diagrams ls <id>      The page's mermaid and draw.io diagrams, and whether they are rendered
-  docs diagrams render <id>  Render them to PNG next to the page (--force redraws all)
-  docs page rm <id>          Forget the page; the .md stays on disk
-  docs page history <id>     Every committed version of the page, with where it came from (--limit N)
-  docs page show <id> --rev <sha>   The page as it was at that revision
-  docs page diff <id> [<sha>]       What changed: uncommitted edits, or what that revision changed
-  docs page restore <id> <sha>      Write that revision back as the current page
-
-Docs history (the docs root is a local git repository; every bita write is a commit on main):
-  docs git init              Start the history, committing what is there (also run by setup and the first write)
-  docs status                Files edited outside bita and not committed yet
-  docs normalize             Rewrite documents and database text in Unicode NFC (--dry-run)
-  docs commit [<path>...]    Commit them (all of them without paths; --message M)
-  docs propose --branch B <pageId> (--md F|--body S) [--section H] --reason R --source meeting:<id>|manual
-                             Commit a change to a branch without touching the files on disk
-  docs branch ls             Proposal branches and their commits
-  docs branch diff <b> [--commit <sha>]   The diff of each proposal
-  docs branch apply <b> --commit <sha>    Merge one proposal into main (fails with MERGE_CONFLICT if the page moved on)
-  docs branch drop <b>       Delete the branch
-  docs migrate [--yes]       Turn every entry document into a page
-  docs migrate --undo        Put the corpus back as it was
-
-  setup                      Register bita and install the integration for Claude Code, OpenCode, Codex and Gemini CLI
-  capabilities               What this bita offers to the other tools (--json)
-  doctor                     Which sibling tools (atl, inkwell, recap) kit found, and what bita hands over to them
-
-Reporting:
-  entries [preset]           List time entries
-  entries get <id>           One entry with its note as markdown
-  summary [preset]           Group entries into Jira-ready tasks
-  projects                   List projects and their Jira mapping
-  project add "<name>"       Create a project (also rename, archive, delete)
-  project key <project> <KEY>  Change the short key that prefixes its backlog items
-  project jira <project> on|off  Whether its time goes to Jira; off keeps it tracked but apart
-
-Configuration:
-  map list|set|unset|story   Map projects to Jira projects, parents and stories
-  repo init [path]           Create a project for a repository and map it
-  repo show                  Where am I, and which project resolves here
-  scope list|set|unset|which Map a path prefix to a project; the longest one wins
+Projects:
+  projects                   List projects (--all includes archived ones)
+  project add "<name>"       Create a project (--client NAME)
+  project show <project>     One project
+  project rename <id> "<n>"  Rename it
+  project archive <id>       Hide it (--activate brings it back)
+  project delete <project>   Delete it (--force, --yes, --dry-run)
   project repo ls|add|rm     Local repositories of a project: ls [--project P], add <path>, rm <path>
   project repo suggest <id>  Repositories behind the files an entry touched, and which are mapped
-  config get|set-jira        Inspect or set the local configuration
-  hook session-start         Emit the Claude Code SessionStart context
-  hook codex|gemini          Adapt a Codex or Gemini CLI lifecycle event from stdin
+  repo show                  Where am I, and which project resolves here
+  repo init [path]           Create a project for a repository and map it (--name, --client, --scope)
+  scope list|set|unset|which Map a path prefix to a project; the longest one wins
+
+Integration:
+  setup                      Register bita and install the integration for Claude Code, OpenCode, Codex and Gemini CLI
+  capabilities               What this bita offers to the other tools (--json)
+  doctor                     Which sibling tools (inkwell, tally, atl, recap) kit found
   hooks [list]               Commands run on start, stop, cancel, amend, delete and merge, plus the installed tools subscribed to them
   hooks add --on E -- CMD    Register one (see Hooks options)
   hooks remove N             Remove hook number N
+  hook session-start|prompt-submit|checkpoint|touched|codex|gemini
+                             Agent lifecycle hooks (installed by setup)
 
 Range presets:
   today, yesterday, week, last-week, month, last-month
@@ -163,20 +95,8 @@ Common options:
   --from YYYY-MM-DD          Range start (inclusive)
   --to YYYY-MM-DD            Range end (inclusive)
   --last-days N              Rolling window ending today
-  --pending                  Only entries not yet registered in Jira
-  --registered               Only entries already registered in Jira
-  --include-running          Count entries whose timer is still running
   --timezone TZ              Override the timezone
   --db-path FILE             Use this database instead of the default
-  --docs-dir DIR             Where the documents live (default: beside the database)
-
-Summary options:
-  --max-task-hours N         Cap per task before splitting (default 8)
-  --estimate-step-minutes N  Round the original estimate up to this step (default 30)
-  --case-insensitive         Group descriptions ignoring case and accents
-  --no-notes                 Skip the documents altogether
-  --notes-mode MODE          inline, path or both (default: both)
-  --notes-budget-kb N        Stop inlining documents past this much (default: 256)
 
 Timer options:
   --project ID|NAME          Project; otherwise inferred from the repository
@@ -185,22 +105,19 @@ Timer options:
   --all                      stop or cancel every running timer
   --last                     stop or cancel the most recently started one
   --require-running          stop fails when nothing is running
+  --file PATH                With stop or log, record a file the work touched (repeatable)
 
 Log options:
   --from HH:MM               When the block started (required)
   --to HH:MM                 When it ended
   --for 1h30m                How long it lasted, instead of --to
 
-Project options:
-  --name NAME                With "repo init", the project name (default: the repo folder)
-  --client NAME              Client the project belongs to
-  --activate                 With "project archive", bring it back instead
-  --all                      With "projects", include archived ones
-  --force                    With "project delete", accept leaving its entries orphaned
-  --yes / --dry-run          With "project delete", as in delete
-  --project ID|NAME          With "project repo", the project (add infers it from the repository)
-  --source stop|manual       With "project repo add", who mapped it (default: manual)
-  --history                  With "project repo suggest --project P", every past entry of the project
+Amend options:
+  --draft                    Target the single running draft
+  --title "..."              Set the title
+  --project ID|NAME          Set the project
+  --kind KIND|none           Set or clear the kind
+                             Any change fires the amend event
 
 Merge options:
   --into ID                  The entry that survives (default: the oldest)
@@ -208,42 +125,10 @@ Merge options:
   --project ID|NAME          Project of the merged entry, required when they differ
   --dry-run                  Show what would be merged, without writing
 
-Amend options:
-  --draft                    Target the single running draft
-  --title "..."              Set the title
-  --project ID|NAME          Set the project
-  --kind KIND|none           Set or clear the kind; a change fires the amend hooks
-  --note-md FILE             Seed a section of the document from a markdown file
-
-Map options:
-  --parent KEY-123           With "map set", send every task under this epic
-  --no-epic                  With "map set", point at the board and pick the epic on every run
-  --issue-type NAME          With "map set", the issue type of the work
-  --epic KEY-123             With "map story", the epic the story sits under
-  --no-epic                  With "map story", a story without an epic
-
-Link options:
-  --issue KEY                The Jira issue the entries were written to
-  --ids A,B,C                Entry ids, as an alternative to positionals
-  --unlink                   Undo the link, putting the entries back to pending
-
 Delete options:
   --ids A,B,C                Entry ids, as an alternative to positionals
   --dry-run                  Show what would go without deleting anything
   --yes                      Skip the confirmation (required without a terminal)
-  --keep-doc                 Leave the documents on disk
-  --force                    Delete even entries already registered in Jira
-
-Note options:
-  --create                   With "note path", write the skeleton if there is none
-  --raw                      With "note get", print the document and nothing else
-  --note-md FILE             Seed a section from a markdown file
-  --section "..."            Which section --note-md lands in (default: Qué se hizo)
-  --file / --command / --resource   Artifacts touched, repeatable
-
-  Notes migrate options:
-  --dry-run                  Show what would be written without writing it
-  --limit N                  Only the first N entries
 
 Hooks options:
   --on EVENTS                With "hooks add", comma list of start, stop, cancel, amend, delete, merge
@@ -259,10 +144,18 @@ Setup options:
   --agents-home DIR          Codex skills directory parent
   --gemini-home DIR          Directory that holds .gemini
   --no-settings              Skip Claude settings changes
-  --no-atlassian             Skip the Atlassian MCP for OpenCode, Codex and Gemini
   --no-register              Skip registering bita for the other tools
-  --no-docs-git              Skip starting the docs history
 `
+
+function assertNoMovedFlags(command: string, rest: readonly string[]): void {
+  if (!TIMER_COMMANDS.has(command)) return
+  for (const token of rest) {
+    if (token === '--') break
+    const flag = token.split('=')[0] ?? token
+    const hint = Object.hasOwn(MOVED_TIMER_FLAGS, flag) ? MOVED_TIMER_FLAGS[flag] : undefined
+    if (hint) throw new UsageError(`bita ${command} no longer takes ${flag}. ${hint}`)
+  }
+}
 
 export async function route(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
@@ -277,16 +170,16 @@ export async function route(argv: string[]): Promise<number> {
     return 0
   }
 
+  const moved = Object.hasOwn(MOVED_COMMANDS, command) ? MOVED_COMMANDS[command] : undefined
+  if (moved !== undefined) throw new UnknownCommandError(`"bita ${command}" is no longer part of bita, which only keeps the time.`, moved)
+
   const ownArgs = command === 'hooks' && rest.includes('--') ? rest.slice(0, rest.indexOf('--')) : rest
   if (ownArgs.includes('--help')) {
     writeOut(HELP)
     return 0
   }
 
-  if (DELEGATED_COMMANDS.has(command)) {
-    const delegated = await tryDelegate(argv)
-    if (delegated !== null) return delegated
-  }
+  assertNoMovedFlags(command, rest)
 
   switch (command) {
     case 'doctor':
@@ -297,13 +190,6 @@ export async function route(argv: string[]): Promise<number> {
       return runProject(rest)
     case 'entries':
       return runEntries(rest)
-    case 'summary':
-    case 'groups':
-      return runSummary(rest)
-    case 'map':
-      return runMap(rest)
-    case 'config':
-      return runConfig(rest)
     case 'repo':
       return runRepo(rest)
     case 'scope':
@@ -313,36 +199,16 @@ export async function route(argv: string[]): Promise<number> {
     case 'delete':
     case 'rm':
       return runDelete(rest)
-    case 'docs':
-      return runDocs(rest)
-    case 'app':
-      return (await import('./commands/app.ts')).runApp(rest)
     case 'setup':
       return (await import('./commands/setup.ts')).runSetup(rest)
     case 'capabilities':
       return (await import('./commands/capabilities.ts')).runCapabilities(rest)
-    case 'note':
-      return runNote(rest)
-    case 'notes':
-      return runNotes(rest)
     case 'hook':
       return runHook(rest)
     case 'hooks':
       return runHooks(rest)
-    case 'link':
-      return runLink(rest)
     case 'merge':
       return runMerge(rest)
-    case 'backlog':
-      return runBacklog(rest)
-    case 'confluence':
-      return (await import('./commands/confluence.ts')).runConfluence(rest)
-    case 'atlassian':
-      return (await import('./commands/atlassian.ts')).runAtlassian(rest)
-    case 'jira':
-      return (await import('./commands/jira.ts')).runJira(rest)
-    case 'meeting':
-      return (await import('./commands/meeting.ts')).runMeeting(rest)
     case 'start':
       return runStart(rest)
     case 'stop':
@@ -357,6 +223,6 @@ export async function route(argv: string[]): Promise<number> {
     case 'discard':
       return runCancel(rest)
     default:
-      throw new UsageError(`Unknown command "${command}". Run "bita --help" for the list.`)
+      throw new UnknownCommandError(`Unknown command "${command}".`, 'Run "bita --help" for the list.')
   }
 }

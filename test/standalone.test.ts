@@ -16,9 +16,20 @@ test('the core commands run from the sources without installed dependencies', ()
       ...process.env,
       BITA_DB_PATH: join(root, 'bita.db'),
       BITA_DOCS_DIR: join(root, 'docs'),
+      KIT_NO_EVENTS: '1',
       BITA_CONFIG_PATH: join(root, 'config.json'),
     }
-    for (const args of [['--version'], ['projects', '--json'], ['docs', 'tree', '--pages', '--json'], ['backlog', 'ls', '--json']]) {
+    const commands = [
+      ['--version'],
+      ['projects', '--json'],
+      ['start', 'standalone work', '--json'],
+      ['ls', '--json'],
+      ['stop', '--json'],
+      ['entries', 'today', '--json'],
+      ['capabilities', '--json'],
+      ['doctor', '--json'],
+    ]
+    for (const args of commands) {
       const run = spawnSync(process.execPath, [join(root, 'src/bin/bita.ts'), ...args], { cwd: root, env, encoding: 'utf8' })
       assert.equal(run.status, 0, `bita ${args.join(' ')} failed: ${run.stderr}`)
     }

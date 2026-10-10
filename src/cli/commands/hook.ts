@@ -1,12 +1,10 @@
 import { readConfig } from '../../state/config.ts'
 import { openDatabase } from '../../db/open.ts'
 import { databasePath } from '../../db/paths.ts'
-import { resolveTimezone } from '../../db/settings.ts'
+import { readSetting, resolveTimezone, writeSetting } from '../../db/settings.ts'
 import { listRunning, listRunningDrafts } from '../../db/entries.ts'
+import { queryAll, queryOne } from '../../db/query.ts'
 import { runTouched } from '../hooks/touched.ts'
-import { runRefHook } from '../hooks/ref.ts'
-import { pagesOfEntry } from '../../db/page-links.ts'
-import { checkpointStatus } from '../../db/docs.ts'
 import { CHECKPOINT_STALE_MINUTES, CHECKPOINT_TOUCH_THRESHOLD } from '../../config/constants.ts'
 import { formatDuration } from '../../domain/duration.ts'
 import { enrichEntry } from '../../domain/enrich.ts'
@@ -21,15 +19,9 @@ const RULE = [
   '  bita start "<titulo corto>"',
   'No lo propongas para preguntas, lecturas, busquedas ni arreglos de una linea.',
   'Pueden correr varios cronometros a la vez: si empiezas algo distinto, arranca otro en vez de',
-  'parar el que hay.',
-  'Cada cronometro cuelga de una pagina, que documenta el estado actual y se escribe MIENTRAS se',
-  'trabaja, no al final:',
-  '  bita docs page show <pageId>                    -> lo que dice hoy',
-  '  bita docs page write <pageId> --md <archivo>     -> reescribirla',
-  'La pagina es un documento formal: nada de secciones Pendiente, Hallazgos ni Proximos pasos.',
-  'Lo que falta o lo que se descubrio de paso va al backlog de bita, nunca a Jira:',
-  '  bita backlog add --kind pending|finding --title "<una linea>"',
-  'Al terminar, actualiza la pagina y para con: bita stop <id> --did "<que paso>"',
+  'parar el que hay. Al terminar: bita stop <id>.',
+  'bita solo lleva el tiempo. Documentar el trabajo es de inkwell (inkwell note save <id>),',
+  'volcar las horas a Jira es de tally, y Jira o Confluence directos son de atl.',
 ].join('\n')
 
 async function runPromptSubmit(): Promise<string | undefined> {
@@ -53,8 +45,8 @@ async function runPromptSubmit(): Promise<string | undefined> {
       'antes de ponerte a explorar o a planear:',
       '  bita amend --draft --title "<titulo corto>" --project <nombre o id>',
       '',
-      'El titulo es la clave de agrupacion y el summary del issue de Jira: corto y',
-      'reconocible. Un repo NO es un proyecto: los proyectos son grupos con varios',
+      'El titulo es lo que identifica la entrada despues: corto y reconocible.',
+      'Un repo NO es un proyecto: los proyectos son grupos con varios',
       'repos dentro, asi que resuelve el proyecto por el grupo, no por el repo.',
       'Si el mensaje todavia no dice en que se trabaja, no inventes nada y sigue.',
     ].join('\n')
@@ -65,66 +57,64 @@ async function runPromptSubmit(): Promise<string | undefined> {
   }
 }
 
+const CHECKPOINT_KEY_PREFIX = 'checkpoint.entry.'
+
+function touchesSince(db: ReturnType<typeof openDatabase>, entryId: number, since: string): number {
+  return (
+    queryOne<{ total: number }>(
+      db.prepare('SELECT COUNT(*) AS total FROM entry_touches WHERE entry_id = ? AND first_seen_at > ?'),
+      entryId,
+      since,
+    )?.total ?? 0
+  )
+}
+
+function forgetStoppedCheckpoints(db: ReturnType<typeof openDatabase>, keep: readonly string[]): void {
+  const wanted = new Set(keep)
+  const stale = queryAll<{ key: string }>(db.prepare(`SELECT key FROM settings WHERE key LIKE '${CHECKPOINT_KEY_PREFIX}%'`))
+    .map((row) => row.key)
+    .filter((key) => !wanted.has(key))
+  if (stale.length === 0) return
+  db.prepare(`DELETE FROM settings WHERE key IN (${stale.map(() => '?').join(', ')})`).run(...stale)
+}
+
 function runCheckpoint(): string | undefined {
   const db = openDatabase(databasePath())
   try {
     const now = new Date()
     const timezone = resolveTimezone(db)
     const running = listRunning(db).filter((entry) => entry.description.trim().length > 0)
+    forgetStoppedCheckpoints(db, running.map((entry) => `${CHECKPOINT_KEY_PREFIX}${entry.id}`))
     if (running.length === 0) return undefined
 
-    const status = checkpointStatus(
-      db,
-      running.map((entry) => entry.id),
-    )
-
-    const stale = running.filter((entry) => {
-      const state = status.get(entry.id)
-      if (!state) return false
-      if (state.touchedSinceNote >= CHECKPOINT_TOUCH_THRESHOLD) return true
-      const since = state.lastNoteAt ?? entry.startedAt
-      return now.getTime() - Date.parse(since) >= CHECKPOINT_STALE_MINUTES * 60_000
+    const stale = running.flatMap((entry) => {
+      const since = readSetting(db, `${CHECKPOINT_KEY_PREFIX}${entry.id}`) ?? entry.startedAt
+      const touched = touchesSince(db, entry.id, since)
+      const minutes = (now.getTime() - Date.parse(since)) / 60_000
+      if (touched < CHECKPOINT_TOUCH_THRESHOLD && minutes < CHECKPOINT_STALE_MINUTES) return []
+      return [{ entry, since, touched }]
     })
-
     if (stale.length === 0) return undefined
 
-    const lines = stale.map((entry) => {
-      const state = status.get(entry.id)
-      const since = state?.lastNoteAt ?? entry.startedAt
+    for (const { entry } of stale) writeSetting(db, `${CHECKPOINT_KEY_PREFIX}${entry.id}`, now.toISOString())
+
+    const lines = stale.map(({ entry, since, touched }) => {
       const elapsed = formatDuration(Math.round((now.getTime() - Date.parse(since)) / 1000))
-      const touched = state?.touchedSinceNote ?? 0
       const files = touched === 1 ? '1 archivo tocado' : `${touched} archivos tocados`
       const enriched = enrichEntry(entry, timezone, now)
-      return `  #${entry.id} "${enriched.description}" lleva ${elapsed} y ${files} desde el ultimo checkpoint`
+      return `  #${entry.id} "${enriched.description}" lleva ${elapsed} y ${files} desde el ultimo aviso`
     })
 
-    const first = stale[0]
-    const firstPage = first === undefined ? undefined : pagesOfEntry(db, first.id)[0]?.pageId
-    const additionalContext = [
-      'Registro de tiempo (bita): hay trabajo sin documentar en un cronometro que corre.',
+    const first = stale[0]?.entry.id ?? '<id>'
+    return [
+      'Registro de tiempo (bita): un cronometro lleva rato corriendo.',
       ...lines,
       '',
-      'Si acabas de cerrar un paso, terminar una verificacion, cambiar de enfoque o encontrar algo',
-      'no obvio, escribe el checkpoint AHORA en la pagina del cronometro:',
-      ...(firstPage === undefined
-        ? [
-            `  bita note path ${first?.id ?? '<id>'} --create   -> la entrada aun no tiene pagina; su documento`,
-            `  bita note save ${first?.id ?? '<id>'}            -> cuando lo hayas editado`,
-          ]
-        : [
-            `  bita docs page show ${firstPage}                 -> lo que dice hoy`,
-            `  bita docs page write ${firstPage} --md <archivo> -> la pagina reescrita`,
-          ]),
-      '',
-      'A la seccion que toque, describiendo el estado actual. Un pendiente o un hallazgo no va a la',
-      'pagina: bita backlog add --kind pending|finding --title "<una linea>".',
-      'Documenta el resultado, no la edicion; los archivos tocados ya se registran solos.',
+      'Si acabas de cerrar un paso, terminar una verificacion o encontrar algo no obvio, dejalo',
+      `escrito en la nota de la entrada con inkwell: inkwell note save ${first} --section "Qué se hizo" --md -`,
+      `Si el trabajo ya termino, paralo: bita stop ${first}.`,
       'Si no hay nada que valga la pena contar, sigue sin escribir nada.',
-      'Escribelo como documentacion tecnica: nada de "se acordo con el usuario", "segun lo',
-      'solicitado", primera ni segunda persona. Esto acaba en Jira y Confluence, donde lo leeran otros.',
     ].join('\n')
-
-    return additionalContext
   } finally {
     db.close()
   }
@@ -177,15 +167,6 @@ export async function runHook(argv: string[]): Promise<number> {
       const flagIndex = argv.indexOf('--file')
       const file = flagIndex === -1 ? undefined : argv[flagIndex + 1]
       if (file) await runTouched(file)
-    } catch {
-      return 0
-    }
-    return 0
-  }
-
-  if (event === 'ref') {
-    try {
-      await runRefHook(await readStdin())
     } catch {
       return 0
     }
@@ -295,12 +276,6 @@ async function runAgentHook(events: Record<string, LifecycleEvent>): Promise<num
   }
 
   try {
-    await runRefHook(JSON.stringify({
-      cwd: stringValue(input.cwd),
-      tool_name: stringValue(input.tool_name),
-      tool_input: toolInput,
-      tool_response: input.tool_response,
-    }))
     const additionalContext = runCheckpoint()
     if (additionalContext) {
       process.stdout.write(

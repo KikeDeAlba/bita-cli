@@ -1,25 +1,13 @@
 export type EntrySource = 'timer' | 'manual' | 'import'
 
-export type AtlassianVia = 'mcp' | 'cli'
-
-export type ConfluenceKind = 'space' | 'page'
-
 export interface ProjectRow {
   id: number
   name: string
   key: string | null
   clientName: string | null
   active: boolean
-  jira: boolean
   externalId: number | null
   createdAt: string
-  atlassianSite: string | null
-  atlassianVia: AtlassianVia
-  confluenceRef: string | null
-  confluenceKind: ConfluenceKind | null
-  syncPull: boolean
-  syncPush: boolean
-  lastSyncAt: string | null
 }
 
 export interface EntryRow {
@@ -39,17 +27,7 @@ export interface EntryRow {
 
 export interface EntryWithProjectRow extends EntryRow {
   projectName: string | null
-  projectJira: boolean
   clientName: string | null
-  registered: boolean
-  issueKey: string | null
-}
-
-export interface JiraLinkRow {
-  entryId: number
-  issueKey: string | null
-  worklogId: string | null
-  linkedAt: string
 }
 
 export function toUtcIso(instant: string): string {

@@ -15,43 +15,51 @@ import {
   binCommand,
 } from './manifest.ts'
 
-export const ATLASSIAN_MCP_URL = 'https://mcp.atlassian.com/v2/mcp'
-
 export const CLAUDE_ALLOW = [
   'Bash(bita projects:*)',
   'Bash(bita project:*)',
   'Bash(bita entries:*)',
-  'Bash(bita summary:*)',
   'Bash(bita ls:*)',
   'Bash(bita current:*)',
   'Bash(bita start:*)',
   'Bash(bita stop:*)',
   'Bash(bita log:*)',
+  'Bash(bita repo:*)',
+  'Bash(bita hook:*)',
+  'Bash(bita amend:*)',
+  'Bash(bita merge:*)',
+  'Bash(bita scope list:*)',
+  'Bash(bita scope set:*)',
+  'Bash(bita scope unset:*)',
+  'Bash(bita scope which:*)',
+  'Bash(bita capabilities:*)',
+  'Bash(bita doctor:*)',
+  'Bash(bita --version)',
+]
+
+export const RETIRED_CLAUDE_ALLOW = [
+  'Bash(bita summary:*)',
   'Bash(bita link:*)',
   'Bash(bita note:*)',
   'Bash(bita notes:*)',
-  'Bash(bita repo:*)',
   'Bash(bita map list:*)',
   'Bash(bita map set:*)',
   'Bash(bita map unset:*)',
   'Bash(bita map story:*)',
   'Bash(bita config get:*)',
   'Bash(bita config set-jira:*)',
-  'Bash(bita hook:*)',
-  'Bash(bita amend:*)',
   'Bash(bita docs:*)',
   'Bash(bita backlog:*)',
-  'Bash(bita merge:*)',
   'Bash(bita confluence status:*)',
   'Bash(bita confluence attach:*)',
   'Bash(bita confluence publish-diagrams:*)',
-  'Bash(bita scope list:*)',
-  'Bash(bita scope set:*)',
-  'Bash(bita scope unset:*)',
-  'Bash(bita scope which:*)',
-  'Bash(bita capabilities:*)',
-  'Bash(bita --version)',
 ]
+
+export const RETIRED_COMMANDS = ['bita-check']
+
+export const RETIRED_CLAUDE_HOOKS: HookMap = {
+  PostToolUse: [{ matcher: 'mcp__.*Atlassian.*|mcp__.*Google_Drive.*', hooks: [{ type: 'command', command: 'bita hook ref', timeout: 10 }] }],
+}
 
 export const CLAUDE_ASK = ['Bash(bita cancel:*)']
 
@@ -75,7 +83,6 @@ export const CLAUDE_HOOKS: HookMap = {
         },
       ],
     },
-    { matcher: 'mcp__.*Atlassian.*|mcp__.*Google_Drive.*', hooks: [{ type: 'command', command: 'bita hook ref', timeout: 10 }] },
   ],
 }
 
@@ -117,7 +124,6 @@ export function opencodePluginSource(root: string): string {
 
 export interface IntegrationOptions {
   settings: boolean
-  atlassian: boolean
 }
 
 export function integration(root: string, options: IntegrationOptions): AgentIntegration {
@@ -129,13 +135,21 @@ export function integration(root: string, options: IntegrationOptions): AgentInt
   return {
     tool: TOOL_NAME,
     version: VERSION,
-    description: 'Time tracking that documents the work and sends it to Jira',
+    description: DESCRIPTION,
     skills: [{ name: TOOL_NAME, dir: join(root, 'skill') }],
     commands,
-    mcp: options.atlassian ? [{ name: 'atlassian', url: ATLASSIAN_MCP_URL }] : [],
     ...(options.settings ? { claude: { permissions: { allow: CLAUDE_ALLOW, ask: CLAUDE_ASK }, hooks: CLAUDE_HOOKS } } : {}),
     opencode: { plugins: [{ name: TOOL_NAME, file: opencodePluginSource(root) }] },
     codex: { hooks: CODEX_HOOKS },
     gemini: { hooks: GEMINI_HOOKS },
+  }
+}
+
+export function retiredIntegration(root: string, settings: boolean): AgentIntegration {
+  return {
+    tool: `${TOOL_NAME}-retired`,
+    version: VERSION,
+    commands: RETIRED_COMMANDS.map((name) => ({ name, file: join(root, 'commands', `${name}.md`) })),
+    ...(settings ? { claude: { permissions: { allow: RETIRED_CLAUDE_ALLOW }, hooks: RETIRED_CLAUDE_HOOKS } } : {}),
   }
 }

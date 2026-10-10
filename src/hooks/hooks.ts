@@ -21,6 +21,8 @@ export interface HookPayload {
   event: HookEvent
   entry: EnrichedTimeEntry
   previousKind?: string | null
+  previousTitle?: string
+  previousProjectId?: number | null
   docPath: string | null
   pageIds?: number[]
   mergedIds?: number[]
@@ -89,6 +91,8 @@ export function eventDocument(payload: HookPayload, target: HookTarget): Record<
     event: payload.event,
     entry: payload.entry,
     previousKind: payload.previousKind ?? null,
+    ...(payload.previousTitle !== undefined ? { previousTitle: payload.previousTitle } : {}),
+    ...(payload.previousProjectId !== undefined ? { previousProjectId: payload.previousProjectId } : {}),
     docPath: payload.docPath,
     pageIds: payload.pageIds ?? [],
     ...(payload.mergedIds ? { mergedIds: payload.mergedIds } : {}),

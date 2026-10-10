@@ -1,7 +1,6 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util'
 import { UsageError } from '../errors.ts'
 import { RANGE_PRESETS, type DateRangeInput, type RangePreset } from '../domain/date-range.ts'
-import type { RegistrationFilter } from '../domain/filter.ts'
 
 type OptionConfig = NonNullable<ParseArgsConfig['options']>
 
@@ -23,16 +22,9 @@ export const RANGE_OPTIONS: OptionConfig = {
   'last-days': { type: 'string' },
 }
 
-export const FILTER_OPTIONS: OptionConfig = {
-  pending: { type: 'boolean', default: false },
-  registered: { type: 'boolean', default: false },
-  'include-running': { type: 'boolean', default: false },
-}
-
 export const GLOBAL_OPTIONS: OptionConfig = {
   ...BASE_OPTIONS,
   ...RANGE_OPTIONS,
-  ...FILTER_OPTIONS,
 }
 
 export interface ParsedArgs {
@@ -119,25 +111,4 @@ export function readRangeInput(args: ParsedArgs): DateRangeInput {
     ...(to !== undefined ? { to } : {}),
     ...(lastDays !== undefined ? { lastDays } : {}),
   }
-}
-
-export function hasExplicitRange(args: ParsedArgs): boolean {
-  return (
-    readPreset(args) !== undefined ||
-    readString(args, 'from') !== undefined ||
-    readString(args, 'to') !== undefined ||
-    readInteger(args, 'last-days') !== undefined
-  )
-}
-
-export function readRegistrationFilter(args: ParsedArgs): RegistrationFilter {
-  const pending = readBoolean(args, 'pending')
-  const registered = readBoolean(args, 'registered')
-
-  if (pending && registered) {
-    throw new UsageError('--pending and --registered contradict each other; pass only one.')
-  }
-  if (pending) return 'pending'
-  if (registered) return 'registered'
-  return 'any'
 }

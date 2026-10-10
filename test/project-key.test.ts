@@ -4,8 +4,7 @@ import { test } from 'node:test'
 import { migrate, openMemoryDatabase, readSchemaVersion } from '../src/db/open.ts'
 import { LATEST_VERSION, MIGRATIONS } from '../src/db/schema.ts'
 import { deriveProjectKey, projectKeyCandidates } from '../src/db/project-keys.ts'
-import { findProjectById, insertProject, renameProject, setProjectKey } from '../src/db/projects.ts'
-import { findBacklogItemByRef, insertBacklogItem, isBacklogRef } from '../src/db/backlog.ts'
+import { findProjectById, insertProject, renameProject } from '../src/db/projects.ts'
 import { resolveProjectArg } from '../src/cli/project-arg.ts'
 
 const NOW = '2026-09-28T10:00:00.000Z'
@@ -43,27 +42,12 @@ test('a new project gets a key, and renaming it keeps the key', () => {
   db.close()
 })
 
-test('numbers backlog items per project and finds them by key, by #id and by id', () => {
+test('a project is found by its key as well as by id and name', () => {
   const db = openMemoryDatabase()
   const sti = insertProject(db, { name: 'Pharma STI', createdAt: NOW })
-  const rec = insertProject(db, { name: 'Recomendador', createdAt: NOW })
-  const first = insertBacklogItem(db, { projectId: sti.id, kind: 'pending', title: 'uno', now: NOW })
-  const other = insertBacklogItem(db, { projectId: rec.id, kind: 'finding', title: 'otro', now: NOW })
-  const second = insertBacklogItem(db, { projectId: sti.id, kind: 'finding', title: 'dos', now: NOW })
-
-  assert.equal(first.key, 'STI-1')
-  assert.equal(other.key, 'REC-1')
-  assert.equal(second.key, 'STI-2')
-  assert.equal(findBacklogItemByRef(db, 'sti-2')?.id, second.id)
-  assert.equal(findBacklogItemByRef(db, `#${other.id}`)?.id, other.id)
-  assert.equal(findBacklogItemByRef(db, String(first.id))?.id, first.id)
-  assert.equal(findBacklogItemByRef(db, 'STI-9'), undefined)
-  assert.ok(isBacklogRef('STI-14'))
-  assert.ok(!isBacklogRef('cierra STI-14'))
-
-  setProjectKey(db, sti.id, 'psti')
-  assert.equal(findBacklogItemByRef(db, 'PSTI-2')?.title, 'dos')
-  assert.equal(resolveProjectArg(db, 'PSTI').id, sti.id)
+  assert.equal(resolveProjectArg(db, 'sti').id, sti.id)
+  assert.equal(resolveProjectArg(db, String(sti.id)).id, sti.id)
+  assert.equal(resolveProjectArg(db, 'Pharma STI').id, sti.id)
   db.close()
 })
 
@@ -89,8 +73,7 @@ test('migrating a v7 database gives every project a key and numbers its items in
   assert.equal(readSchemaVersion(db), LATEST_VERSION)
   assert.equal(findProjectById(db, 20)?.key, 'STI')
   assert.equal(findProjectById(db, 10)?.key, 'STIR')
-  assert.equal(findBacklogItemByRef(db, 'STI-2')?.title, 'b')
-  assert.equal(findBacklogItemByRef(db, 'STIR-1')?.title, 'c')
+  assert.equal(db.prepare('SELECT COUNT(*) AS total FROM backlog_items').get()?.['total'], 3)
   assert.throws(() => db.prepare("UPDATE projects SET key = 'sti' WHERE id = 10").run(), /UNIQUE/)
   db.close()
 })

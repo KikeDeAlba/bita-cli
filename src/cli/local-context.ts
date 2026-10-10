@@ -1,7 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { openDatabase } from '../db/open.ts'
-import { databasePath } from '../db/paths.ts'
-import { docsRoot } from '../docs/paths.ts'
+import { databasePath, docsRoot } from '../db/paths.ts'
 import { resolveBeginningOfWeek, resolveTimezone } from '../db/settings.ts'
 import { readString, type ParsedArgs } from './args.ts'
 
