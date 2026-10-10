@@ -3,7 +3,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${BITA_TARGET:-claude}"
-NO_ATLASSIAN=0
 
 info() { printf '  %s\n' "$1"; }
 warn() { printf '  ! %s\n' "$1" >&2; }
@@ -66,7 +65,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --no-atlassian)
-      NO_ATLASSIAN=1
+      warn "--no-atlassian is ignored: bita no longer sets up the Atlassian MCP"
       shift
       ;;
     *)
@@ -113,8 +112,4 @@ fi
 
 echo
 echo "Integration"
-SETUP_ARGS=(--target "$TARGET")
-if [ "$NO_ATLASSIAN" -eq 1 ]; then
-  SETUP_ARGS+=(--no-atlassian)
-fi
-node "$REPO_ROOT/src/bin/bita.ts" setup "${SETUP_ARGS[@]}"
+node "$REPO_ROOT/src/bin/bita.ts" setup --target "$TARGET"

@@ -20,22 +20,15 @@ interface RawEntry {
 
 export interface RawEntryWithProject extends RawEntry {
   project_name: string | null
-  project_jira: number | null
   client_name: string | null
-  registered: number
-  issue_key: string | null
 }
 
 const SELECT_WITH_PROJECT = `
   SELECT e.*,
          p.name AS project_name,
-         p.jira AS project_jira,
-         p.client_name AS client_name,
-         j.entry_id IS NOT NULL AS registered,
-         j.issue_key AS issue_key
+         p.client_name AS client_name
   FROM entries e
   LEFT JOIN projects p ON p.id = e.project_id
-  LEFT JOIN jira_links j ON j.entry_id = e.id
 `
 
 function toEntry(raw: RawEntry): EntryRow {
@@ -59,10 +52,7 @@ export function toEntryWithProject(raw: RawEntryWithProject): EntryWithProjectRo
   return {
     ...toEntry(raw),
     projectName: raw.project_name,
-    projectJira: raw.project_jira === null ? true : toBoolean(raw.project_jira),
     clientName: raw.client_name,
-    registered: toBoolean(raw.registered),
-    issueKey: raw.issue_key,
   }
 }
 
@@ -150,18 +140,6 @@ export function listEntriesStartedBetween(
     fromUtc,
     toUtc,
   )
-  return raws.map(toEntryWithProject)
-}
-
-export function listPendingEntries(db: DatabaseSync, sinceUtc?: string): EntryWithProjectRow[] {
-  const clause = sinceUtc === undefined ? '' : 'AND e.started_at >= ?'
-  const statement = db.prepare(
-    `${SELECT_WITH_PROJECT} WHERE j.entry_id IS NULL ${clause} ORDER BY e.started_at`,
-  )
-  const raws =
-    sinceUtc === undefined
-      ? queryAll<RawEntryWithProject>(statement)
-      : queryAll<RawEntryWithProject>(statement, sinceUtc)
   return raws.map(toEntryWithProject)
 }
 

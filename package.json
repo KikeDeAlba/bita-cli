@@ -1,7 +1,7 @@
 {
   "name": "@kikedealba/bita",
-  "version": "0.18.1",
-  "description": "Registro de tiempo local que documenta el trabajo y lo vuelca a Jira, con integraciones para agentes de código.",
+  "version": "1.0.0",
+  "description": "Cronómetro local de trabajo: timers, entradas y proyectos, con integraciones para agentes de código.",
   "license": "MIT",
   "author": "Jesus Enrique De Alba Gaytan",
   "homepage": "https://github.com/KikeDeAlba/bita-cli#readme",
@@ -14,9 +14,9 @@
   },
   "keywords": [
     "time-tracking",
-    "jira",
+    "timer",
+    "timesheet",
     "worklog",
-    "documentation",
     "claude-code",
     "opencode",
     "codex",
@@ -34,7 +34,6 @@
   },
   "files": [
     "dist",
-    "assets",
     "skill",
     "commands",
     "scripts",
@@ -53,13 +52,9 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@types/turndown": "^5.0.6",
     "typescript": "^5.7.2"
   },
   "dependencies": {
-    "@kikedealba/kit": "^0.2.0",
-    "@mixmark-io/domino": "^2.2.0",
-    "marked": "^18.1.0",
-    "turndown": "^7.2.4"
+    "@kikedealba/kit": "^0.2.0"
   }
 }

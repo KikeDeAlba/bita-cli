@@ -27,7 +27,6 @@ bita amend --draft --title "<titulo corto>" --project <nombre o id>
 ```
 
 El hook `prompt-submit` te lo va a recordar en cada turno hasta que lo hagas.
-El documento de la entrada nace ahí, en ese mismo `amend`, no ahora.
 
 **Si `$ARGUMENTS` trae texto**, úsalo literal como título, sin reescribirlo, y
 arranca con él:
@@ -36,15 +35,7 @@ arranca con él:
 bita start "<título>"
 ```
 
-Cuelga el bloque de su página desde el principio, que es lo que evita
-reconciliarlo después:
-
-```
-bita start "<título>" --page <pageId>
-bita start "<título>" --page-new "<título de la página>"
-```
-
-**Si es una reunión**, márcala con su tipo para que se grabe:
+**Si es una reunión**, márcala con su tipo para que recap la grabe:
 `--kind remote-meeting` (Meet, Zoom, Teams, llamada) o `--kind in-person-meeting`
 (presencial, en sala, en oficina). Si no queda claro cuál, pregunta solo eso.
 
@@ -52,13 +43,9 @@ bita start "<título>" --page-new "<título de la página>"
 bita start "<título>" --kind remote-meeting
 ```
 
-**No escribas la página todavía**: se edita mientras el trabajo pasa, con
-`/bita-check`.
-
 En cualquiera de los dos casos, mira la lista de arriba antes: si ya hay un
 cronómetro con ese mismo título y proyecto, no arranques otro, dímelo. Si hay
 otros corriendo de otra cosa, arranca igual —bita admite varios a la vez— y
 menciónalo en una línea.
 
-Responde en una línea: el id, el título o que quedó en blanco, y la página a la
-que quedó colgado si la hay. Nada más.
+Responde en una línea: el id y el título, o que quedó en blanco. Nada más.

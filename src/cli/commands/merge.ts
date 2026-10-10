@@ -7,15 +7,11 @@ import { renderTable } from '../table.ts'
 import { resolveProjectArg } from '../project-arg.ts'
 import { inTransaction } from '../../db/open.ts'
 import { findEntryWithProject, listSegments } from '../../db/entries.ts'
-import { pagesOfEntry } from '../../db/page-links.ts'
-import { findPage } from '../../db/pages.ts'
 import { listTouches } from '../../db/touches.ts'
 import { writeMerge } from '../../db/merge.ts'
 import type { EntryWithProjectRow } from '../../db/rows.ts'
 import { enrichEntry, normalizeDescription } from '../../domain/enrich.ts'
 import { formatDuration } from '../../domain/duration.ts'
-import { findDocForEntry } from '../../db/docs.ts'
-import { resolveDocPath } from '../../docs/paths.ts'
 import { emitHooks } from '../../hooks/emit.ts'
 
 const OPTIONS = {
@@ -57,7 +53,6 @@ export interface MergePlan {
   projectId: number | null
   projectName: string | null
   segments: MergeSegment[]
-  pages: { pageId: number; title: string }[]
   touchedFiles: number
   totalSeconds: number
   totalHuman: string
@@ -95,13 +90,6 @@ function requireMergeable(db: DatabaseSync, id: number): EntryWithProjectRow {
   if (row.stoppedAt === null) {
     throw new ConflictError(`#${id} is still running.`, 'ENTRY_RUNNING', `bita stop ${id} first.`)
   }
-  if (row.registered) {
-    throw new ConflictError(
-      `#${id} already reached ${row.issueKey ?? 'Jira'}.`,
-      'ENTRY_REGISTERED',
-      'Only pending entries can be merged: the worklogs in Jira would no longer match.',
-    )
-  }
   return row
 }
 
@@ -112,16 +100,6 @@ export function planMerge(ctx: MergeContext, request: MergeRequest): MergePlan {
 
   const rows = ids.map((id) => requireMergeable(ctx.db, id))
   const segmentsOf = new Map(rows.map((row) => [row.id, listSegments(ctx.db, row.id)]))
-  for (const [id, segments] of segmentsOf) {
-    const registered = segments.find((segment) => segment.registered)
-    if (registered) {
-      throw new ConflictError(
-        `#${registered.id}, part of #${id}, already reached ${registered.issueKey ?? 'Jira'}.`,
-        'ENTRY_REGISTERED',
-        'Only pending entries can be merged: the worklogs in Jira would no longer match.',
-      )
-    }
-  }
 
   const chronological = [...rows].sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id - b.id)
   const target = request.intoId === undefined
@@ -172,13 +150,10 @@ export function planMerge(ctx: MergeContext, request: MergeRequest): MergePlan {
     }
   })
 
-  const pageIds = new Set<number>()
   const touched = new Set<string>()
   for (const row of rows) {
-    for (const link of pagesOfEntry(ctx.db, row.id)) pageIds.add(link.pageId)
     for (const path of listTouches(ctx.db, row.id)) touched.add(path)
   }
-  const pages = [...pageIds].map((pageId) => ({ pageId, title: findPage(ctx.db, pageId)?.title ?? '' }))
 
   const totalSeconds = segments.reduce((sum, segment) => sum + segment.durationSeconds, 0)
 
@@ -189,7 +164,6 @@ export function planMerge(ctx: MergeContext, request: MergeRequest): MergePlan {
     projectId,
     projectName,
     segments,
-    pages,
     touchedFiles: touched.size,
     totalSeconds,
     totalHuman: formatDuration(totalSeconds),
@@ -252,20 +226,19 @@ export async function runMerge(argv: string[]): Promise<number> {
       }
       writeOut(renderPlan(plan))
       writeOut('')
-      writeOut(`Would become #${plan.targetId} "${plan.title}" (${plan.projectName ?? 'no project'}), ${plan.totalHuman} in ${plan.segments.length} worklogs.`)
+      writeOut(`Would become #${plan.targetId} "${plan.title}" (${plan.projectName ?? 'no project'}), ${plan.totalHuman} in ${plan.segments.length} blocks.`)
       writeOut('Nothing was merged: --dry-run.')
       return 0
     }
 
     const outcome = applyMerge(ctx, plan)
     const survivor = findEntryWithProject(ctx.db, plan.targetId)
-    const stored = findDocForEntry(ctx.db, plan.targetId)
     const hooksFired = survivor
       ? await emitHooks(ctx, [
           {
             event: 'merge',
             entry: enrichEntry(survivor, ctx.timezone, ctx.now),
-            docPath: stored ? resolveDocPath(ctx.docsRoot, stored.relPath) : null,
+            docPath: null,
             mergedIds: plan.sourceIds,
           },
         ])
@@ -279,10 +252,6 @@ export async function runMerge(argv: string[]): Promise<number> {
     writeOut(renderPlan(plan))
     writeOut('')
     writeOut(`#${plan.targetId} "${plan.title}" now carries ${plan.segments.length} blocks, ${plan.totalHuman} in total.`)
-    if (plan.pages.length > 0) {
-      writeOut(`Pages: ${plan.pages.map((page) => `#${page.pageId} ${page.title}`).join(', ')}`)
-    }
-    writeOut(`Jira will get one task with ${plan.segments.length} worklogs.`)
     return 0
   } finally {
     ctx.db.close()

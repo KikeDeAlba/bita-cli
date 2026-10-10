@@ -157,7 +157,7 @@ export async function runRepo(argv: string[]): Promise<number> {
       }
       writeOut('')
       writeOut('Claude will now offer the timer in these repositories.')
-      writeOut(`To send its time to a Jira board: bita map set ${project.id} <JIRAKEY>`)
+      writeOut(`To send its time to Jira, map it in tally: tally map set ${project.id} <JIRAKEY>`)
     }
     return 0
   }

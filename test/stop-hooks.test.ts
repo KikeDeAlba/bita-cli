@@ -59,7 +59,7 @@ function runningIds(): number[] {
   }
 }
 
-test('stop --did on an entry without a page fails before stopping anything, and a plain stop fires the hook', async () => {
+test('stop no longer takes --did, and a plain stop fires the hook', async () => {
   await quietly(() => runStart(['Reunión presencial', '--kind', 'in-person-meeting', ...common]))
   const [started] = await receivedEvents(1)
   assert.equal(started?.event, 'start')
@@ -68,7 +68,7 @@ test('stop --did on an entry without a page fails before stopping anything, and 
 
   await assert.rejects(
     () => quietly(() => runStop([String(id), '--did', 'Se revisó la iniciativa.', ...common])),
-    /does not belong to a page/,
+    /Unknown option '--did'/,
   )
   assert.deepEqual(runningIds(), [id])
 

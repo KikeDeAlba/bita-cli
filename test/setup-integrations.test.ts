@@ -1,10 +1,9 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ATLASSIAN_MCP_URL } from '../src/kit/integration.ts'
 import { CAPABILITIES } from '../src/kit/manifest.ts'
 import { VERSION } from '../src/cli/router.ts'
 
@@ -60,7 +59,7 @@ function sandbox(): Sandbox {
 }
 
 function setup(box: Sandbox, ...args: string[]): Record<string, unknown> {
-  const run = spawnSync(process.execPath, [bin, 'setup', '--no-docs-git', '--json', ...args], { cwd: box.root, env: box.env, encoding: 'utf8' })
+  const run = spawnSync(process.execPath, [bin, 'setup', '--json', ...args], { cwd: box.root, env: box.env, encoding: 'utf8' })
   assert.equal(run.status, 0, `setup failed: ${run.stderr}${run.stdout}`)
   return JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}') as Record<string, unknown>
 }
@@ -131,7 +130,7 @@ test('setup installs the skill, commands, settings and hooks in all four agents'
     assert.deepEqual(data.agents, ['claude', 'opencode', 'codex', 'gemini'])
 
     const claudeSkill = readFileSync(join(box.claude, 'skills', 'bita', 'SKILL.md'), 'utf8')
-    assert.doesNotMatch(claudeSkill, /El conector de Atlassian en (OpenCode|Codex|Gemini CLI)/)
+    assert.doesNotMatch(claudeSkill, /Los avisos de bita en (OpenCode|Codex|Gemini CLI)/)
     assert.doesNotMatch(claudeSkill, /::: agent/)
     assert.equal(existsSync(join(box.claude, 'commands', 'bita-start.md')), true)
     const settings = readJson(join(box.claude, 'settings.json')) as {
@@ -144,31 +143,32 @@ test('setup installs the skill, commands, settings and hooks in all four agents'
     assert.equal(settings.hooks['UserPromptSubmit']?.length, 2)
 
     const openCodeSkill = readFileSync(join(box.opencode, 'skills', 'bita', 'SKILL.md'), 'utf8')
-    assert.match(openCodeSkill, /El conector de Atlassian en OpenCode/)
-    assert.doesNotMatch(openCodeSkill, /El conector de Atlassian en Codex/)
+    assert.match(openCodeSkill, /Los avisos de bita en OpenCode/)
+    assert.doesNotMatch(openCodeSkill, /Los avisos de bita en Codex/)
     assert.equal(existsSync(join(box.opencode, 'commands', 'bita-stop.md')), true)
     assert.equal(existsSync(join(box.opencode, 'plugins', 'bita.ts')), true)
-    const openCodeConfig = readJson(join(box.opencode, 'opencode.json')) as { mcp: Record<string, { url: string }> }
-    assert.equal(openCodeConfig.mcp['atlassian']?.url, ATLASSIAN_MCP_URL)
+    assert.equal(existsSync(join(box.opencode, 'opencode.json')), false)
 
     const codexSkill = readFileSync(join(box.agentsSkills, 'bita', 'SKILL.md'), 'utf8')
-    assert.match(codexSkill, /El conector de Atlassian en Codex/)
-    assert.doesNotMatch(codexSkill, /El conector de Atlassian en OpenCode/)
+    assert.match(codexSkill, /Los avisos de bita en Codex/)
+    assert.doesNotMatch(codexSkill, /Los avisos de bita en OpenCode/)
     const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
     assert.equal(codexHooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook codex')
     assert.ok(existsSync(join(box.codex, 'prompts', 'bita-start.md')))
-    assert.ok(readFileSync(join(box.codex, 'config.toml'), 'utf8').includes(`url = "${ATLASSIAN_MCP_URL}"`))
+    assert.equal(existsSync(join(box.codex, 'config.toml')), false)
+    assert.equal(existsSync(join(box.claude, 'commands', 'bita-check.md')), false)
+    assert.ok(!settings.permissions.allow.includes('Bash(bita docs:*)'))
 
     const extension = join(box.gemini, 'extensions', 'bita')
     const geminiSkill = readFileSync(join(extension, 'skills', 'bita', 'SKILL.md'), 'utf8')
-    assert.match(geminiSkill, /El conector de Atlassian en Gemini CLI/)
-    assert.doesNotMatch(geminiSkill, /El conector de Atlassian en Codex/)
+    assert.match(geminiSkill, /Los avisos de bita en Gemini CLI/)
+    assert.doesNotMatch(geminiSkill, /Los avisos de bita en Codex/)
     assert.ok(existsSync(join(extension, 'commands', 'bita-start.toml')))
     const geminiHooks = readJson(join(extension, 'hooks', 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
     assert.equal(geminiHooks.hooks['AfterTool']?.[0]?.hooks[0]?.command, 'bita hook gemini')
     assert.equal(geminiHooks.hooks['BeforeAgent']?.[0]?.hooks[0]?.command, 'bita hook gemini')
-    const geminiManifest = readJson(join(extension, 'gemini-extension.json')) as { mcpServers: Record<string, { httpUrl: string }> }
-    assert.equal(geminiManifest.mcpServers['atlassian']?.httpUrl, ATLASSIAN_MCP_URL)
+    const geminiManifest = readJson(join(extension, 'gemini-extension.json'))
+    assert.equal(geminiManifest['mcpServers'], undefined)
   } finally {
     rmSync(box.root, { recursive: true, force: true })
   }
@@ -180,14 +180,16 @@ test('running setup twice keeps the settings and hooks without duplicates', () =
     mkdirSync(box.codex, { recursive: true })
     writeFileSync(join(box.codex, 'hooks.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo keep' }] }] } }))
     setup(box, '--target', 'claude,codex')
+    const firstWrite = statSync(join(box.claude, 'settings.json')).mtimeMs
     setup(box, '--target', 'claude,codex')
+    assert.equal(statSync(join(box.claude, 'settings.json')).mtimeMs, firstWrite)
     const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
     assert.equal(codexHooks.hooks['Stop']?.[0]?.hooks[0]?.command, 'echo keep')
     assert.equal(codexHooks.hooks['SessionStart']?.length, 1)
     assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
     const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] }; hooks: Record<string, unknown[]> }
     assert.equal(settings.permissions.allow.filter((rule) => rule === 'Bash(bita start:*)').length, 1)
-    assert.equal(settings.hooks['PostToolUse']?.length, 2)
+    assert.equal(settings.hooks['PostToolUse']?.length, 1)
   } finally {
     rmSync(box.root, { recursive: true, force: true })
   }
@@ -207,7 +209,7 @@ test('an Atlassian MCP the user already configured in Codex is left alone', () =
   }
 })
 
-test('the old draw.io and recap flags are accepted and ignored with a warning', () => {
+test('the old setup flags are accepted and ignored with a warning', () => {
   const box = sandbox()
   try {
     const run = spawnSync(process.execPath, [bin, 'setup', '--target', 'gemini', '--no-drawio', '--no-recap', '--no-docs-git', '--no-atlassian'], {
@@ -218,6 +220,8 @@ test('the old draw.io and recap flags are accepted and ignored with a warning', 
     assert.equal(run.status, 0, run.stderr)
     assert.match(run.stderr, /--no-drawio is ignored/)
     assert.match(run.stderr, /--no-recap is ignored: .*npm i -g @kikedealba\/recap && recap setup/)
+    assert.match(run.stderr, /--no-atlassian is ignored: .*atl/)
+    assert.match(run.stderr, /--no-docs-git is ignored: .*inkwell/)
     const geminiManifest = readJson(join(box.gemini, 'extensions', 'bita', 'gemini-extension.json'))
     assert.equal(geminiManifest['mcpServers'], undefined)
     assert.equal(existsSync(join(box.claude, 'skills')), false)
@@ -226,14 +230,67 @@ test('the old draw.io and recap flags are accepted and ignored with a warning', 
   }
 })
 
-test('app install points to the Den release page instead of installing', () => {
+test('setup cleans what an older bita installed for documents and Atlassian', () => {
   const box = sandbox()
   try {
-    const run = spawnSync(process.execPath, [bin, 'app', '--json'], { cwd: box.root, env: box.env, encoding: 'utf8' })
-    assert.equal(run.status, 0, run.stderr)
-    const envelope = JSON.parse(run.stdout) as { data: { installed: boolean; url: string } }
-    assert.equal(envelope.data.installed, false)
-    assert.match(envelope.data.url, /bita-desktop\/releases/)
+    mkdirSync(join(box.claude, 'commands'), { recursive: true })
+    const stale = join(box.claude, 'commands', 'bita-check.md')
+    symlinkSync(join(box.root, 'gone', 'bita-check.md'), stale)
+    writeFileSync(
+      join(box.claude, 'settings.json'),
+      JSON.stringify({
+        permissions: { allow: ['Bash(bita docs:*)', 'Bash(bita summary:*)', 'Bash(git status:*)'] },
+        hooks: {
+          PostToolUse: [
+            { matcher: 'mcp__.*Atlassian.*|mcp__.*Google_Drive.*', hooks: [{ type: 'command', command: 'bita hook ref', timeout: 10 }] },
+            { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mine' }] },
+          ],
+        },
+      }),
+    )
+
+    setup(box, '--target', 'claude')
+
+    assert.throws(() => lstatSync(stale))
+    const settings = readJson(join(box.claude, 'settings.json')) as {
+      permissions: { allow: string[] }
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>
+    }
+    assert.ok(settings.permissions.allow.includes('Bash(git status:*)'))
+    assert.ok(!settings.permissions.allow.includes('Bash(bita docs:*)'))
+    assert.ok(!settings.permissions.allow.includes('Bash(bita summary:*)'))
+    const commands = (settings.hooks['PostToolUse'] ?? []).flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.ok(!commands.includes('bita hook ref'))
+    assert.ok(commands.includes('echo mine'))
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('the commands that moved to other tools fail with a hint to the right one', () => {
+  const box = sandbox()
+  try {
+    const cases: Array<[string[], RegExp]> = [
+      [['app', '--json'], /Den/],
+      [['note', 'save', '1', '--json'], /inkwell note/],
+      [['summary', '--json'], /tally summary/],
+      [['jira', 'myself', '--json'], /atl jira/],
+      [['meeting', 'export', '1', '--json'], /recap/],
+      [['toString', '--json'], /bita --help/],
+      [['project', 'constructor', '--json'], /^$/],
+    ]
+    for (const [args, hint] of cases) {
+      const run = spawnSync(process.execPath, [bin, ...args], { cwd: box.root, env: box.env, encoding: 'utf8' })
+      assert.equal(run.status, 2, `${args.join(' ')}: ${run.stderr}`)
+      const envelope = JSON.parse(run.stdout) as { ok: boolean; error: { code: string; hint: string } }
+      assert.equal(envelope.ok, false)
+      if (args[0] === 'project') {
+        assert.equal(envelope.error.code, 'USAGE_ERROR')
+        continue
+      }
+      assert.equal(envelope.error.code, 'UNKNOWN_COMMAND')
+      assert.match(envelope.error.hint, hint)
+    }
   } finally {
     rmSync(box.root, { recursive: true, force: true })
   }

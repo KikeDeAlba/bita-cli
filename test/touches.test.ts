@@ -1,12 +1,8 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { test } from 'node:test'
 import { openMemoryDatabase } from '../src/db/open.ts'
 import { insertEntry } from '../src/db/entries.ts'
 import { listTouches, recordTouch, touchesByEntry } from '../src/db/touches.ts'
-import { appendNote, parseNoteInput, readNotesByEntryId } from '../src/state/notes.ts'
 
 const NOW = '2026-09-19T12:00:00.000Z'
 
@@ -68,77 +64,4 @@ test('drops the paths when the entry goes away', () => {
   db.prepare('DELETE FROM entries WHERE id = ?').run(entry.id)
   assert.deepEqual(listTouches(db, entry.id), [])
   db.close()
-})
-
-test('a later note adds artifacts instead of erasing the earlier ones', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bita-notes-'))
-  const notesPath = join(dir, 'notes.ndjson')
-
-  await appendNote(
-    parseNoteInput(
-      { body: 'lo del plan', artifacts: { files: ['a.ts'], commands: ['pnpm test'] } },
-      { entryId: 1, source: 'manual', title: 't', recordedAt: NOW },
-    ),
-    notesPath,
-  )
-  await appendNote(
-    parseNoteInput(
-      { body: 'lo del final', artifacts: { files: ['b.ts'] } },
-      { entryId: 1, source: 'stop', title: 't', recordedAt: NOW },
-    ),
-    notesPath,
-  )
-
-  const note = (await readNotesByEntryId([1], notesPath)).get(1)
-  assert.equal(note?.body, 'lo del final')
-  assert.deepEqual(note?.artifacts.files, ['a.ts', 'b.ts'])
-  assert.deepEqual(note?.artifacts.commands, ['pnpm test'])
-
-  rmSync(dir, { recursive: true, force: true })
-})
-
-test('a later note with no body keeps the earlier body', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bita-notes-'))
-  const notesPath = join(dir, 'notes.ndjson')
-
-  await appendNote(
-    parseNoteInput(
-      { body: 'el bueno' },
-      { entryId: 1, source: 'manual', title: 't', recordedAt: NOW },
-    ),
-    notesPath,
-  )
-  await appendNote(
-    parseNoteInput(
-      { artifacts: { files: ['b.ts'] } },
-      { entryId: 1, source: 'stop', title: 't', recordedAt: NOW },
-    ),
-    notesPath,
-  )
-
-  const note = (await readNotesByEntryId([1], notesPath)).get(1)
-  assert.equal(note?.body, 'el bueno')
-  assert.deepEqual(note?.artifacts.files, ['b.ts'])
-
-  rmSync(dir, { recursive: true, force: true })
-})
-
-test('does not duplicate an artifact repeated across notes', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bita-notes-'))
-  const notesPath = join(dir, 'notes.ndjson')
-
-  for (const body of ['uno', 'dos']) {
-    await appendNote(
-      parseNoteInput(
-        { body, artifacts: { files: ['a.ts'] } },
-        { entryId: 1, source: 'manual', title: 't', recordedAt: NOW },
-      ),
-      notesPath,
-    )
-  }
-
-  const note = (await readNotesByEntryId([1], notesPath)).get(1)
-  assert.deepEqual(note?.artifacts.files, ['a.ts'])
-
-  rmSync(dir, { recursive: true, force: true })
 })

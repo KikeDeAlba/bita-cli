@@ -28,8 +28,6 @@ export function enrichEntry(
     projectName: row.projectName,
     clientName: row.clientName,
     billable: row.billable,
-    registered: row.registered,
-    issueKey: row.issueKey,
     start: row.startedAt,
     stop: row.stoppedAt,
     startLocal: toLocalIso(row.startedAt, timezone),
@@ -41,7 +39,6 @@ export function enrichEntry(
     running: row.stoppedAt === null,
     mergedInto: row.mergedInto,
     kind: row.kind,
-    jira: row.projectJira,
   }
 }
 

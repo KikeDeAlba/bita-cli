@@ -7,13 +7,11 @@ import {
   findEntryByExternalId,
   insertEntry,
   listEntriesStartedBetween,
-  listPendingEntries,
   listRunning,
   stopEntry,
   updateEntry,
 } from '../src/db/entries.ts'
 import { insertProject, listProjects, nextLocalProjectId } from '../src/db/projects.ts'
-import { findLink, linkEntry, unlinkEntry } from '../src/db/jira-links.ts'
 
 const NOW = '2026-09-19T12:00:00.000Z'
 
@@ -88,18 +86,14 @@ test('reports nothing changed when stopping an entry that already stopped', () =
   db.close()
 })
 
-test('treats an entry without a jira link as pending', () => {
+function linkLegacy(db: ReturnType<typeof openMemoryDatabase>, entryId: number): void {
+  db.prepare('INSERT INTO jira_links (entry_id, issue_key, linked_at) VALUES (?, ?, ?)').run(entryId, 'DD-1896', NOW)
+}
+
+test('legacy jira links neither hide nor change an entry', () => {
   const db = openMemoryDatabase()
   const project = seedProject(db)
-  const pending = insertEntry(db, {
-    description: 'pending work',
-    projectId: project.id,
-    startedAt: '2026-09-19T10:00:00.000Z',
-    stoppedAt: '2026-09-19T11:00:00.000Z',
-    source: 'manual',
-    now: NOW,
-  })
-  const registered = insertEntry(db, {
+  const linked = insertEntry(db, {
     description: 'registered work',
     projectId: project.id,
     startedAt: '2026-09-18T10:00:00.000Z',
@@ -107,18 +101,16 @@ test('treats an entry without a jira link as pending', () => {
     source: 'manual',
     now: NOW,
   })
-  linkEntry(db, { entryId: registered.id, issueKey: 'DD-1896', linkedAt: NOW })
+  linkLegacy(db, linked.id)
 
-  const ids = listPendingEntries(db).map((entry) => entry.id)
-  assert.deepEqual(ids, [pending.id])
-
-  assert.equal(findLink(db, registered.id)?.issueKey, 'DD-1896')
-  assert.equal(unlinkEntry(db, registered.id), true)
-  assert.equal(listPendingEntries(db).length, 2)
+  const [listed] = listEntriesStartedBetween(db, '2026-09-18T00:00:00.000Z', '2026-09-19T00:00:00.000Z')
+  assert.equal(listed?.id, linked.id)
+  assert.equal('registered' in (listed ?? {}), false)
+  assert.equal('issueKey' in (listed ?? {}), false)
   db.close()
 })
 
-test('drops the jira link when its entry is deleted', () => {
+test('deleting an entry drops its legacy jira link through the foreign key', () => {
   const db = openMemoryDatabase()
   const entry = insertEntry(db, {
     description: 'work',
@@ -128,9 +120,10 @@ test('drops the jira link when its entry is deleted', () => {
     source: 'manual',
     now: NOW,
   })
-  linkEntry(db, { entryId: entry.id, issueKey: 'DD-1', linkedAt: NOW })
+  linkLegacy(db, entry.id)
   assert.equal(deleteEntry(db, entry.id), true)
-  assert.equal(findLink(db, entry.id), undefined)
+  const left = db.prepare('SELECT COUNT(*) AS total FROM jira_links WHERE entry_id = ?').get(entry.id) as { total: number }
+  assert.equal(left.total, 0)
   db.close()
 })
 
