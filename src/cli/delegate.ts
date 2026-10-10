@@ -399,7 +399,9 @@ function planDocs(rest: readonly string[]): DelegationPlan | null {
   const first = rest[0] === undefined || rest[0].startsWith('-') ? 'tree' : rest[0]
   const tail = rest[0] === undefined || rest[0].startsWith('-') ? [...rest] : rest.slice(1)
   if (first === 'migrate') return null
-  if (first === 'tree' || first === 'ls' || first === 'show' || first === 'search') {
+  if (first === 'ls' || first === 'show') return null
+  if (first === 'tree' || first === 'search') {
+    if (!tail.includes('--pages')) return null
     return inkwell(`docs ${first}`, ['docs.page.read'], [first, ...tail])
   }
   if (first === 'page') {

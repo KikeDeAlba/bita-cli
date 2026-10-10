@@ -129,7 +129,9 @@ test('the mapping table translates bita arguments into the provider CLIs', () =>
     [['confluence', 'attach', '123', 'x.png', '--comment', 'c'], 'atl', [['confluence', 'attach', '123', resolve('x.png'), '--comment=c']]],
     [['atlassian', 'site', 'add', '--site', 'https://acme.atlassian.net', '--email', 'a@b.c', '--token-stdin'], 'atl', [['site', 'add', 'https://acme.atlassian.net', '--email=a@b.c', '--token-stdin']]],
     [['atlassian', 'site', 'rm', 'acme', '--force'], 'atl', [['site', 'rm', 'acme']]],
-    [['docs'], 'inkwell', [['tree']]],
+    [['docs'], '', null],
+    [['docs', 'ls'], '', null],
+    [['docs', 'show', '5'], '', null],
     [['docs', 'tree', '--pages', '--json'], 'inkwell', [['tree', '--pages', '--json']]],
     [['docs', 'page', 'write', '4', '--md', 'f.md'], 'inkwell', [['page', 'write', '4', '--md', 'f.md']]],
     [['docs', 'status'], 'inkwell', [['git', 'status']]],
@@ -205,12 +207,12 @@ test('a failed upload in a batch reports what was already attached', () => {
 
 test('an inkwell migrated from another bita database leaves docs in bita', () => {
   const box = sandbox([{ name: 'inkwell', capabilities: INKWELL_CAPABILITIES }], { FAKE_BITA_DB: '/somewhere/else/bita.db' })
-  const result = run(box, 'docs', 'tree', '--json')
+  const result = run(box, 'docs', 'tree', '--pages', '--json')
   assert.equal(result.status, 0, result.stderr)
   assert.equal(delegatedTo(result.json), undefined)
   const same = sandbox([{ name: 'inkwell', capabilities: INKWELL_CAPABILITIES }])
   same.env['FAKE_BITA_DB'] = same.env['BITA_DB_PATH'] as string
-  assert.equal((delegatedTo(run(same, 'docs', 'tree', '--json').json) as { tool: string }).tool, 'inkwell')
+  assert.equal((delegatedTo(run(same, 'docs', 'tree', '--pages', '--json').json) as { tool: string }).tool, 'inkwell')
 })
 
 test('without --json the provider output passes straight through', () => {
@@ -230,7 +232,7 @@ test('a provider without the needed capability leaves the command in bita', () =
 
 test('docs commands go to a migrated inkwell', () => {
   const box = both()
-  const tree = run(box, 'docs', 'tree', '--json')
+  const tree = run(box, 'docs', 'tree', '--pages', '--json')
   assert.equal(tree.status, 0, tree.stderr)
   assert.equal(tree.json?.['command'], 'docs tree')
   assert.equal((tree.json?.['meta'] as { delegatedTo: { tool: string } }).delegatedTo.tool, 'inkwell')
@@ -240,15 +242,24 @@ test('docs commands go to a migrated inkwell', () => {
   assert.equal(status.json?.['command'], 'docs status')
   const forwarded = calls(box).filter((call) => call.args[0] !== 'migrate').map((call) => call.args)
   assert.deepEqual(forwarded, [
-    ['tree', '--json'],
+    ['tree', '--pages', '--json'],
     ['export', 'meeting', '--bita-entry', '12', '--out=m.pdf', '--json'],
     ['git', 'status', '--json'],
   ])
 })
 
+test('entry-note reads stay in bita even with a migrated inkwell', () => {
+  const box = both()
+  for (const args of [['docs', 'tree', '--json'], ['docs', 'ls', '--json'], ['docs', 'show', '1', '--json'], ['docs', 'search', 'x', '--json']]) {
+    const result = run(box, ...args)
+    assert.equal(delegatedTo(result.json), undefined, args.join(' '))
+  }
+  assert.deepEqual(calls(box), [])
+})
+
 test('an inkwell that has not migrated bita leaves docs in bita', () => {
   const box = sandbox([{ name: 'inkwell', capabilities: INKWELL_CAPABILITIES }], { FAKE_MIGRATED: '0' })
-  const result = run(box, 'docs', 'tree', '--json')
+  const result = run(box, 'docs', 'tree', '--pages', '--json')
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.json?.['command'], 'docs tree')
   assert.equal(delegatedTo(result.json), undefined)
