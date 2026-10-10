@@ -1,3 +1,4 @@
+import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

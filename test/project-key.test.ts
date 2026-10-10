@@ -1,3 +1,4 @@
+import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'

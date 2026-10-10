@@ -1,3 +1,4 @@
+import './helpers/isolate.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
