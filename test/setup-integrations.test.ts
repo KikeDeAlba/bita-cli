@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ATLASSIAN_MCP_URL } from '../src/kit/integration.ts'
 import { CAPABILITIES } from '../src/kit/manifest.ts'
+import { VERSION } from '../src/cli/router.ts'
 
 const repo = join(import.meta.dirname, '..')
 const bin = join(repo, 'src', 'bin', 'bita.ts')
@@ -19,14 +20,17 @@ interface Sandbox {
   agentsSkills: string
   gemini: string
   registry: string
+  binDir: string
 }
 
 function sandbox(): Sandbox {
   const root = mkdtempSync(join(tmpdir(), 'bita-setup-'))
   const home = join(root, 'home')
+  const binDir = join(root, 'bin')
   mkdirSync(home, { recursive: true })
+  mkdirSync(binDir, { recursive: true })
   const env: NodeJS.ProcessEnv = {
-    PATH: process.env['PATH'] ?? '',
+    PATH: [binDir, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
     HOME: home,
     XDG_CONFIG_HOME: join(root, 'config'),
     XDG_DATA_HOME: join(root, 'data'),
@@ -51,6 +55,7 @@ function sandbox(): Sandbox {
     agentsSkills: join(root, 'agents', 'skills'),
     gemini: join(root, 'gemini-home', '.gemini'),
     registry: join(root, 'registry'),
+    binDir,
   }
 }
 
@@ -58,6 +63,20 @@ function setup(box: Sandbox, ...args: string[]): Record<string, unknown> {
   const run = spawnSync(process.execPath, [bin, 'setup', '--no-docs-git', '--json', ...args], { cwd: box.root, env: box.env, encoding: 'utf8' })
   assert.equal(run.status, 0, `setup failed: ${run.stderr}${run.stdout}`)
   return JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}') as Record<string, unknown>
+}
+
+function bitaShim(box: Sandbox, version: string): string {
+  const path = join(box.binDir, 'bita')
+  const envelope = JSON.stringify({
+    schemaVersion: 3,
+    ok: true,
+    command: 'capabilities',
+    generatedAt: new Date(0).toISOString(),
+    data: { name: 'bita', version, envelope: 1, capabilities: [...CAPABILITIES], emits: [] },
+  })
+  writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' '${envelope}'\n`, 'utf8')
+  chmodSync(path, 0o755)
+  return path
 }
 
 function readJson(path: string): Record<string, unknown> {
@@ -75,6 +94,30 @@ test('setup registers bita in the kit registry with its capabilities and events'
     const bitaBin = manifest['bin'] as string[]
     assert.equal(bitaBin[0], process.execPath)
     assert.equal(bitaBin[1], bin)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('setup registers the bita on PATH when it reports the same version', () => {
+  const box = sandbox()
+  try {
+    const shim = bitaShim(box, VERSION)
+    setup(box, '--target', 'claude', '--no-settings')
+    const manifest = readJson(join(box.registry, 'bita.json'))
+    assert.deepEqual(manifest['bin'], [shim])
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('setup keeps its own path when the bita on PATH reports another version', () => {
+  const box = sandbox()
+  try {
+    bitaShim(box, '0.0.1')
+    setup(box, '--target', 'claude', '--no-settings')
+    const manifest = readJson(join(box.registry, 'bita.json'))
+    assert.deepEqual(manifest['bin'], [process.execPath, bin])
   } finally {
     rmSync(box.root, { recursive: true, force: true })
   }
