@@ -6,7 +6,8 @@ import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { initDocsRepo } from '../../docs/git.ts'
 import { docsRoot } from '../../docs/paths.ts'
 import { databasePath } from '../../db/paths.ts'
-import { DEN_RELEASES, MOVED_OUT, RECAP_INSTALL, packageRoot } from '../../kit/manifest.ts'
+import { DEN_RELEASES, MOVED_OUT, RECAP_INSTALL, TOOL_NAME, binCommand, packageRoot } from '../../kit/manifest.ts'
+import { VERSION } from '../router.ts'
 import { integration, manifest } from '../../kit/integration.ts'
 
 export { packageRoot }
@@ -125,7 +126,9 @@ export async function runSetup(argv: string[]): Promise<number> {
   let agents: AgentName[] = requested === 'detected' ? await kit.agents.detectAgents(ctx, homes) : requested
   if (agents.length === 0) agents = ['claude']
 
-  const registered = readBoolean(args, 'no-register') ? null : await kit.registerTool(manifest(root), ctx)
+  const registered = readBoolean(args, 'no-register')
+    ? null
+    : await kit.registerTool(manifest(root, await kit.stableBin(TOOL_NAME, VERSION, binCommand(root), ctx)), ctx)
 
   const atlassian = !readBoolean(args, 'no-atlassian')
   const wanted = integration(root, { settings: !readBoolean(args, 'no-settings'), atlassian })
