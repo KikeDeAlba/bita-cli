@@ -1,3 +1,4 @@
+import './helpers/isolate.ts'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'

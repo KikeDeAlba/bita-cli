@@ -1,3 +1,4 @@
+import './helpers/isolate.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseClockTime, parseDurationSeconds } from '../src/domain/duration-input.ts'
