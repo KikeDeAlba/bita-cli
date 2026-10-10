@@ -91,13 +91,13 @@ export const GEMINI_HOOKS: HookMap = {
   AfterTool: [{ matcher: '.*', hooks: [{ type: 'command', name: 'bita-tool', command: 'bita hook gemini', timeout: 10000 }] }],
 }
 
-export function manifest(root: string): ToolManifest {
+export function manifest(root: string, bin: readonly string[] = binCommand(root)): ToolManifest {
   return {
     manifestVersion: 1,
     name: TOOL_NAME,
     version: VERSION,
     description: DESCRIPTION,
-    bin: binCommand(root),
+    bin: [...bin],
     envelope: ENVELOPE_VERSION,
     capabilities: [...CAPABILITIES],
     emits: [...EMITS],

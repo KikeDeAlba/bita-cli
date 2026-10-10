@@ -21,7 +21,7 @@ import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/tim
 import { writeOut } from './output.ts'
 import { DELEGATED_COMMANDS, tryDelegate } from './delegate.ts'
 
-export const VERSION = '0.18.0'
+export const VERSION = '0.18.1'
 
 const HELP = `bita ${VERSION}
 
