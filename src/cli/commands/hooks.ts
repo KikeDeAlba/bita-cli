@@ -1,6 +1,7 @@
 import { UsageError } from '../../errors.ts'
 import { parseKind } from '../../domain/kind.ts'
-import { HOOK_EVENTS, hooksLogPath, isHookEvent, type HookConfig, type HookEvent } from '../../hooks/hooks.ts'
+import type { Listener } from '@kikedealba/kit/events'
+import { EVENT_SOURCE, HOOK_EVENTS, hooksLogPath, isHookEvent, loadKitEvents, type HookConfig, type HookEvent } from '../../hooks/hooks.ts'
 import { databasePath } from '../../db/paths.ts'
 import { readConfig, writeConfig } from '../../state/config.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString } from '../args.ts'
@@ -13,7 +14,7 @@ const OPTIONS = {
 
 const USAGE = `Usage:
   bita hooks [list]
-  bita hooks add --on start,stop,cancel,amend [--kind a,b] -- <command> [args...]
+  bita hooks add --on start,stop,cancel,amend,delete,merge [--kind a,b] -- <command> [args...]
   bita hooks remove <number>`
 
 function splitList(raw: string | undefined): string[] {
@@ -28,6 +29,11 @@ function describe(hook: HookConfig, index: number): string {
   return `${index + 1}. on=${hook.on.join(',')}${kinds}  ${hook.command.join(' ')}`
 }
 
+async function registrySubscribers(): Promise<Listener[]> {
+  const kit = await loadKitEvents()
+  return kit ? kit.registryListeners(EVENT_SOURCE) : []
+}
+
 export async function runHooks(argv: string[]): Promise<number> {
   const separator = argv.indexOf('--')
   const own = separator === -1 ? argv : argv.slice(0, separator)
@@ -40,10 +46,15 @@ export async function runHooks(argv: string[]): Promise<number> {
   const logPath = hooksLogPath(readString(args, 'db-path') ?? databasePath())
 
   if (action === 'list' || action === 'ls') {
-    if (json) writeJson(successEnvelope('hooks', hooks, { logPath }))
-    else if (hooks.length === 0) writeOut('No hooks configured.')
+    const subscribers = await registrySubscribers()
+    if (json) writeJson(successEnvelope('hooks', hooks, { logPath, subscribers }))
     else {
+      if (hooks.length === 0) writeOut('No hooks configured.')
       for (const [index, hook] of hooks.entries()) writeOut(describe(hook, index))
+      for (const subscriber of subscribers) {
+        const kinds = subscriber.filter?.['kind'] ? ` kind=${subscriber.filter['kind'].join(',')}` : ''
+        writeOut(`-. ${subscriber.owner}: on=${subscriber.events.join(',')}${kinds}  ${subscriber.command.join(' ')}`)
+      }
       writeOut(`Log: ${logPath}`)
     }
     return 0

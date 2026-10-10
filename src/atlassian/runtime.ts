@@ -1,17 +1,17 @@
 import { CONFIG_PATH } from '../state/config.ts'
-import { securityRunner, type SecurityRunner } from '../state/keychain.ts'
+import { systemCredentialStore, type CredentialStore } from '../state/credentials.ts'
 
 export type Fetch = typeof globalThis.fetch
 
 export interface AtlassianRuntime {
   fetch: Fetch
-  security: SecurityRunner
+  credentials: () => Promise<CredentialStore>
   configPath: string
 }
 
 let current: AtlassianRuntime = {
   fetch: (input, init) => globalThis.fetch(input, init),
-  security: securityRunner,
+  credentials: systemCredentialStore,
   configPath: CONFIG_PATH,
 }
 

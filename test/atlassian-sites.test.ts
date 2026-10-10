@@ -7,6 +7,7 @@ import { normalizeSiteUrl, readConfig, type AppConfig } from '../src/state/confi
 import { setAtlassianRuntime } from '../src/atlassian/runtime.ts'
 import { chooseSite, dropSite, readSiteToken, siteAccount, storeSiteToken, upsertSite } from '../src/atlassian/sites.ts'
 import { parseConfluenceRef } from '../src/atlassian/project-view.ts'
+import { macosKeychain } from '@kikedealba/kit/credentials'
 
 function config(sites: { site: string; email: string }[]): AppConfig {
   return { version: 1, projectMapping: {}, scopeMapping: {}, atlassian: { sites } }
@@ -38,7 +39,7 @@ test('tokens live under site|email and fall back to the bare e-mail of 0.14', as
   const calls: string[][] = []
   const store = new Map<string, string>([['me@acme.com', 'old']])
   const restore = setAtlassianRuntime({
-    security: async (args) => {
+    credentials: async () => macosKeychain(async (_command, args) => {
       calls.push([...args])
       const account = args[args.indexOf('-a') + 1] ?? ''
       if (args[0] === 'add-generic-password') {
@@ -48,7 +49,7 @@ test('tokens live under site|email and fall back to the bare e-mail of 0.14', as
       const token = store.get(account)
       if (token === undefined) throw Object.assign(new Error('failed'), { code: 44 })
       return token
-    },
+    }),
   })
   try {
     assert.equal(await readSiteToken('https://acme.atlassian.net', 'me@acme.com'), 'old')

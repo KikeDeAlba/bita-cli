@@ -20,6 +20,7 @@
     "claude-code",
     "opencode",
     "codex",
+    "gemini-cli",
     "cli",
     "sqlite"
   ],
@@ -35,8 +36,6 @@
     "dist",
     "assets",
     "skill",
-    "skill-opencode",
-    "skill-codex",
     "commands",
     "scripts",
     "README.md",
@@ -49,7 +48,7 @@
     "build": "tsc -p tsconfig.build.json",
     "prepack": "pnpm build",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/**/*.test.ts\"",
+    "test": "node --import ./test/helpers/isolate.ts --test \"test/**/*.test.ts\"",
     "bita": "node src/bin/bita.ts"
   },
   "devDependencies": {
@@ -58,6 +57,7 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "@kikedealba/kit": "^0.1.1",
     "@mixmark-io/domino": "^2.2.0",
     "marked": "^18.1.0",
     "turndown": "^7.2.4"

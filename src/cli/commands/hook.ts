@@ -192,7 +192,8 @@ export async function runHook(argv: string[]): Promise<number> {
     return 0
   }
 
-  if (event === 'codex') return runCodexHook()
+  if (event === 'codex') return runAgentHook(CODEX_EVENTS)
+  if (event === 'gemini') return runAgentHook(GEMINI_EVENTS)
 
   if (event !== 'session-start') return 0
 
@@ -238,7 +239,21 @@ function touchedFiles(input: unknown): string[] {
   return [...new Set(paths)]
 }
 
-async function runCodexHook(): Promise<number> {
+type LifecycleEvent = 'SessionStart' | 'UserPromptSubmit' | 'PostToolUse'
+
+const CODEX_EVENTS: Record<string, LifecycleEvent> = {
+  SessionStart: 'SessionStart',
+  UserPromptSubmit: 'UserPromptSubmit',
+  PostToolUse: 'PostToolUse',
+}
+
+const GEMINI_EVENTS: Record<string, LifecycleEvent> = {
+  SessionStart: 'SessionStart',
+  BeforeAgent: 'UserPromptSubmit',
+  AfterTool: 'PostToolUse',
+}
+
+async function runAgentHook(events: Record<string, LifecycleEvent>): Promise<number> {
   let input: CodexHookInput
   try {
     input = JSON.parse(await readStdin()) as CodexHookInput
@@ -247,7 +262,8 @@ async function runCodexHook(): Promise<number> {
   }
 
   const event = stringValue(input.hook_event_name)
-  if (event === 'SessionStart') {
+  const lifecycle = event === undefined ? undefined : events[event]
+  if (lifecycle === 'SessionStart') {
     const additionalContext = await runSessionStartContext()
     if (additionalContext) {
       process.stdout.write(
@@ -257,7 +273,7 @@ async function runCodexHook(): Promise<number> {
     return 0
   }
 
-  if (event === 'UserPromptSubmit') {
+  if (lifecycle === 'UserPromptSubmit') {
     const additionalContext = await runPromptSubmit()
     if (additionalContext) {
       process.stdout.write(
@@ -267,7 +283,7 @@ async function runCodexHook(): Promise<number> {
     return 0
   }
 
-  if (event !== 'PostToolUse') return 0
+  if (lifecycle !== 'PostToolUse') return 0
 
   const toolInput = inputRecord(input.tool_input)
   for (const file of touchedFiles(toolInput)) {

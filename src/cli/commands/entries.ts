@@ -1,5 +1,9 @@
-import { parseCommandArgs, readBoolean } from '../args.ts'
-import { withLocalContext } from '../local-context.ts'
+import { UsageError, NotFoundError } from '../../errors.ts'
+import { BASE_OPTIONS, parseCommandArgs, readBoolean } from '../args.ts'
+import { createLocalContext, withLocalContext, type LocalContext } from '../local-context.ts'
+import { findEntryWithProject } from '../../db/entries.ts'
+import { listDocsForEntry } from '../../db/docs.ts'
+import { readEntryDoc } from '../../docs/record.ts'
 import { collectEntries } from '../collect.ts'
 import { renderTable } from '../table.ts'
 import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
@@ -7,7 +11,64 @@ import { formatDuration } from '../../domain/duration.ts'
 import { collapseSegments } from '../logical-entry.ts'
 import { summarizeNonJira } from '../../domain/no-jira.ts'
 
-export function runEntries(argv: string[]): number {
+export interface EntryDetail {
+  id: number
+  description: string
+  kind: string | null
+  projectId: number | null
+  projectName: string | null
+  startedAt: string
+  stoppedAt: string | null
+  note: string | null
+}
+
+export async function readEntryDetail(ctx: LocalContext, id: number): Promise<EntryDetail> {
+  const row = findEntryWithProject(ctx.db, id)
+  if (!row) throw new NotFoundError(`No entry #${id}.`, 'ENTRY_NOT_FOUND', 'Run "bita entries" to see them.')
+  const docs = listDocsForEntry(ctx.db, row.id)
+  const primary = docs.find((doc) => doc.kind === 'note') ?? docs[0]
+  const note = primary ? (await readEntryDoc(ctx, primary)).markdown : null
+  return {
+    id: row.id,
+    description: row.description,
+    kind: row.kind,
+    projectId: row.projectId,
+    projectName: row.projectName,
+    startedAt: row.startedAt,
+    stoppedAt: row.stoppedAt,
+    note,
+  }
+}
+
+async function runEntryGet(argv: string[]): Promise<number> {
+  const args = parseCommandArgs(argv, {}, BASE_OPTIONS)
+  const raw = args.positionals[0]
+  const id = Number(raw)
+  if (raw === undefined || !Number.isInteger(id) || id <= 0) throw new UsageError('Usage: bita entries get <id> [--json]')
+  const ctx = createLocalContext(args)
+  try {
+    const detail = await readEntryDetail(ctx, id)
+    if (readBoolean(args, 'json')) {
+      writeJson(successEnvelope('entries get', detail))
+      return 0
+    }
+    writeOut(`#${detail.id} ${detail.description || '(no description)'}`)
+    writeOut(`Project : ${detail.projectName ?? '(no project)'}`)
+    if (detail.kind) writeOut(`Kind    : ${detail.kind}`)
+    writeOut(`Started : ${detail.startedAt}`)
+    writeOut(`Stopped : ${detail.stoppedAt ?? '(running)'}`)
+    if (detail.note !== null) {
+      writeOut('')
+      writeOut(detail.note)
+    }
+    return 0
+  } finally {
+    ctx.db.close()
+  }
+}
+
+export function runEntries(argv: string[]): number | Promise<number> {
+  if (argv[0] === 'get') return runEntryGet(argv.slice(1))
   const args = parseCommandArgs(argv, {})
 
   return withLocalContext(args, (ctx) => {

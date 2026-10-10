@@ -1,143 +1,192 @@
-import { execFile } from 'node:child_process'
-import { access, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { packageRoot, runSetup } from '../src/cli/commands/setup.ts'
-import {
-  ATLASSIAN_MCP_URL,
-  ensureCodexAtlassianMcp,
-  ensureOpenCodeAtlassianMcp,
-  type AtlassianMcpEnvironment,
-} from '../src/setup/atlassian.ts'
+import { ATLASSIAN_MCP_URL } from '../src/kit/integration.ts'
+import { CAPABILITIES } from '../src/kit/manifest.ts'
 
-const run = promisify(execFile)
+const repo = join(import.meta.dirname, '..')
+const bin = join(repo, 'src', 'bin', 'bita.ts')
 
-async function temporaryDirectory(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'bita-setup-'))
+interface Sandbox {
+  root: string
+  env: NodeJS.ProcessEnv
+  claude: string
+  codex: string
+  opencode: string
+  agentsSkills: string
+  gemini: string
+  registry: string
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
+function sandbox(): Sandbox {
+  const root = mkdtempSync(join(tmpdir(), 'bita-setup-'))
+  const home = join(root, 'home')
+  mkdirSync(home, { recursive: true })
+  const env: NodeJS.ProcessEnv = {
+    PATH: process.env['PATH'] ?? '',
+    HOME: home,
+    XDG_CONFIG_HOME: join(root, 'config'),
+    XDG_DATA_HOME: join(root, 'data'),
+    XDG_STATE_HOME: join(root, 'state'),
+    KIT_REGISTRY_DIR: join(root, 'registry'),
+    KIT_CREDENTIALS: 'file',
+    KIT_AGENTS_HOME: join(root, 'agents'),
+    CLAUDE_CONFIG_DIR: join(root, 'claude'),
+    CODEX_HOME: join(root, 'codex'),
+    GEMINI_CLI_HOME: join(root, 'gemini-home'),
+    BITA_DB_PATH: join(root, 'bita.db'),
+    BITA_CONFIG_PATH: join(root, 'bita-config.json'),
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: join(root, 'gitconfig'),
+  }
+  return {
+    root,
+    env,
+    claude: join(root, 'claude'),
+    codex: join(root, 'codex'),
+    opencode: join(root, 'config', 'opencode'),
+    agentsSkills: join(root, 'agents', 'skills'),
+    gemini: join(root, 'gemini-home', '.gemini'),
+    registry: join(root, 'registry'),
   }
 }
 
-test('installs OpenCode skill, commands, and plugin into a custom directory', async () => {
-  const directory = await temporaryDirectory()
-  try {
-    await runSetup(['--target', 'opencode', '--opencode-dir', directory, '--no-drawio', '--no-atlassian', '--no-docs-git'])
+function setup(box: Sandbox, ...args: string[]): Record<string, unknown> {
+  const run = spawnSync(process.execPath, [bin, 'setup', '--no-docs-git', '--json', ...args], { cwd: box.root, env: box.env, encoding: 'utf8' })
+  assert.equal(run.status, 0, `setup failed: ${run.stderr}${run.stdout}`)
+  return JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}') as Record<string, unknown>
+}
 
-    assert.equal(await readlink(join(directory, 'skills', 'bita')), join(packageRoot(), 'skill-opencode'))
-    const skill = await readFile(join(directory, 'skills', 'bita', 'SKILL.md'), 'utf8')
-    assert.match(skill, /El conector de Atlassian en OpenCode/)
-    assert.doesNotMatch(skill, /El conector de Atlassian en Codex/)
-    assert.equal(await exists(join(directory, 'commands', 'bita-start.md')), true)
-    assert.equal(
-      (await exists(join(directory, 'plugins', 'bita.ts'))) || (await exists(join(directory, 'plugins', 'bita.js'))),
-      true,
-    )
+function readJson(path: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+}
+
+test('setup registers bita in the kit registry with its capabilities and events', () => {
+  const box = sandbox()
+  try {
+    setup(box, '--target', 'claude', '--no-settings')
+    const manifest = readJson(join(box.registry, 'bita.json'))
+    assert.equal(manifest['name'], 'bita')
+    assert.deepEqual(manifest['capabilities'], [...CAPABILITIES])
+    assert.deepEqual(manifest['emits'], ['start', 'stop', 'cancel', 'amend', 'delete', 'merge'])
+    const bitaBin = manifest['bin'] as string[]
+    assert.equal(bitaBin[0], process.execPath)
+    assert.equal(bitaBin[1], bin)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true })
   }
 })
 
-test('installs Codex skill and merges hooks without duplicates', async () => {
-  const directory = await temporaryDirectory()
-  const agents = join(directory, 'agents')
-  const codex = join(directory, 'codex')
+test('setup installs the skill, commands, settings and hooks in all four agents', () => {
+  const box = sandbox()
   try {
-    await runSetup(['--target', 'codex', '--codex-home', codex, '--agents-home', agents, '--no-docs-git'])
-    await runSetup(['--target', 'codex', '--codex-home', codex, '--agents-home', agents, '--no-docs-git'])
+    const result = setup(box, '--target', 'all')
+    const data = result['data'] as { agents: string[] }
+    assert.deepEqual(data.agents, ['claude', 'opencode', 'codex', 'gemini'])
 
-    const hooks = JSON.parse(await readFile(join(codex, 'hooks.json'), 'utf8')) as {
-      hooks: Record<string, Array<{ hooks?: Array<{ command?: string }> }>>
+    const claudeSkill = readFileSync(join(box.claude, 'skills', 'bita', 'SKILL.md'), 'utf8')
+    assert.doesNotMatch(claudeSkill, /El conector de Atlassian en (OpenCode|Codex|Gemini CLI)/)
+    assert.doesNotMatch(claudeSkill, /::: agent/)
+    assert.equal(existsSync(join(box.claude, 'commands', 'bita-start.md')), true)
+    const settings = readJson(join(box.claude, 'settings.json')) as {
+      permissions: { allow: string[]; ask: string[] }
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>
     }
-    assert.equal(await readlink(join(agents, 'skills', 'bita')), join(packageRoot(), 'skill-codex'))
-    const skill = await readFile(join(agents, 'skills', 'bita', 'SKILL.md'), 'utf8')
-    assert.match(skill, /El conector de Atlassian en Codex/)
-    assert.doesNotMatch(skill, /El conector de Atlassian en OpenCode/)
-    const config = await readFile(join(codex, 'config.toml'), 'utf8')
-    assert.match(config, /\[mcp_servers\.atlassian\]/)
-    assert.ok(config.includes(`url = "${ATLASSIAN_MCP_URL}"`))
-    const sessionStart = hooks.hooks.SessionStart ?? []
-    const promptSubmit = hooks.hooks.UserPromptSubmit ?? []
-    const postToolUse = hooks.hooks.PostToolUse ?? []
-    assert.equal(sessionStart.length, 1)
-    assert.equal(promptSubmit.length, 1)
-    assert.equal(postToolUse.length, 1)
-    assert.equal(sessionStart[0]?.hooks?.[0]?.command, 'bita hook codex')
+    assert.ok(settings.permissions.allow.includes('Bash(bita start:*)'))
+    assert.ok(settings.permissions.ask.includes('Bash(bita cancel:*)'))
+    assert.equal(settings.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook session-start')
+    assert.equal(settings.hooks['UserPromptSubmit']?.length, 2)
+
+    const openCodeSkill = readFileSync(join(box.opencode, 'skills', 'bita', 'SKILL.md'), 'utf8')
+    assert.match(openCodeSkill, /El conector de Atlassian en OpenCode/)
+    assert.doesNotMatch(openCodeSkill, /El conector de Atlassian en Codex/)
+    assert.equal(existsSync(join(box.opencode, 'commands', 'bita-stop.md')), true)
+    assert.equal(existsSync(join(box.opencode, 'plugins', 'bita.ts')), true)
+    const openCodeConfig = readJson(join(box.opencode, 'opencode.json')) as { mcp: Record<string, { url: string }> }
+    assert.equal(openCodeConfig.mcp['atlassian']?.url, ATLASSIAN_MCP_URL)
+
+    const codexSkill = readFileSync(join(box.agentsSkills, 'bita', 'SKILL.md'), 'utf8')
+    assert.match(codexSkill, /El conector de Atlassian en Codex/)
+    assert.doesNotMatch(codexSkill, /El conector de Atlassian en OpenCode/)
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    assert.equal(codexHooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook codex')
+    assert.ok(existsSync(join(box.codex, 'prompts', 'bita-start.md')))
+    assert.ok(readFileSync(join(box.codex, 'config.toml'), 'utf8').includes(`url = "${ATLASSIAN_MCP_URL}"`))
+
+    const extension = join(box.gemini, 'extensions', 'bita')
+    const geminiSkill = readFileSync(join(extension, 'skills', 'bita', 'SKILL.md'), 'utf8')
+    assert.match(geminiSkill, /El conector de Atlassian en Gemini CLI/)
+    assert.doesNotMatch(geminiSkill, /El conector de Atlassian en Codex/)
+    assert.ok(existsSync(join(extension, 'commands', 'bita-start.toml')))
+    const geminiHooks = readJson(join(extension, 'hooks', 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    assert.equal(geminiHooks.hooks['AfterTool']?.[0]?.hooks[0]?.command, 'bita hook gemini')
+    assert.equal(geminiHooks.hooks['BeforeAgent']?.[0]?.hooks[0]?.command, 'bita hook gemini')
+    const geminiManifest = readJson(join(extension, 'gemini-extension.json')) as { mcpServers: Record<string, { httpUrl: string }> }
+    assert.equal(geminiManifest.mcpServers['atlassian']?.httpUrl, ATLASSIAN_MCP_URL)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true })
   }
 })
 
-test('keeps Claude on the shared skill without client-specific Atlassian guidance', async () => {
-  const skill = await readFile(join(packageRoot(), 'skill', 'SKILL.md'), 'utf8')
-
-  assert.doesNotMatch(skill, /El conector de Atlassian en OpenCode/)
-  assert.doesNotMatch(skill, /El conector de Atlassian en Codex/)
-})
-
-test('configures OpenCode Atlassian MCP without authenticating', async () => {
-  const calls: Array<{ command: string; args: readonly string[] }> = []
-  const environment: AtlassianMcpEnvironment = {
-    which: async () => '/bin/opencode',
-    run: async (command, args) => {
-      calls.push({ command, args })
-    },
-  }
-
-  const result = await ensureOpenCodeAtlassianMcp({}, environment)
-
-  assert.equal(result.state, 'installed')
-  assert.deepEqual(calls, [
-    {
-      command: '/bin/opencode',
-      args: ['mcp', 'add', '--global', 'atlassian', '--url', ATLASSIAN_MCP_URL],
-    },
-  ])
-})
-
-test('preserves an existing Codex config while adding Atlassian MCP', async () => {
-  const directory = await temporaryDirectory()
-  const configPath = join(directory, 'config.toml')
+test('running setup twice keeps the settings and hooks without duplicates', () => {
+  const box = sandbox()
   try {
-    await writeFile(configPath, '[mcp_servers.context7]\nurl = "https://example.com/mcp"\n')
-
-    const first = await ensureCodexAtlassianMcp(configPath)
-    const second = await ensureCodexAtlassianMcp(configPath)
-    const config = await readFile(configPath, 'utf8')
-
-    assert.equal(first.state, 'installed')
-    assert.equal(second.state, 'present')
-    assert.match(config, /\[mcp_servers\.context7\]/)
-    assert.match(config, /\[mcp_servers\.atlassian\]/)
-    assert.ok(config.includes(`url = "${ATLASSIAN_MCP_URL}"`))
-    assert.equal(await exists(`${configPath}.backup`), true)
+    mkdirSync(box.codex, { recursive: true })
+    writeFileSync(join(box.codex, 'hooks.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo keep' }] }] } }))
+    setup(box, '--target', 'claude,codex')
+    setup(box, '--target', 'claude,codex')
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    assert.equal(codexHooks.hooks['Stop']?.[0]?.hooks[0]?.command, 'echo keep')
+    assert.equal(codexHooks.hooks['SessionStart']?.length, 1)
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
+    const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] }; hooks: Record<string, unknown[]> }
+    assert.equal(settings.permissions.allow.filter((rule) => rule === 'Bash(bita start:*)').length, 1)
+    assert.equal(settings.hooks['PostToolUse']?.length, 2)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true })
   }
 })
 
-test('preserves an existing Codex hook configuration', async () => {
-  const directory = await temporaryDirectory()
-  const hooksPath = join(directory, 'hooks.json')
+test('the old draw.io and recap flags are accepted and ignored with a warning', () => {
+  const box = sandbox()
   try {
-    await writeFile(hooksPath, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo keep' }] }] } }))
-    await run('node', ['scripts/merge-codex-hooks.mjs', hooksPath])
-
-    const hooks = JSON.parse(await readFile(hooksPath, 'utf8')) as {
-      hooks: Record<string, Array<{ hooks?: Array<{ command?: string }> }>>
-    }
-    assert.equal(hooks.hooks.Stop?.[0]?.hooks?.[0]?.command, 'echo keep')
-    assert.equal(await exists(`${hooksPath}.backup`), true)
+    const run = spawnSync(process.execPath, [bin, 'setup', '--target', 'gemini', '--no-drawio', '--no-recap', '--no-docs-git', '--no-atlassian'], {
+      cwd: box.root,
+      env: box.env,
+      encoding: 'utf8',
+    })
+    assert.equal(run.status, 0, run.stderr)
+    assert.match(run.stderr, /--no-drawio is ignored/)
+    assert.match(run.stderr, /--no-recap is ignored: .*npm i -g @kikedealba\/recap && recap setup/)
+    const geminiManifest = readJson(join(box.gemini, 'extensions', 'bita', 'gemini-extension.json'))
+    assert.equal(geminiManifest['mcpServers'], undefined)
+    assert.equal(existsSync(join(box.claude, 'skills')), false)
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true })
   }
+})
+
+test('app install points to the Den release page instead of installing', () => {
+  const box = sandbox()
+  try {
+    const run = spawnSync(process.execPath, [bin, 'app', 'install', '--json'], { cwd: box.root, env: box.env, encoding: 'utf8' })
+    assert.equal(run.status, 0, run.stderr)
+    const envelope = JSON.parse(run.stdout) as { data: { installed: boolean; url: string } }
+    assert.equal(envelope.data.installed, false)
+    assert.match(envelope.data.url, /bita-desktop\/releases/)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('the shared skill keeps the agent-specific sections in agent blocks', () => {
+  const skill = readFileSync(join(repo, 'skill', 'SKILL.md'), 'utf8')
+  assert.match(skill, /^::: agent codex$/m)
+  assert.match(skill, /^::: agent opencode$/m)
+  assert.match(skill, /^::: agent gemini$/m)
+  assert.equal(existsSync(join(repo, 'skill-codex')), false)
+  assert.equal(existsSync(join(repo, 'skill-opencode')), false)
 })

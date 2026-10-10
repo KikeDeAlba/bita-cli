@@ -857,8 +857,10 @@ deja título, proyecto, página, backlog y minuta, y `/bita-stop` explica cómo
 reportarlo y qué hacer si `wrapup.projectResolved` es false. Para cambiarle el
 proyecto a una página que ya existe: `bita docs page move <pageId> --project <X>`.
 
-`bita setup` instala recap (app, CLI, plugin, modelos y hook). Si `bita hooks`
-no lo muestra, sugiere correr `bita setup` antes de prometer que se grabará.
+recap se instala aparte (`npm i -g @kikedealba/recap && recap setup`) y se
+suscribe solo a los eventos de bita desde su propio manifiesto. Si `bita hooks`
+no lo muestra entre los suscriptores, sugiere instalarlo antes de prometer que
+se grabará.
 
 Elige el tipo por el contexto; si no queda claro si es remota o presencial,
 pregunta solo eso. `start`, `stop`, `cancel` y un `amend` que cambia el tipo
@@ -1001,7 +1003,7 @@ bita docs diagrams ls <pageId>                              qué hay y si su ren
    ````
 
 4. `bita docs diagrams render <pageId>`. Sin draw.io Desktop falla con
-   `DRAWIO_MISSING`: `bita setup` lo instala.
+   `DRAWIO_MISSING`: hay que instalar draw.io Desktop aparte.
 
 El render de mermaid usa `mermaid-cli` con el Chrome instalado; el de draw.io,
 draw.io Desktop. Los dos quedan en `<página>.assets/` en tema claro, y solo se
@@ -1200,3 +1202,42 @@ comportamiento.
 - Cuidado con títulos genéricos ("daily", "junta", "soporte"): pueden colapsar
   semanas en un issue gigante. El rango de fechas por grupo lo hace visible en la
   propuesta.
+
+::: agent codex
+## El conector de Atlassian en Codex
+
+Jira y Confluence se operan mediante el MCP oficial de Atlassian, salvo en los
+proyectos con `atlassian.via: "cli"` (ver «Atlassian por proyecto: MCP o CLI»). `bita setup`
+lo registra en `~/.codex/config.toml`, pero la autenticación se hace fuera de
+`bita` con `codex mcp login atlassian`.
+
+Codex puede mostrar los nombres de las herramientas sin el prefijo del servidor.
+Usa la herramienta Jira equivalente disponible en el servidor y no inventes una
+variante por diferencias de nombres.
+:::
+
+::: agent opencode
+## El conector de Atlassian en OpenCode
+
+Jira y Confluence se operan mediante el MCP oficial de Atlassian, salvo en los
+proyectos con `atlassian.via: "cli"` (ver «Atlassian por proyecto: MCP o CLI»). `bita setup`
+lo registra en la configuración global de OpenCode, pero la autenticación se
+hace fuera de `bita` desde `/mcps`.
+
+Las herramientas pueden aparecer con el prefijo `atlassian_` o dentro del grupo
+`tools.atlassian`, según la configuración de Code Mode. Usa la herramienta Jira
+equivalente disponible en el servidor y no inventes una variante por diferencias
+de nombres.
+:::
+
+::: agent gemini
+## El conector de Atlassian en Gemini CLI
+
+Jira y Confluence se operan mediante el MCP oficial de Atlassian, salvo en los
+proyectos con `atlassian.via: "cli"` (ver «Atlassian por proyecto: MCP o CLI»). `bita setup`
+lo declara en la extensión `bita` de Gemini CLI (`~/.gemini/extensions/bita`),
+pero la autenticación se hace fuera de `bita` con `/mcp auth atlassian`.
+
+Usa la herramienta Jira equivalente disponible en el servidor y no inventes una
+variante por diferencias de nombres.
+:::

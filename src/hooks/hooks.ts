@@ -2,11 +2,14 @@ import { spawn } from 'node:child_process'
 import { appendFile, mkdir, open } from 'node:fs/promises'
 import path from 'node:path'
 import { SCHEMA_VERSION } from '../config/constants.ts'
+import type { Listener as KitListener } from '@kikedealba/kit/events'
 import type { EnrichedTimeEntry } from '../domain/types.ts'
 
-export type HookEvent = 'start' | 'stop' | 'cancel' | 'amend'
+export type HookEvent = 'start' | 'stop' | 'cancel' | 'amend' | 'delete' | 'merge'
 
-export const HOOK_EVENTS: readonly HookEvent[] = ['start', 'stop', 'cancel', 'amend']
+export const HOOK_EVENTS: readonly HookEvent[] = ['start', 'stop', 'cancel', 'amend', 'delete', 'merge']
+
+export const EVENT_SOURCE = 'bita'
 
 export interface HookConfig {
   on: HookEvent[]
@@ -20,6 +23,7 @@ export interface HookPayload {
   previousKind?: string | null
   docPath: string | null
   pageIds?: number[]
+  mergedIds?: number[]
 }
 
 export interface HookTarget {
@@ -28,6 +32,7 @@ export interface HookTarget {
 }
 
 export const NO_HOOKS_ENV_VAR = 'BITA_NO_HOOKS'
+export const NO_EVENTS_ENV_VAR = 'KIT_NO_EVENTS'
 export function hooksLogPath(databasePath: string): string {
   return path.join(path.dirname(path.resolve(databasePath)), 'hooks.log')
 }
@@ -78,18 +83,79 @@ export function hookEnvironment(payload: HookPayload, target: HookTarget): NodeJ
   }
 }
 
-export function hookDocument(payload: HookPayload, target: HookTarget): string {
-  return `${JSON.stringify({
+export function eventDocument(payload: HookPayload, target: HookTarget): Record<string, unknown> {
+  return {
     schemaVersion: SCHEMA_VERSION,
     event: payload.event,
     entry: payload.entry,
     previousKind: payload.previousKind ?? null,
     docPath: payload.docPath,
     pageIds: payload.pageIds ?? [],
+    ...(payload.mergedIds ? { mergedIds: payload.mergedIds } : {}),
     databasePath: target.databasePath,
     docsRoot: target.docsRoot,
+  }
+}
+
+export function hookDocument(payload: HookPayload, target: HookTarget): string {
+  return `${JSON.stringify({
+    ...eventDocument(payload, target),
+    source: EVENT_SOURCE,
     firedAt: new Date().toISOString(),
   })}\n`
+}
+
+function flagSet(value: string | undefined): boolean {
+  return value !== undefined && value !== '' && value !== '0'
+}
+
+export function eventsDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return flagSet(env[NO_HOOKS_ENV_VAR]) || flagSet(env[NO_EVENTS_ENV_VAR])
+}
+
+export function configListeners(hooks: readonly HookConfig[]): KitListener[] {
+  return hooks.map((hook) => ({
+    source: 'config',
+    owner: 'config.json',
+    events: [...hook.on],
+    ...(hook.when?.kind ? { filter: { kind: [...hook.when.kind] } } : {}),
+    command: [...hook.command],
+  }))
+}
+
+type KitEvents = typeof import('@kikedealba/kit/events')
+
+let kitEvents: Promise<KitEvents | null> | undefined
+
+export function loadKitEvents(): Promise<KitEvents | null> {
+  kitEvents ??= import('@kikedealba/kit/events').then(
+    (module) => module,
+    () => null,
+  )
+  return kitEvents
+}
+
+export async function fireEvents(
+  hooks: readonly HookConfig[],
+  payloads: readonly HookPayload[],
+  target: HookTarget,
+  logPath: string = hooksLogPath(target.databasePath),
+  kit: KitEvents | null | undefined = undefined,
+): Promise<number> {
+  if (payloads.length === 0 || eventsDisabled()) return 0
+  const events = kit === undefined ? await loadKitEvents() : kit
+  if (!events) return fireHooks(hooks, payloads, target, logPath)
+  const result = await events.fireEvents(
+    payloads.map((payload) => ({
+      tool: EVENT_SOURCE,
+      event: payload.event,
+      attributes: { kind: [payload.entry.kind, payload.previousKind] },
+      document: eventDocument(payload, target),
+      env: hookEnvironment(payload, target),
+    })),
+    { logPath, extraListeners: configListeners(hooks), suppressEnvVars: [NO_HOOKS_ENV_VAR] },
+  )
+  return result.launched
 }
 
 export async function fireHooks(
@@ -98,7 +164,7 @@ export async function fireHooks(
   target: HookTarget,
   logPath: string = hooksLogPath(target.databasePath),
 ): Promise<number> {
-  if (process.env[NO_HOOKS_ENV_VAR]) return 0
+  if (eventsDisabled()) return 0
   let launched = 0
   for (const payload of payloads) {
     for (const hook of matchingHooks(hooks, payload)) {

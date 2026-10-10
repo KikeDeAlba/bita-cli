@@ -3,7 +3,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${BITA_TARGET:-claude}"
-NO_DRAWIO=0
 NO_ATLASSIAN=0
 
 info() { printf '  %s\n' "$1"; }
@@ -21,6 +20,22 @@ require_node() {
     exit 1
   fi
   info "node $(node -v)"
+}
+
+install_dependencies() {
+  if [ -d "$REPO_ROOT/node_modules/@kikedealba/kit" ]; then
+    info "dependencies already installed"
+    return
+  fi
+  if command -v pnpm >/dev/null 2>&1; then
+    (cd "$REPO_ROOT" && pnpm install --prod --frozen-lockfile)
+  elif command -v npm >/dev/null 2>&1; then
+    (cd "$REPO_ROOT" && npm install --omit=dev --no-audit --no-fund)
+  else
+    warn "neither pnpm nor npm is on PATH; install the dependencies by hand"
+    exit 1
+  fi
+  info "dependencies installed"
 }
 
 link() {
@@ -47,7 +62,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --no-drawio)
-      NO_DRAWIO=1
+      warn "--no-drawio is ignored: bita no longer sets up draw.io"
       shift
       ;;
     --no-atlassian)
@@ -64,6 +79,10 @@ done
 echo "bita — installing the $TARGET integration"
 echo
 require_node
+
+echo
+echo "Dependencies"
+install_dependencies
 
 echo
 echo "Binary"
@@ -95,9 +114,6 @@ fi
 echo
 echo "Integration"
 SETUP_ARGS=(--target "$TARGET")
-if [ "$NO_DRAWIO" -eq 1 ]; then
-  SETUP_ARGS+=(--no-drawio)
-fi
 if [ "$NO_ATLASSIAN" -eq 1 ]; then
   SETUP_ARGS+=(--no-atlassian)
 fi
