@@ -4,6 +4,9 @@ import { fromBoolean, toBoolean } from './rows.ts'
 import { LOCAL_PROJECT_ID_CEILING } from './schema.ts'
 import { queryAll, queryOne } from './query.ts'
 import { ensureProjectKey } from './project-keys.ts'
+import { readSetting, writeSetting } from './settings.ts'
+
+export const HIGHEST_LOCAL_ID_SETTING = 'projects.highestLocalId'
 
 interface RawProject {
   id: number
@@ -32,7 +35,15 @@ export function nextLocalProjectId(db: DatabaseSync): number {
     db.prepare('SELECT COALESCE(MAX(id), 0) + 1 AS next FROM projects WHERE id < ?'),
     LOCAL_PROJECT_ID_CEILING,
   )
-  return row?.next ?? 1
+  const recorded = Number(readSetting(db, HIGHEST_LOCAL_ID_SETTING) ?? 0)
+  const floor = Number.isInteger(recorded) && recorded > 0 && recorded < LOCAL_PROJECT_ID_CEILING ? recorded + 1 : 1
+  return Math.max(row?.next ?? 1, floor)
+}
+
+function rememberLocalId(db: DatabaseSync, id: number): void {
+  if (id >= LOCAL_PROJECT_ID_CEILING) return
+  const recorded = Number(readSetting(db, HIGHEST_LOCAL_ID_SETTING) ?? 0)
+  if (!Number.isInteger(recorded) || id > recorded) writeSetting(db, HIGHEST_LOCAL_ID_SETTING, String(id))
 }
 
 export interface NewProject {
@@ -58,6 +69,7 @@ export function insertProject(db: DatabaseSync, project: NewProject): ProjectRow
     project.createdAt,
   )
   ensureProjectKey(db, id)
+  rememberLocalId(db, id)
   const created = findProjectById(db, id)
   if (!created) throw new Error(`project ${id} vanished right after being inserted`)
   return created
@@ -100,5 +112,6 @@ export function setProjectActive(db: DatabaseSync, id: number, active: boolean):
 }
 
 export function deleteProject(db: DatabaseSync, id: number): boolean {
+  rememberLocalId(db, id)
   return db.prepare('DELETE FROM projects WHERE id = ?').run(id).changes > 0
 }
