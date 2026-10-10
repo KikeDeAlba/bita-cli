@@ -28,8 +28,14 @@ Quedan dos ventajas que no se buscaban:
 ## Requisitos
 
 **Node 24 o superior.** No es negociable: bita usa `node:sqlite` y el borrado de
-tipos nativo, así que desde un clon corre los `.ts` sin compilar. No hay
-dependencias de runtime ni bundler.
+tipos nativo, así que desde un clon corre los `.ts` sin compilar.
+
+La única dependencia que importa para encontrarse con las demás herramientas es
+[`@kikedealba/kit`](https://github.com/KikeDeAlba/kit), y se carga solo cuando
+hace falta: `setup`, el almacén de credenciales y el disparo de eventos. El
+camino de arranque y los comandos de siempre corren sin `node_modules` (la copia
+que lleva la app de escritorio depende de eso); sin kit, los eventos se reparten
+solo a los hooks de `config.json`.
 
 El paquete de npm sí lleva JavaScript compilado, y no por gusto: node **se
 niega** a borrar tipos en archivos bajo `node_modules`, sin bandera que lo
@@ -47,46 +53,59 @@ node -v    # debe decir v24 o más
 ```sh
 npm install -g @kikedealba/bita
 bita setup
-bita app install
 ```
 
-`bita setup` instala la integración de Claude por defecto. Para instalar otra
-superficie:
+`bita setup` hace dos cosas:
+
+1. **Registra bita** en el registro de kit
+   (`~/.config/kikedealba/tools.d/bita.json`, o `KIT_REGISTRY_DIR`), con la
+   línea de comando absoluta (node + script), sus capacidades
+   (`time.entries.read`, `time.entries.write`, `time.notes`, `time.events`) y
+   los eventos que emite (`start`, `stop`, `cancel`, `amend`, `delete`,
+   `merge`). Así lo encuentran recap, inkwell, Den y las demás, sin depender
+   del `PATH`. `--no-register` se lo salta.
+2. **Instala la integración** con los agentes de código que encuentre: Claude
+   Code, OpenCode, Codex y Gemini CLI. Para elegir:
 
 ```sh
-bita setup --target opencode
-bita setup --target codex
+bita setup --target claude
+bita setup --target codex,gemini
 bita setup --target all
 ```
 
-OpenCode recibe la skill y los comandos en `~/.config/opencode`, además de un
-plugin que conecta los hooks de bita con sus sesiones y herramientas. También
-se añade el MCP oficial de Atlassian a la configuración global de OpenCode.
-Después de abrir OpenCode, autentícalo desde `/mcps`.
+| Agente | Qué recibe |
+|---|---|
+| Claude Code | `~/.claude/skills/bita`, `~/.claude/commands` y los permisos y hooks en `settings.json` |
+| OpenCode | `~/.config/opencode/skills/bita`, `commands`, `plugins/bita.*` y el MCP de Atlassian en `opencode.json` |
+| Codex | `~/.agents/skills/bita`, `~/.codex/prompts`, `~/.codex/hooks.json` y el MCP de Atlassian en `~/.codex/config.toml` |
+| Gemini CLI | La extensión `~/.gemini/extensions/bita`: skill, comandos, hooks (`bita hook gemini`) y el MCP de Atlassian |
 
-Codex recibe la skill en `~/.agents/skills/bita`, sus hooks en `~/.codex/hooks.json`
-y el MCP oficial de Atlassian en `~/.codex/config.toml`. La autenticación queda
-fuera de la instalación: ejecútala con `codex mcp login atlassian`. Codex puede
-pedir revisar y confiar los hooks desde `/hooks` antes de ejecutarlos.
+Hay una sola skill (`skill/SKILL.md`); lo que solo aplica a un agente va en
+bloques `::: agent <nombre>` y kit genera la copia de cada uno. Esas copias no
+siguen al paquete solas: **después de actualizar bita, vuelve a correr
+`bita setup`** para que los agentes lean la skill nueva. Los comandos y el
+plugin de OpenCode sí son symlinks al paquete.
 
-El MCP usa OAuth y `bita` no guarda credenciales. Para omitir su configuración:
+Si OpenCode o Codex ya tienen un MCP llamado `atlassian`, se respeta tal cual.
 
-```sh
-bita setup --target opencode --no-atlassian
-bita setup --target codex --no-atlassian
-```
+El MCP de Atlassian usa OAuth y `bita` no guarda esas credenciales: en OpenCode
+se autentica desde `/mcps`, en Codex con `codex mcp login atlassian` y en
+Gemini con `/mcp auth atlassian`. Codex puede pedir revisar y confiar los hooks
+desde `/hooks`. `--no-atlassian` omite el MCP; `--no-settings`, los permisos y
+hooks de Claude.
 
-La instalación de Claude enlaza la skill y los comandos de barra en `~/.claude`
-apuntando al paquete instalado, y mete los permisos y el hook `SessionStart` en
-tu `settings.json`. Al actualizar el paquete se actualizan con él, porque son
-symlinks. También deja listo draw.io para los diagramas elaborados:
-- agrega el MCP de draw.io a Claude Code (`claude mcp add --scope user drawio -- npx -y @drawio/mcp`) si no está;
-- instala draw.io Desktop con `brew install --cask drawio` si falta, porque es lo que exporta los `.drawio` a PNG.
+Lo que antes instalaba bita ahora se instala aparte, cada uno con su propio
+`setup`:
 
-`--no-drawio` se salta las dos cosas. `bita app install` descarga la última
-release del escritorio y la deja en `/Applications`.
+- **recap**: `npm i -g @kikedealba/recap && recap setup`. Se suscribe solo a
+  los eventos de bita desde su manifiesto.
+- **draw.io**: el MCP (`claude mcp add --scope user drawio -- npx -y @drawio/mcp`)
+  y draw.io Desktop, que es lo que exporta los `.drawio` a PNG.
+- **Den**, la app de escritorio: desde
+  [sus releases](https://github.com/KikeDeAlba/bita-desktop/releases/latest).
+  `bita app install` solo lo recuerda.
 
-Node 24 o más nuevo, por `node:sqlite`.
+`--no-drawio` y `--no-recap` se aceptan y se ignoran con un aviso.
 
 ### Cómo se publica
 
@@ -118,58 +137,27 @@ cd bita-cli
 pnpm install
 ```
 
-Las únicas dependencias son TypeScript y `@types/node`, y solo para el
-`typecheck`.
-
 ### 2. Correr el instalador
 
 ```sh
 ./scripts/install.sh --target all
 ```
 
-Instala el binario y la integración seleccionada de forma idempotente: puedes volver a correrlo cuando
+Instala las dependencias si faltan, enlaza el binario y corre `bita setup` con
+el target elegido, de forma idempotente: puedes volver a correrlo cuando
 quieras.
 
 | Paso | Qué hace |
 |---|---|
+| Dependencias | `pnpm install --prod` (o `npm install --omit=dev`) si no está `@kikedealba/kit` |
 | Binario | Enlaza `bita` en tu directorio de binarios (`$PNPM_HOME/bin`, o `~/.local/bin`) |
-| Claude | `~/.claude/skills/bita`, `~/.claude/commands` y `settings.json` |
-| OpenCode | `~/.config/opencode/skills/bita` con su skill específica, `commands`, `plugins/bita.*` y MCP de Atlassian |
-| Codex | `~/.agents/skills/bita` con su skill específica, `~/.codex/hooks.json`, `~/.codex/config.toml` y MCP de Atlassian |
-| recap | Con `claude` o `all`, en Mac con Apple Silicon: el grabador de reuniones (ver abajo) |
+| Setup | El registro en kit y la integración con los agentes (ver «Desde npm») |
 
-Las skills, comandos y plugins son **symlinks al repo**, a propósito: cuando
-actualizas el repo se actualizan contigo. Los archivos de configuración se
-fusionan sin duplicar hooks y conservan el resto de sus entradas.
-
-Antes de tocar `settings.json` deja una copia en `settings.json.backup`, y si no
-lo puede parsear no lo escribe: imprime el bloque para que lo pegues a mano.
-
-Para instalar una sola superficie:
-
-```sh
-./scripts/install.sh --target opencode
-./scripts/install.sh --target codex
-```
-
-#### recap
-
-Con el target `claude` o `all`, `bita setup` también deja listo
-[recap](https://github.com/KikeDeAlba/recap), el grabador que sigue a los
-contadores de reunión (ver «Reuniones y hooks»):
-
-1. Baja la última release (`Recap-<versión>-macos-arm64.zip`) a
-   `~/Applications/Recap.app`, o la actualiza si está atrasada.
-2. Enlaza `recap` en el primer directorio del `PATH` donde se pueda escribir
-   (`~/.local/bin`, `/opt/homebrew/bin` o `/usr/local/bin`); si ninguno está en
-   el `PATH`, lo deja en `~/.local/bin` y dice qué agregar a `~/.zshrc`.
-3. Instala el plugin de Claude Code (`claude plugin install recap@recap`).
-4. Corre `recap setup --install-deps`: `brew install ffmpeg whisper-cpp`, el
-   modelo de whisper (≈1.6 GB la primera vez), el hook en `bita hooks` y, si hay
-   terminal, los permisos de micrófono y pantalla.
-
-`--no-recap` se lo salta. Para probar un build sin publicar:
-`BITA_RECAP_ZIP=/ruta/Recap-0.1.0-macos-arm64.zip bita setup`.
+Los comandos y plugins son **symlinks al repo**, a propósito: cuando actualizas
+el repo se actualizan contigo. La skill se genera por agente, así que tras
+editar `skill/SKILL.md` hay que volver a correr `bita setup`. Los archivos de configuración se
+fusionan sin duplicar hooks y conservan el resto de sus entradas, con una copia
+`.backup` antes de escribir; si no los puede parsear, no los tocan.
 
 Si tu directorio de binarios está en otro sitio:
 
@@ -249,7 +237,7 @@ resto del mapeo: la transición de cierre, los tipos y las Historias ya creadas,
 que se guardan por épica.
 
 Un proyecto también puede trabajar con Jira y Confluence **por el CLI** en vez
-del MCP, con un token de API guardado en el Keychain. Ver
+del MCP, con un token de API guardado en el almacén de credenciales del sistema. Ver
 [Atlassian: sitios, MCP o CLI](#atlassian-sitios-mcp-o-cli).
 
 ## Uso
@@ -534,8 +522,11 @@ también lo fuerzan. `bita doctor` dice qué encontró y si está delegando.
 ## Atlassian: sitios, MCP o CLI
 
 bita guarda uno o varios **sitios** de Atlassian, cada uno con su correo; el
-token de API vive en el Keychain de macOS (servicio `bita-atlassian`, cuenta
-`<sitio>|<correo>`). Una configuración de la 0.14 con `jira.siteUrl` y
+token de API vive en el almacén de credenciales del sistema vía kit (servicio
+`bita-atlassian`, cuenta `<sitio>|<correo>`): el Llavero en macOS, el
+Administrador de credenciales en Windows y Secret Service en Linux, con un
+archivo `0600` de respaldo (`KIT_CREDENTIALS=file` lo fuerza). Los tokens que ya
+estaban en el Llavero se siguen leyendo igual. Una configuración de la 0.14 con `jira.siteUrl` y
 `jira.email` se lee como el primer sitio, y su token se sigue encontrando bajo la
 cuenta vieja (solo el correo).
 
@@ -700,43 +691,60 @@ la entrada, nunca el genérico «Remote meeting». Por defecto se guarda en
 `/Applications`. Las fuentes (Instrument Sans e IBM Plex Mono, OFL) van en
 `assets/export/fonts`.
 
-### Hooks
+### Eventos y hooks
 
-Un hook es un comando que bita lanza cuando un contador arranca (`start`), se
-para (`stop`), se cancela (`cancel`) o cambia de tipo (`amend`). Opcionalmente
-solo para ciertos tipos:
+bita emite un evento cuando un contador arranca (`start`), se para (`stop`), se
+cancela (`cancel`), cambia de tipo (`amend`), se borra (`delete`) o absorbe a
+otros (`merge`). Lo escuchan dos tipos de oyente:
+
+- **Herramientas instaladas**, que se suscriben desde **su propio** manifiesto
+  en el registro de kit, sin tocar la configuración de bita. recap, por
+  ejemplo, declara `start`, `stop`, `cancel` y `amend` con el filtro
+  `kind: [remote-meeting, in-person-meeting]`; inkwell, `delete` y `merge`.
+- **Hooks manuales** en `~/.config/bita/config.json`, que siguen funcionando
+  igual:
 
 ```sh
-bita hooks add --on start,stop,cancel,amend --kind remote-meeting,in-person-meeting \
-  -- /Users/me/.local/bin/recap bita-hook
-bita hooks
+bita hooks add --on start,stop --kind remote-meeting -- /ruta/absoluta/comando
+bita hooks             # los manuales y los suscriptores del registro
 bita hooks remove 1
 ```
-
-Se guardan en `~/.config/bita/config.json`:
 
 ```json
 "hooks": [
   {
-    "on": ["start", "stop", "cancel", "amend"],
-    "when": { "kind": ["remote-meeting", "in-person-meeting"] },
-    "command": ["/Users/me/.local/bin/recap", "bita-hook"]
+    "on": ["start", "stop"],
+    "when": { "kind": ["remote-meeting"] },
+    "command": ["/ruta/absoluta/comando"]
   }
 ]
 ```
 
-- El comando recibe por stdin un JSON con `event`, `entry` (la entrada
-  enriquecida, con `kind`), `previousKind` (en `amend`), `docPath`,
-  `databasePath` y `docsRoot`, y además las variables `BITA_HOOK_EVENT`,
+- El comando recibe por stdin un JSON con `schemaVersion`, `event`, `source`
+  (`"bita"`), `entry` (la entrada enriquecida, con `kind`), `previousKind` (en
+  `amend`), `docPath`, `pageIds`, `databasePath`, `docsRoot`, `firedAt` y, en
+  `merge`, `mergedIds` (las entradas absorbidas; `entry` es la que queda).
+  También recibe `KIT_EVENT`, `KIT_EVENT_SOURCE`, `BITA_HOOK_EVENT`,
   `BITA_ENTRY_ID`, `BITA_ENTRY_KIND`, `BITA_DB_PATH` y `BITA_DOCS_DIR`.
-- Corre desacoplado, desde `/`: bita espera solo a entregarle el JSON, nunca a
-  que termine, y un hook que falla no hace fallar el comando. Su salida va a
-  `hooks.log`, junto a la base de datos.
+- Corre desacoplado, desde la raíz del disco: bita espera solo a entregarle el
+  JSON, nunca a que termine, y un oyente que falla no hace fallar el comando.
+  Su salida va a `hooks.log`, junto a la base de datos.
 - En `amend`, el filtro por tipo coincide con el tipo nuevo **o** con el
   anterior, para que quitar `--kind` también avise.
-- **Usa rutas absolutas**: bita-desktop lanza el CLI con un `PATH` mínimo.
-- `BITA_NO_HOOKS=1` los apaga todos.
+- **Usa rutas absolutas**: Den lanza el CLI con un `PATH` mínimo.
+- `BITA_NO_HOOKS=1` o `KIT_NO_EVENTS=1` los apagan todos.
 - `meta.hooksFired` en el JSON dice cuántos se lanzaron.
+- Si kit no se puede cargar (la copia sin `node_modules`), solo se lanzan los
+  hooks de `config.json`.
+
+### Para otras herramientas
+
+```sh
+bita capabilities --json       # nombre, versión, sobre, capacidades y eventos
+bita entries get <id> --json   # { id, description, kind, projectId, projectName, startedAt, stoppedAt, note }
+```
+
+`note` es el markdown del documento de la entrada, o `null` si no tiene.
 
 ## Proyectos y repositorios
 
@@ -844,11 +852,10 @@ cambian en el mismo commit.
 
 ## La skill
 
-`skill/SKILL.md` es la skill que recibe Claude. Las variantes
-`skill-opencode/SKILL.md` y `skill-codex/SKILL.md` conservan el procedimiento
-común y añaden únicamente las instrucciones de su cliente. Cada una está
-enlazada por symlink desde la integración correspondiente, para que ningún
-cliente cargue las instrucciones de otro.
+`skill/SKILL.md` es la única skill, para los cuatro agentes. Lo que aplica solo
+a uno (el conector de Atlassian en Codex, OpenCode o Gemini CLI) va en bloques
+`::: agent <nombre>`; al instalar, kit genera una copia por agente sin los
+bloques de los demás, para que ningún cliente cargue las instrucciones de otro.
 
 ## Desarrollo
 
@@ -858,6 +865,9 @@ pnpm test
 ```
 
 Los tests corren con `node --test` sobre los `.ts` directamente. No hay bundler.
+`test/helpers/isolate.ts` apunta `KIT_REGISTRY_DIR` a un directorio temporal
+para que ninguna prueba lance las herramientas registradas de verdad, y
+`test/kit.test.ts` corre las pruebas de conformidad de kit.
 
 ## Estructura
 
@@ -871,11 +881,11 @@ src/jira/      cliente REST de Jira y markdown a ADF
 src/confluence/ cliente REST de Confluence, conversión a storage y sincronización
 src/export/    la minuta de una reunión a HTML y a PDF con Chrome
 assets/export/ la hoja de impresión y las fuentes de la minuta
-src/state/     configuración y notas heredadas en disco
-src/integrations/ adaptadores para OpenCode y otros agentes
-skill/         la skill de Claude
-skill-opencode/ la skill de OpenCode
-skill-codex/   la skill de Codex
+src/state/     configuración, credenciales y notas heredadas en disco
+src/hooks/     los eventos: suscriptores del registro de kit y hooks de config.json
+src/kit/       el manifiesto de bita, sus capacidades y la integración con los agentes
+src/integrations/ el plugin de OpenCode
+skill/         la skill, con bloques por agente
 commands/      los slash commands
 scripts/       el instalador
 ```

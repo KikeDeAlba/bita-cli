@@ -1,1 +1,2 @@
-minimumReleaseAgeExclude: ['@kikedealba/*']
+minimumReleaseAgeExclude:
+  - '@kikedealba/*'

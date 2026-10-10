@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { test } from 'node:test'
-import { fireHooks, matchingHooks, NO_HOOKS_ENV_VAR, parseHooks, type HookConfig } from '../src/hooks/hooks.ts'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { configListeners, fireEvents, fireHooks, matchingHooks, NO_HOOKS_ENV_VAR, parseHooks, type HookConfig } from '../src/hooks/hooks.ts'
 import { parseKind, parseKindOrClear } from '../src/domain/kind.ts'
 import { readConfig, writeConfig, emptyConfig } from '../src/state/config.ts'
 import { makeEntry } from './helpers/entries.ts'
@@ -126,6 +127,57 @@ test('BITA_NO_HOOKS turns every hook off', async () => {
     assert.equal(existsSync(join(dir, 'hooks.log')), false)
   } finally {
     delete process.env[NO_HOOKS_ENV_VAR]
+  }
+})
+
+test('config hooks become kit listeners with the kind filter', () => {
+  assert.deepEqual(configListeners([{ on: ['stop'], when: { kind: MEETINGS }, command: ['/bin/echo'] }, { on: ['delete', 'merge'], command: ['x'] }]), [
+    { source: 'config', owner: 'config.json', events: ['stop'], filter: { kind: MEETINGS }, command: ['/bin/echo'] },
+    { source: 'config', owner: 'config.json', events: ['delete', 'merge'], command: ['x'] },
+  ])
+  assert.deepEqual(
+    configListeners([
+      { on: ['stop'], when: { kind: ['remote-meeting'] }, command: ['x'] },
+      { on: ['stop'], when: { kind: ['in-person-meeting'] }, command: ['x'] },
+    ]),
+    [{ source: 'config', owner: 'config.json', events: ['stop'], filter: { kind: MEETINGS }, command: ['x'] }],
+  )
+})
+
+test('a registry subscriber filtered by kind hears an amend that leaves a meeting', async () => {
+  const dir = scratch()
+  const registry = join(dir, 'registry')
+  const out = join(dir, 'received.json')
+  const previous = process.env['KIT_REGISTRY_DIR']
+  process.env['KIT_REGISTRY_DIR'] = registry
+  try {
+    mkdirSync(registry, { recursive: true })
+    const script = `let input = ''; process.stdin.on('data', (c) => (input += c)); process.stdin.on('end', () => require('node:fs').writeFileSync(${JSON.stringify(out)}, input))`
+    writeFileSync(
+      join(registry, 'recap.json'),
+      JSON.stringify({
+        manifestVersion: 1, name: 'recap', version: '1.0.0', bin: [process.execPath], envelope: 1, capabilities: [], emits: [],
+        subscribes: [{ tool: 'bita', events: ['amend'], filter: { kind: MEETINGS }, command: [process.execPath, '-e', script] }],
+      }),
+    )
+    const launched = await fireEvents(
+      [],
+      [
+        { event: 'amend', entry: makeEntry({ id: 7, kind: null }), previousKind: 'remote-meeting', docPath: null },
+        { event: 'amend', entry: makeEntry({ id: 8, kind: null }), previousKind: null, docPath: null },
+      ],
+      { databasePath: '/data/bita.db', docsRoot: '/docs' },
+      join(dir, 'hooks.log'),
+    )
+    assert.equal(launched, 1)
+    const received = JSON.parse(await waitFor(out)) as { event: string; source: string; previousKind: string; entry: { id: number } }
+    assert.equal(received.event, 'amend')
+    assert.equal(received.source, 'bita')
+    assert.equal(received.previousKind, 'remote-meeting')
+    assert.equal(received.entry.id, 7)
+  } finally {
+    if (previous === undefined) delete process.env['KIT_REGISTRY_DIR']
+    else process.env['KIT_REGISTRY_DIR'] = previous
   }
 })
 

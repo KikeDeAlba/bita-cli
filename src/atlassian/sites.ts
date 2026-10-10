@@ -7,7 +7,7 @@ import {
   type AppConfig,
   type AtlassianSiteConfig,
 } from '../state/config.ts'
-import { deleteToken, readToken, storeToken } from '../state/keychain.ts'
+import { deleteToken, readToken, storeToken } from '../state/credentials.ts'
 import { findProjectById, findProjectByKey, findProjectByName } from '../db/projects.ts'
 import { atlassianRuntime } from './runtime.ts'
 
@@ -43,19 +43,19 @@ export function findSite(config: AppConfig, raw: string): AtlassianSiteConfig | 
 }
 
 export async function readSiteToken(site: string, email: string): Promise<string | null> {
-  const run = atlassianRuntime().security
-  return (await readToken(siteAccount(site, email), run)) ?? (await readToken(email, run))
+  const store = await atlassianRuntime().credentials()
+  return (await readToken(siteAccount(site, email), store)) ?? (await readToken(email, store))
 }
 
 export async function storeSiteToken(site: string, email: string, token: string): Promise<void> {
-  await storeToken(siteAccount(site, email), token, atlassianRuntime().security)
+  await storeToken(siteAccount(site, email), token, await atlassianRuntime().credentials())
 }
 
 export async function forgetSiteToken(config: AppConfig, site: string, email: string): Promise<boolean> {
-  const run = atlassianRuntime().security
-  const removed = await deleteToken(siteAccount(site, email), run)
+  const store = await atlassianRuntime().credentials()
+  const removed = await deleteToken(siteAccount(site, email), store)
   const sharedEmail = sitesOf(config).some((entry) => entry.site !== site && entry.email === email)
-  const legacy = sharedEmail ? false : await deleteToken(email, run)
+  const legacy = sharedEmail ? false : await deleteToken(email, store)
   return removed || legacy
 }
 
@@ -124,7 +124,7 @@ export async function credentialsFor(entry: AtlassianSiteConfig): Promise<Atlass
   const token = await readSiteToken(entry.site, entry.email)
   if (token === null) {
     throw new ConflictError(
-      `The Keychain has no Atlassian token for ${entry.email} on ${entry.site}.`,
+      `The credential store has no Atlassian token for ${entry.email} on ${entry.site}.`,
       'ATLASSIAN_LOGIN_REQUIRED',
       SITE_LOGIN_HINT,
     )

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { ConflictError, UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString, type ParsedArgs } from '../args.ts'
-import { createLocalContext } from '../local-context.ts'
+import { createLocalContext, type LocalContext } from '../local-context.ts'
 import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { renderTable } from '../table.ts'
 import { promptConfirm } from '../prompt.ts'
@@ -15,13 +15,16 @@ import {
   unsetScopeMapping,
   type AppConfig,
 } from '../../state/config.ts'
-import { listDocsForEntry } from '../../db/docs.ts'
+import { findDocForEntry, listDocsForEntry } from '../../db/docs.ts'
 import { listTouches } from '../../db/touches.ts'
 import { resolveDocPath } from '../../docs/paths.ts'
 import { removeDocument } from '../../docs/store.ts'
 import { commitDocs } from '../../docs/git.ts'
 import { enrichEntry } from '../../domain/enrich.ts'
 import { formatDuration } from '../../domain/duration.ts'
+import { pagesOfEntry } from '../../db/page-links.ts'
+import { emitHooks } from '../../hooks/emit.ts'
+import type { HookPayload } from '../../hooks/hooks.ts'
 
 const OPTIONS = {
   ids: { type: 'string' as const },
@@ -213,6 +216,22 @@ export async function applyDeletions(
   return { deleted, docsRemoved, docsKept, docsOrphaned }
 }
 
+function deletionPayloads(ctx: LocalContext, targets: DeletionTarget[]): HookPayload[] {
+  const payloads: HookPayload[] = []
+  for (const target of targets) {
+    const row = findEntryWithProject(ctx.db, target.id)
+    if (!row) continue
+    const note = findDocForEntry(ctx.db, target.id)
+    payloads.push({
+      event: 'delete',
+      entry: enrichEntry(row, ctx.timezone, ctx.now),
+      docPath: note ? resolveDocPath(ctx.docsRoot, note.relPath) : null,
+      pageIds: pagesOfEntry(ctx.db, target.id).map((link) => link.pageId),
+    })
+  }
+  return payloads
+}
+
 function describe(target: DeletionTarget): string {
   return target.description.length > 0 ? target.description : '(no title)'
 }
@@ -304,7 +323,16 @@ export async function runDelete(argv: string[]): Promise<number> {
       }
     }
 
+    const payloads = deletionPayloads(ctx, plan.targets)
     const outcome = await applyDeletions(ctx.db, plan.targets, keepDoc, ctx.docsRoot)
+    const deletedIds = new Set(outcome.deleted.map((target) => target.id))
+    const kept = new Set(outcome.docsKept)
+    const hooksFired = await emitHooks(
+      ctx,
+      payloads
+        .filter((payload) => deletedIds.has(payload.entry.id))
+        .map((payload) => ({ ...payload, docPath: payload.docPath !== null && kept.has(payload.docPath) ? payload.docPath : null })),
+    )
 
     if (json) {
       writeJson(
@@ -314,6 +342,7 @@ export async function runDelete(argv: string[]): Promise<number> {
           docsKept: outcome.docsKept,
           docsOrphaned: outcome.docsOrphaned,
           forced: force,
+          hooksFired,
         }),
       )
       return 0

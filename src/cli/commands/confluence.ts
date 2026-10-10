@@ -93,7 +93,7 @@ async function runLogout(args: ParsedArgs, json: boolean): Promise<number> {
     writeJson(successEnvelope('confluence logout', { site: entry.site, email: entry.email, removed }))
     return 0
   }
-  writeOut(removed ? `Removed the Atlassian token for ${entry.email} on ${entry.site} from the Keychain.` : 'There was no token to remove.')
+  writeOut(removed ? `Removed the Atlassian token for ${entry.email} on ${entry.site} from the credential store.` : 'There was no token to remove.')
   return 0
 }
 

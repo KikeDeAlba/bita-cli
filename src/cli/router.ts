@@ -10,8 +10,6 @@ import { runScope } from './commands/scope.ts'
 import { runAmend } from './commands/amend.ts'
 import { runDelete } from './commands/delete.ts'
 import { runDocs } from './commands/docs.ts'
-import { runApp } from './commands/app.ts'
-import { runSetup } from './commands/setup.ts'
 import { runNote } from './commands/note.ts'
 import { runNotes } from './commands/notes.ts'
 import { runHook } from './commands/hook.ts'
@@ -51,7 +49,7 @@ Backlog (pending work and findings, kept out of the pages):
   backlog edit|rm <key>      Change or remove an item (edit --project moves it and gives it that project's key)
   backlog extract            Move the pending and findings sections out of the pages (--dry-run)
 
-Atlassian sites (REST API, token in the macOS Keychain under <site>|<email>):
+Atlassian sites (REST API, token in the system credential store under <site>|<email>):
   atlassian site add         Add a site: --site URL --email E (asks for the token; --token-stdin without a terminal)
   atlassian site ls          Sites, whether the token is stored, and which projects use them (--check hits the network)
   atlassian site test <site> Check Jira and Confluence with the stored token
@@ -130,13 +128,13 @@ Docs history (the docs root is a local git repository; every bita write is a com
   docs migrate [--yes]       Turn every entry document into a page
   docs migrate --undo        Put the corpus back as it was
 
-  setup                      Install the integration for Claude, OpenCode, or Codex
+  setup                      Register bita and install the integration for Claude Code, OpenCode, Codex and Gemini CLI
+  capabilities               What this bita offers to the other tools (--json)
   doctor                     Which sibling tools (atl, inkwell, recap) kit found, and what bita hands over to them
-  app install                Download and install the desktop app
-  app version                What is installed, and what the latest release is
 
 Reporting:
   entries [preset]           List time entries
+  entries get <id>           One entry with its note as markdown
   summary [preset]           Group entries into Jira-ready tasks
   projects                   List projects and their Jira mapping
   project add "<name>"       Create a project (also rename, archive, delete)
@@ -152,8 +150,8 @@ Configuration:
   project repo suggest <id>  Repositories behind the files an entry touched, and which are mapped
   config get|set-jira        Inspect or set the local configuration
   hook session-start         Emit the Claude Code SessionStart context
-  hook codex                 Adapt a Codex lifecycle event from stdin
-  hooks [list]               Commands run when a timer starts, stops, is cancelled or changes kind
+  hook codex|gemini          Adapt a Codex or Gemini CLI lifecycle event from stdin
+  hooks [list]               Commands run on start, stop, cancel, amend, delete and merge, plus the installed tools subscribed to them
   hooks add --on E -- CMD    Register one (see Hooks options)
   hooks remove N             Remove hook number N
 
@@ -248,19 +246,21 @@ Note options:
   --limit N                  Only the first N entries
 
 Hooks options:
-  --on EVENTS                With "hooks add", comma list of start, stop, cancel, amend
+  --on EVENTS                With "hooks add", comma list of start, stop, cancel, amend, delete, merge
   --kind KINDS               With "hooks add", only entries of these kinds
   -- COMMAND ARGS            With "hooks add", the command; it gets the event as JSON on stdin
 
 Setup options:
-  --target TARGET            claude, opencode, codex, or all (default claude)
+  --target TARGETS           claude, opencode, codex, gemini, all, or a comma list (default: the agents found)
+  --agents TARGETS           Alias of --target
   --claude-dir DIR           Claude configuration directory
   --opencode-dir DIR         OpenCode configuration directory
   --codex-home DIR           Codex home directory
   --agents-home DIR          Codex skills directory parent
+  --gemini-home DIR          Directory that holds .gemini
   --no-settings              Skip Claude settings changes
-  --no-drawio                Skip draw.io setup
-  --no-recap                 Skip installing recap (meeting recorder, app, plugin and models)
+  --no-atlassian             Skip the Atlassian MCP for OpenCode, Codex and Gemini
+  --no-register              Skip registering bita for the other tools
   --no-docs-git              Skip starting the docs history
 `
 
@@ -316,9 +316,11 @@ export async function route(argv: string[]): Promise<number> {
     case 'docs':
       return runDocs(rest)
     case 'app':
-      return runApp(rest)
+      return (await import('./commands/app.ts')).runApp(rest)
     case 'setup':
-      return runSetup(rest)
+      return (await import('./commands/setup.ts')).runSetup(rest)
+    case 'capabilities':
+      return (await import('./commands/capabilities.ts')).runCapabilities(rest)
     case 'note':
       return runNote(rest)
     case 'notes':
