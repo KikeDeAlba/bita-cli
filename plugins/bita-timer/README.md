@@ -41,7 +41,14 @@ marketplace del repositorio (`.claude-plugin/marketplace.json`). Desde el
 prompt de Claude Code:
 
 ```
-/plugin install bita-timer --marketplace KikeDeAlba/bita-cli
+/plugin marketplace add KikeDeAlba/bita-cli
+/plugin install bita-timer@bita
+```
+
+O desde la terminal, junto con el plugin `bita`:
+
+```sh
+bita setup --mod
 ```
 
 Para probarlo desde una copia local del repositorio, sin instalarlo:

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentIntegration, HookMap } from '@kikedealba/kit/agents'
 import type { ToolManifest } from '@kikedealba/kit/registry'
@@ -63,7 +63,7 @@ export const RETIRED_CLAUDE_HOOKS: HookMap = {
 
 export const CLAUDE_ASK = ['Bash(bita cancel:*)']
 
-export const CLAUDE_HOOKS: HookMap = {
+export const LEGACY_CLAUDE_HOOKS: HookMap = {
   SessionStart: [
     { matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: 'bita hook session-start', timeout: 5 }] },
   ],
@@ -83,19 +83,34 @@ export const CLAUDE_HOOKS: HookMap = {
         },
       ],
     },
+    ...(RETIRED_CLAUDE_HOOKS['PostToolUse'] ?? []),
   ],
 }
 
-export const CODEX_HOOKS: HookMap = {
-  SessionStart: [{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 5 }] }],
-  UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'bita hook codex', timeout: 5 }] }],
-  PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] }],
+export const LEGACY_COMMANDS = ['bita-amend', 'bita-check', 'bita-init', 'bita-log', 'bita-start', 'bita-stop', 'bita-timers']
+
+export const CLAUDE_MARKETPLACE = { marketplace: 'KikeDeAlba/bita-cli', marketplaceName: 'bita' } as const
+export const CLAUDE_PLUGIN = 'bita'
+export const CLAUDE_MOD_PLUGIN = 'bita-timer'
+
+export const CODEX_EDIT_MATCHER = 'apply_patch|Edit|Write'
+
+export function codexHooks(editMatcher: string = CODEX_EDIT_MATCHER): HookMap {
+  return {
+    SessionStart: [{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 5 }] }],
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'bita hook codex', timeout: 5 }] }],
+    PostToolUse: [{ matcher: editMatcher, hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] }],
+  }
 }
 
-export const GEMINI_HOOKS: HookMap = {
-  SessionStart: [{ matcher: 'startup|resume|clear', hooks: [{ type: 'command', name: 'bita-session', command: 'bita hook gemini', timeout: 5000 }] }],
-  BeforeAgent: [{ hooks: [{ type: 'command', name: 'bita-prompt', command: 'bita hook gemini', timeout: 5000 }] }],
-  AfterTool: [{ matcher: '.*', hooks: [{ type: 'command', name: 'bita-tool', command: 'bita hook gemini', timeout: 10000 }] }],
+export const GEMINI_EDIT_MATCHER = 'write_file|replace'
+
+export function geminiHooks(editMatcher: string = GEMINI_EDIT_MATCHER): HookMap {
+  return {
+    SessionStart: [{ matcher: 'startup|resume|clear', hooks: [{ type: 'command', name: 'bita-session', command: 'bita hook gemini', timeout: 5000 }] }],
+    BeforeAgent: [{ hooks: [{ type: 'command', name: 'bita-prompt', command: 'bita hook gemini', timeout: 5000 }] }],
+    AfterTool: [{ matcher: editMatcher, hooks: [{ type: 'command', name: 'bita-tool', command: 'bita hook gemini', timeout: 10000 }] }],
+  }
 }
 
 export function manifest(root: string, bin: readonly string[] = binCommand(root)): ToolManifest {
@@ -122,34 +137,45 @@ export function opencodePluginSource(root: string): string {
   throw new UsageError(`This copy of bita has no OpenCode plugin (looked in ${root}).`)
 }
 
+export const USER_SKILLS = ['bita-amend', 'bita-init', 'bita-log', 'bita-start', 'bita-stop', 'bita-timers']
+
 export interface IntegrationOptions {
-  settings: boolean
+  codexEditMatcher?: string
+  geminiEditMatcher?: string
 }
 
-export function integration(root: string, options: IntegrationOptions): AgentIntegration {
-  const commandsDir = join(root, 'commands')
-  const commands = readdirSync(commandsDir)
-    .filter((name) => name.endsWith('.md'))
-    .sort()
-    .map((name) => ({ name: name.slice(0, -'.md'.length), file: join(commandsDir, name) }))
+export function integration(root: string, options: IntegrationOptions = {}): AgentIntegration {
+  const skillsDir = join(root, 'skills')
   return {
     tool: TOOL_NAME,
     version: VERSION,
     description: DESCRIPTION,
-    skills: [{ name: TOOL_NAME, dir: join(root, 'skill') }],
-    commands,
-    ...(options.settings ? { claude: { permissions: { allow: CLAUDE_ALLOW, ask: CLAUDE_ASK }, hooks: CLAUDE_HOOKS } } : {}),
+    skills: [{ name: TOOL_NAME, dir: join(skillsDir, TOOL_NAME) }],
+    userSkills: USER_SKILLS.map((name) => ({ name, dir: join(skillsDir, name) })),
     opencode: { plugins: [{ name: TOOL_NAME, file: opencodePluginSource(root) }] },
-    codex: { hooks: CODEX_HOOKS },
-    gemini: { hooks: GEMINI_HOOKS },
+    codex: { hooks: codexHooks(options.codexEditMatcher) },
+    gemini: { hooks: geminiHooks(options.geminiEditMatcher) },
   }
 }
 
-export function retiredIntegration(root: string, settings: boolean): AgentIntegration {
+export function claudePermissions(): AgentIntegration {
+  return { tool: TOOL_NAME, version: VERSION, claude: { permissions: { allow: CLAUDE_ALLOW, ask: CLAUDE_ASK } } }
+}
+
+export function legacyClaudeIntegration(root: string): AgentIntegration {
+  return {
+    tool: TOOL_NAME,
+    version: VERSION,
+    skills: [{ name: TOOL_NAME, dir: join(root, 'skill') }],
+    commands: LEGACY_COMMANDS.map((name) => ({ name, file: join(root, 'commands', `${name}.md`) })),
+    claude: { permissions: { allow: RETIRED_CLAUDE_ALLOW }, hooks: LEGACY_CLAUDE_HOOKS },
+  }
+}
+
+export function retiredIntegration(root: string): AgentIntegration {
   return {
     tool: `${TOOL_NAME}-retired`,
     version: VERSION,
     commands: RETIRED_COMMANDS.map((name) => ({ name, file: join(root, 'commands', `${name}.md`) })),
-    ...(settings ? { claude: { permissions: { allow: RETIRED_CLAUDE_ALLOW }, hooks: RETIRED_CLAUDE_HOOKS } } : {}),
   }
 }

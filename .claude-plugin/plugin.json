@@ -1,0 +1,12 @@
+{
+  "name": "bita",
+  "version": "1.1.0",
+  "description": "Cronómetro local de trabajo: skill, comandos de usuario y hooks de sesión para bita.",
+  "author": {
+    "name": "Jesus Enrique De Alba Gaytan"
+  },
+  "homepage": "https://github.com/KikeDeAlba/bita-cli#readme",
+  "repository": "https://github.com/KikeDeAlba/bita-cli",
+  "license": "MIT",
+  "keywords": ["time-tracking", "timer", "bita"]
+}
