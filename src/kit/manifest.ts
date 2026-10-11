@@ -6,7 +6,7 @@ import { HOOK_EVENTS } from '../hooks/hooks.ts'
 
 export const TOOL_NAME = 'bita'
 export const ENVELOPE_VERSION = 1
-export const CAPABILITIES = ['time.entries.read', 'time.entries.write', 'time.events'] as const
+export const CAPABILITIES = ['time.entries.read', 'time.entries.write', 'time.events', 'time.report.read'] as const
 export const EMITS: readonly string[] = HOOK_EVENTS
 export const INSTALL_HINT = 'npm install -g @kikedealba/bita && bita setup'
 export const HOMEPAGE = 'https://github.com/KikeDeAlba/bita-cli'
