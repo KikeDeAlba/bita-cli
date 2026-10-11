@@ -79,7 +79,7 @@ bita setup
 1. **Registra bita** en el registro de kit
    (`~/.config/kikedealba/tools.d/bita.json`, o `KIT_REGISTRY_DIR`), con la
    línea de comando absoluta, sus capacidades (`time.entries.read`,
-   `time.entries.write`, `time.events`) y los eventos que emite (`start`,
+   `time.entries.write`, `time.events`, `time.report.read`) y los eventos que emite (`start`,
    `stop`, `cancel`, `amend`, `delete`, `merge`). Así lo encuentran recap,
    inkwell, tally y Den sin depender del `PATH`. `--no-register` se lo salta.
 2. **Instala la integración** con los agentes de código que encuentre: Claude
@@ -231,6 +231,7 @@ bita merge 12 13 --dry-run
 bita delete 12 --dry-run
 bita entries week
 bita entries get 12 --json
+bita report week                             # horas por proyecto, día y semana
 ```
 
 `bita --help` lista todo.
@@ -359,6 +360,42 @@ bita entries --json            # entradas de un rango, con sus segmentos
 bita entries get <id> --json   # { id, description, kind, projectId, projectName, startedAt, stoppedAt, durationSeconds, mergedInto, segments }
 bita entries today --brief --json   # [{ id, title, project, start, stop, seconds }]: lo justo para un agente
 ```
+
+### Reportes
+
+`bita report` suma el tiempo de un rango por proyecto, por día y por semana. Es
+lo que dibuja la ventana de reportes de Den. Acepta el rango igual que
+`entries` (`[preset] | --from/--to | --last-days N`, `--timezone`), más
+`--project <id|nombre>` y `--entries`:
+
+```sh
+bita report --last-days 7 --json
+bita report month --project Apartados --entries --json
+```
+
+`data` trae:
+- `range { fromDay, toDay, timezone, weekStartsOn }`, `totalSeconds`,
+  `entryCount` y `activeDays`.
+- `projects[{ projectId, name, clientName, totalSeconds, entryCount }]`, de mayor
+  a menor. El tiempo sin proyecto sale con `projectId: null` y
+  `name: "(no project)"`.
+- `days[{ day, totalSeconds, projects[{ projectId, seconds }] }]`: todos los
+  días del rango, también los de cero. Cada bloque de una entrada unificada
+  cuenta en su propio día.
+- `weeks[{ fromDay, toDay, totalSeconds, projects }]`: las semanas empiezan en
+  `beginningOfWeek` (0 domingo, 1 lunes) y se recortan a los bordes del rango.
+- `overlaps[{ localDay, trackedSeconds, clockSeconds, overlapSeconds }]`, de
+  todo el día aunque se filtre con `--project`.
+- Con `--entries`: `entries[{ id, title, projectId, start, stop, localDay,
+  seconds, kind, overlapping, blockIds }]`, una fila por entrada y día. Una
+  entrada unificada entre dos días sale dos veces con el mismo `id`;
+  `blockIds` dice qué bloques caen en ese día. `overlapping` sale de los mismos
+  solapes de `overlaps` y marca solo el día que se pisa.
+
+Como en `entries`, cada bloque cuenta completo en el día en que empezó, aunque
+cruce la medianoche.
+
+Los cronómetros que siguen corriendo cuentan hasta ahora.
 
 Las entradas ya no traen `registered`, `issueKey` ni `jira`, ni `entries get`
 trae `note`: eso es de tally y de inkwell.

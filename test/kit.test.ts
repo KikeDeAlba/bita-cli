@@ -83,7 +83,7 @@ test('capabilities answers the kit envelope with what bita offers', () => {
     name: 'bita',
     version: manifest(packageRoot()).version,
     envelope: 1,
-    capabilities: ['time.entries.read', 'time.entries.write', 'time.events'],
+    capabilities: ['time.entries.read', 'time.entries.write', 'time.events', 'time.report.read'],
     emits: ['start', 'stop', 'cancel', 'amend', 'delete', 'merge'],
   })
 })
