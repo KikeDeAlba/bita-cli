@@ -1,6 +1,6 @@
 {
   "name": "@kikedealba/bita",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Cronómetro local de trabajo: timers, entradas y proyectos, con integraciones para agentes de código.",
   "license": "MIT",
   "author": "Jesus Enrique De Alba Gaytan",
@@ -34,8 +34,9 @@
   },
   "files": [
     "dist",
-    "skill",
-    "commands",
+    ".claude-plugin",
+    "skills",
+    "hooks",
     "scripts",
     "README.md",
     "LICENSE"
@@ -55,6 +56,6 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
-    "@kikedealba/kit": "^0.2.0"
+    "@kikedealba/kit": "^0.3.0"
   }
 }

@@ -63,14 +63,40 @@ function runEntryGet(argv: string[]): number {
   })
 }
 
+export interface BriefEntry {
+  id: number
+  title: string
+  project: string | null
+  start: string
+  stop: string | null
+  seconds: number
+}
+
+function briefEntry(entry: { id: number; description: string; projectName: string | null; start: string; stop: string | null; durationSeconds: number }): BriefEntry {
+  return { id: entry.id, title: entry.description, project: entry.projectName, start: entry.start, stop: entry.stop, seconds: entry.durationSeconds }
+}
+
 export function runEntries(argv: string[]): number {
   if (argv[0] === 'get') return runEntryGet(argv.slice(1))
-  const args = parseCommandArgs(argv, {})
+  const args = parseCommandArgs(argv, { brief: { type: 'boolean', default: false } })
 
   return withLocalContext(args, (ctx) => {
     const result = collectEntries(ctx, args)
     const selected = collapseSegments(result.selected)
     const totalSeconds = selected.reduce((sum, entry) => sum + entry.durationSeconds, 0)
+
+    if (readBoolean(args, 'brief')) {
+      const brief = selected.map(briefEntry)
+      if (readBoolean(args, 'json')) {
+        writeJson(successEnvelope('entries', brief, { entryCount: brief.length, totalSeconds, warnings: result.warnings }))
+      } else {
+        for (const entry of brief) {
+          writeOut([entry.id, entry.title, entry.project ?? '', entry.start, entry.stop ?? '', entry.seconds].join('\t'))
+        }
+      }
+      for (const warning of result.warnings) writeErr(`Warning: ${warning}`)
+      return 0
+    }
 
     if (readBoolean(args, 'json')) {
       writeJson(

@@ -11,55 +11,32 @@ import { enrichEntry } from '../../domain/enrich.ts'
 import { currentRepoIdentity } from './repo.ts'
 import { resolveMappedProject } from '../resolve-project.ts'
 
+type Db = ReturnType<typeof openDatabase>
+
 const RULE = [
-  'Registro de tiempo (bita): este repositorio esta mapeado a un proyecto.',
-  'Si el trabajo que empieza va a dejar un artefacto (un commit, un archivo, un recurso desplegado,',
-  'una migracion, una MR, una causa raiz diagnosticada) propone arrancar el cronometro en una linea,',
-  'justo antes de la primera edicion, y arrancalo solo con un si explicito:',
-  '  bita start "<titulo corto>"',
-  'No lo propongas para preguntas, lecturas, busquedas ni arreglos de una linea.',
-  'Pueden correr varios cronometros a la vez: si empiezas algo distinto, arranca otro en vez de',
-  'parar el que hay. Al terminar: bita stop <id>.',
-  'bita solo lleva el tiempo. Documentar el trabajo es de inkwell (inkwell note save <id>),',
-  'volcar las horas a Jira es de tally, y Jira o Confluence directos son de atl.',
+  'bita: si el trabajo va a dejar un artefacto (commit, archivo, despliegue, MR, causa raiz),',
+  'propon en una linea arrancar el cronometro justo antes de la primera edicion y arrancalo',
+  'solo con un si: bita start "<titulo corto>". Nada para preguntas ni lecturas.',
+  'Pueden correr varios a la vez; al terminar, bita stop <id>.',
 ].join('\n')
 
-async function runPromptSubmit(): Promise<string | undefined> {
-  const db = openDatabase(databasePath())
-  try {
-    const now = new Date()
-    const timezone = resolveTimezone(db)
-    const drafts = listRunningDrafts(db).map((row) => enrichEntry(row, timezone, now))
-    if (drafts.length === 0) return undefined
-
-    const lines = drafts.map(
-      (draft) =>
-        `  #${draft.id} lleva ${draft.durationHuman}${draft.projectName ? ` en ${draft.projectName}` : ' y aun sin proyecto'}`,
-    )
-
-    const additionalContext = [
-      'Registro de tiempo (bita): hay un cronometro corriendo SIN TITULO.',
-      ...lines,
-      '',
-      'Si el mensaje del usuario dice en que se va a trabajar, rellenalo AHORA,',
-      'antes de ponerte a explorar o a planear:',
-      '  bita amend --draft --title "<titulo corto>" --project <nombre o id>',
-      '',
-      'El titulo es lo que identifica la entrada despues: corto y reconocible.',
-      'Un repo NO es un proyecto: los proyectos son grupos con varios',
-      'repos dentro, asi que resuelve el proyecto por el grupo, no por el repo.',
-      'Si el mensaje todavia no dice en que se trabaja, no inventes nada y sigue.',
-    ].join('\n')
-
-    return additionalContext
-  } finally {
-    db.close()
-  }
+function promptSubmitContext(db: Db, timezone: string, now: Date): string | undefined {
+  const drafts = listRunningDrafts(db).map((row) => enrichEntry(row, timezone, now))
+  if (drafts.length === 0) return undefined
+  return [
+    'bita: hay un cronometro corriendo SIN TITULO.',
+    ...drafts.map(
+      (draft) => `  #${draft.id} lleva ${draft.durationHuman}${draft.projectName ? ` en ${draft.projectName}` : ', sin proyecto'}`,
+    ),
+    'En cuanto el mensaje diga en que se trabaja, rellenalo antes de explorar o planear:',
+    '  bita amend --draft --title "<titulo corto>" --project <nombre o id>',
+    'El proyecto es el grupo de repos, no el repo. Si el mensaje no lo dice, no inventes y sigue.',
+  ].join('\n')
 }
 
 const CHECKPOINT_KEY_PREFIX = 'checkpoint.entry.'
 
-function touchesSince(db: ReturnType<typeof openDatabase>, entryId: number, since: string): number {
+function touchesSince(db: Db, entryId: number, since: string): number {
   return (
     queryOne<{ total: number }>(
       db.prepare('SELECT COUNT(*) AS total FROM entry_touches WHERE entry_id = ? AND first_seen_at > ?'),
@@ -69,7 +46,7 @@ function touchesSince(db: ReturnType<typeof openDatabase>, entryId: number, sinc
   )
 }
 
-function forgetStoppedCheckpoints(db: ReturnType<typeof openDatabase>, keep: readonly string[]): void {
+function forgetStoppedCheckpoints(db: Db, keep: readonly string[]): void {
   const wanted = new Set(keep)
   const stale = queryAll<{ key: string }>(db.prepare(`SELECT key FROM settings WHERE key LIKE '${CHECKPOINT_KEY_PREFIX}%'`))
     .map((row) => row.key)
@@ -78,46 +55,58 @@ function forgetStoppedCheckpoints(db: ReturnType<typeof openDatabase>, keep: rea
   db.prepare(`DELETE FROM settings WHERE key IN (${stale.map(() => '?').join(', ')})`).run(...stale)
 }
 
-function runCheckpoint(): string | undefined {
+function checkpointContext(db: Db, timezone: string, now: Date): string | undefined {
+  const running = listRunning(db).filter((entry) => entry.description.trim().length > 0)
+  forgetStoppedCheckpoints(db, running.map((entry) => `${CHECKPOINT_KEY_PREFIX}${entry.id}`))
+  if (running.length === 0) return undefined
+
+  const stale = running.flatMap((entry) => {
+    const since = readSetting(db, `${CHECKPOINT_KEY_PREFIX}${entry.id}`) ?? entry.startedAt
+    const touched = touchesSince(db, entry.id, since)
+    const minutes = (now.getTime() - Date.parse(since)) / 60_000
+    if (touched < CHECKPOINT_TOUCH_THRESHOLD && minutes < CHECKPOINT_STALE_MINUTES) return []
+    return [{ entry, since, touched }]
+  })
+  if (stale.length === 0) return undefined
+
+  for (const { entry } of stale) writeSetting(db, `${CHECKPOINT_KEY_PREFIX}${entry.id}`, now.toISOString())
+
+  const lines = stale.map(({ entry, since, touched }) => {
+    const elapsed = formatDuration(Math.round((now.getTime() - Date.parse(since)) / 1000))
+    const files = touched === 1 ? '1 archivo tocado' : `${touched} archivos tocados`
+    const enriched = enrichEntry(entry, timezone, now)
+    return `  #${entry.id} "${enriched.description}" lleva ${elapsed} y ${files} desde el ultimo aviso`
+  })
+
+  const first = stale[0]?.entry.id ?? '<id>'
+  return [
+    'bita: un cronometro lleva rato corriendo.',
+    ...lines,
+    `Si cerraste un paso o encontraste algo no obvio, anotalo: inkwell note save ${first} --section "Qué se hizo" --md -`,
+    `Si el trabajo termino: bita stop ${first}. Si no hay nada que contar, sigue.`,
+  ].join('\n')
+}
+
+type Section = 'prompt-submit' | 'checkpoint'
+
+function promptContext(sections: readonly Section[]): string | undefined {
   const db = openDatabase(databasePath())
   try {
     const now = new Date()
     const timezone = resolveTimezone(db)
-    const running = listRunning(db).filter((entry) => entry.description.trim().length > 0)
-    forgetStoppedCheckpoints(db, running.map((entry) => `${CHECKPOINT_KEY_PREFIX}${entry.id}`))
-    if (running.length === 0) return undefined
-
-    const stale = running.flatMap((entry) => {
-      const since = readSetting(db, `${CHECKPOINT_KEY_PREFIX}${entry.id}`) ?? entry.startedAt
-      const touched = touchesSince(db, entry.id, since)
-      const minutes = (now.getTime() - Date.parse(since)) / 60_000
-      if (touched < CHECKPOINT_TOUCH_THRESHOLD && minutes < CHECKPOINT_STALE_MINUTES) return []
-      return [{ entry, since, touched }]
-    })
-    if (stale.length === 0) return undefined
-
-    for (const { entry } of stale) writeSetting(db, `${CHECKPOINT_KEY_PREFIX}${entry.id}`, now.toISOString())
-
-    const lines = stale.map(({ entry, since, touched }) => {
-      const elapsed = formatDuration(Math.round((now.getTime() - Date.parse(since)) / 1000))
-      const files = touched === 1 ? '1 archivo tocado' : `${touched} archivos tocados`
-      const enriched = enrichEntry(entry, timezone, now)
-      return `  #${entry.id} "${enriched.description}" lleva ${elapsed} y ${files} desde el ultimo aviso`
-    })
-
-    const first = stale[0]?.entry.id ?? '<id>'
-    return [
-      'Registro de tiempo (bita): un cronometro lleva rato corriendo.',
-      ...lines,
-      '',
-      'Si acabas de cerrar un paso, terminar una verificacion o encontrar algo no obvio, dejalo',
-      `escrito en la nota de la entrada con inkwell: inkwell note save ${first} --section "Qué se hizo" --md -`,
-      `Si el trabajo ya termino, paralo: bita stop ${first}.`,
-      'Si no hay nada que valga la pena contar, sigue sin escribir nada.',
-    ].join('\n')
+    const parts = sections.map((section) =>
+      section === 'prompt-submit' ? promptSubmitContext(db, timezone, now) : checkpointContext(db, timezone, now),
+    )
+    const present = parts.filter((part): part is string => part !== undefined)
+    return present.length === 0 ? undefined : present.join('\n\n')
   } finally {
     db.close()
   }
+}
+
+function writeContext(hookEventName: string, additionalContext: string | undefined): void {
+  if (!additionalContext) return
+  process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext } })}\n`)
 }
 
 async function readStdin(): Promise<string> {
@@ -127,46 +116,31 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
+const PROMPT_SECTIONS: Readonly<Record<string, readonly Section[]>> = {
+  prompt: ['prompt-submit', 'checkpoint'],
+  'prompt-submit': ['prompt-submit'],
+  checkpoint: ['checkpoint'],
+}
+
 export async function runHook(argv: string[]): Promise<number> {
   const event = argv[0] ?? 'session-start'
 
-  if (event === 'checkpoint') {
+  const sections = Object.hasOwn(PROMPT_SECTIONS, event) ? PROMPT_SECTIONS[event] : undefined
+  if (sections) {
     try {
-      const additionalContext = runCheckpoint()
-      if (additionalContext) {
-        process.stdout.write(
-          `${JSON.stringify({
-            hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
-          })}\n`,
-        )
-      }
-      return 0
+      writeContext('UserPromptSubmit', promptContext(sections))
     } catch {
       return 0
     }
-  }
-
-  if (event === 'prompt-submit') {
-    try {
-      const additionalContext = await runPromptSubmit()
-      if (additionalContext) {
-        process.stdout.write(
-          `${JSON.stringify({
-            hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
-          })}\n`,
-        )
-      }
-      return 0
-    } catch {
-      return 0
-    }
+    return 0
   }
 
   if (event === 'touched') {
     try {
       const flagIndex = argv.indexOf('--file')
-      const file = flagIndex === -1 ? undefined : argv[flagIndex + 1]
-      if (file) await runTouched(file)
+      const flagged = flagIndex === -1 ? undefined : argv[flagIndex + 1]
+      const files = flagged ? [flagged] : touchedFilesFromHookInput(await readStdin())
+      for (const file of files) await runTouched(file)
     } catch {
       return 0
     }
@@ -178,14 +152,7 @@ export async function runHook(argv: string[]): Promise<number> {
 
   if (event !== 'session-start') return 0
 
-  const additionalContext = await runSessionStartContext()
-  if (additionalContext) {
-    process.stdout.write(
-      `${JSON.stringify({
-        hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext },
-      })}\n`,
-    )
-  }
+  writeContext('SessionStart', await runSessionStartContext())
   return 0
 }
 
@@ -220,6 +187,17 @@ function touchedFiles(input: unknown): string[] {
   return [...new Set(paths)]
 }
 
+export function touchedFilesFromHookInput(raw: string): string[] {
+  if (raw.trim().length === 0) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  return touchedFiles(inputRecord(inputRecord(parsed).tool_input))
+}
+
 type LifecycleEvent = 'SessionStart' | 'UserPromptSubmit' | 'PostToolUse'
 
 const CODEX_EVENTS: Record<string, LifecycleEvent> = {
@@ -244,44 +222,19 @@ async function runAgentHook(events: Record<string, LifecycleEvent>): Promise<num
 
   const event = stringValue(input.hook_event_name)
   const lifecycle = event === undefined ? undefined : events[event]
-  if (lifecycle === 'SessionStart') {
-    const additionalContext = await runSessionStartContext()
-    if (additionalContext) {
-      process.stdout.write(
-        `${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } })}\n`,
-      )
-    }
-    return 0
-  }
-
-  if (lifecycle === 'UserPromptSubmit') {
-    const additionalContext = await runPromptSubmit()
-    if (additionalContext) {
-      process.stdout.write(
-        `${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } })}\n`,
-      )
-    }
-    return 0
-  }
-
-  if (lifecycle !== 'PostToolUse') return 0
-
-  const toolInput = inputRecord(input.tool_input)
-  for (const file of touchedFiles(toolInput)) {
-    try {
-      await runTouched(file)
-    } catch {
-      return 0
-    }
-  }
+  if (event === undefined || lifecycle === undefined) return 0
 
   try {
-    const additionalContext = runCheckpoint()
-    if (additionalContext) {
-      process.stdout.write(
-        `${JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } })}\n`,
-      )
+    if (lifecycle === 'SessionStart') {
+      writeContext(event, await runSessionStartContext())
+      return 0
     }
+    if (lifecycle === 'UserPromptSubmit') {
+      writeContext(event, promptContext(PROMPT_SECTIONS['prompt'] ?? []))
+      return 0
+    }
+    for (const file of touchedFiles(inputRecord(input.tool_input))) await runTouched(file)
+    writeContext(event, promptContext(['checkpoint']))
   } catch {
     return 0
   }
@@ -305,9 +258,9 @@ async function runSessionStartContext(): Promise<string | undefined> {
       const running = listRunning(db).map((row) => enrichEntry(row, timezone, now))
       state =
         running.length === 0
-          ? 'No hay ningun cronometro corriendo.'
+          ? 'Nada corriendo.'
           : [
-              `Cronometros CORRIENDO (${running.length}):`,
+              `Corriendo (${running.length}):`,
               ...running.map(
                 (entry) =>
                   `  #${entry.id} "${entry.description}" (${entry.durationHuman}${entry.projectName ? `, ${entry.projectName}` : ''})`,
@@ -317,7 +270,7 @@ async function runSessionStartContext(): Promise<string | undefined> {
       db.close()
     }
 
-    return [RULE, '', `Proyecto de este repositorio: ${mapping.projectName}.`, state].join('\n')
+    return [RULE, `Proyecto de este repositorio: ${mapping.projectName}. ${state}`].join('\n')
   } catch {
     return undefined
   }

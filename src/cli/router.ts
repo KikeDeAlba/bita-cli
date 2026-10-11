@@ -12,7 +12,7 @@ import { runMerge } from './commands/merge.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '1.0.2'
+export const VERSION = '1.1.0'
 
 export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
   jira: 'Jira lives in atl now. Use atl jira … (atl jira --help).',
@@ -63,6 +63,8 @@ Timers:
 Entries:
   entries [preset]           List time entries (--from, --to, --last-days)
   entries get <id>           One entry with its blocks
+  entries --brief            Only id, title, project, start, stop and seconds (with --json too)
+  statusline                 One short line with the running timers, for Claude Code's statusLine
 
 Projects:
   projects                   List projects (--all includes archived ones)
@@ -84,8 +86,9 @@ Integration:
   hooks [list]               Commands run on start, stop, cancel, amend, delete and merge, plus the installed tools subscribed to them
   hooks add --on E -- CMD    Register one (see Hooks options)
   hooks remove N             Remove hook number N
-  hook session-start|prompt-submit|checkpoint|touched|codex|gemini
-                             Agent lifecycle hooks (installed by setup)
+  hook session-start|prompt|touched|codex|gemini
+                             Agent lifecycle hooks (installed by setup; prompt-submit and
+                             checkpoint still answer for older setups)
 
 Range presets:
   today, yesterday, week, last-week, month, last-month
@@ -145,6 +148,7 @@ Setup options:
   --gemini-home DIR          Directory that holds .gemini
   --no-settings              Skip Claude settings changes
   --no-register              Skip registering bita for the other tools
+  --mod                      Also install the bita-timer plugin for Claude Code (the timer band)
 `
 
 function assertNoMovedFlags(command: string, rest: readonly string[]): void {
@@ -205,6 +209,8 @@ export async function route(argv: string[]): Promise<number> {
       return (await import('./commands/capabilities.ts')).runCapabilities(rest)
     case 'hook':
       return runHook(rest)
+    case 'statusline':
+      return (await import('./commands/statusline.ts')).runStatusline()
     case 'hooks':
       return runHooks(rest)
     case 'merge':

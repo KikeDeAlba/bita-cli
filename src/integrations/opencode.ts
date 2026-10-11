@@ -58,6 +58,8 @@ function filePaths(input: unknown): string[] {
     .filter((value): value is string => typeof value === 'string' && value.length > 0)
 }
 
+const EDIT_TOOLS = /^(edit|write|patch|multiedit)$/i
+
 export default {
   id: 'bita',
   async setup(ctx: OpenCodeContext) {
@@ -65,7 +67,7 @@ export default {
     const pending = new Map<string, string[]>()
 
     await ctx.session.hook('prompt', async (event) => {
-      const output = await runBita(['hook', 'prompt-submit'])
+      const output = await runBita(['hook', 'prompt'])
       const context = contextOf(output)
       if (context) pending.set(event.sessionID, [context])
     })
@@ -81,14 +83,11 @@ export default {
         if (context) contexts.unshift(context)
       }
 
-      const checkpoint = await runBita(['hook', 'checkpoint'])
-      const checkpointContext = contextOf(checkpoint)
-      if (checkpointContext) contexts.push(checkpointContext)
-
       for (const text of contexts) event.system.push({ type: 'text', text })
     })
 
     await ctx.tool.hook('execute.after', async (event) => {
+      if (!EDIT_TOOLS.test(event.tool)) return
       for (const file of filePaths(event.input)) {
         await runBita(['hook', 'touched', '--file', file])
       }

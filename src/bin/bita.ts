@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { route } from '../cli/router.ts'
 import { ConflictError, NotFoundError, UnknownCommandError, UsageError } from '../errors.ts'
 import { EXIT_CONFLICT, EXIT_GENERIC, EXIT_USAGE } from '../cli/exit-codes.ts'
 import { errorEnvelope, writeErr, writeJson } from '../cli/output.ts'
@@ -23,6 +22,11 @@ function hintFor(error: unknown): string | undefined {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2)
+  if (argv[0] === 'statusline') {
+    process.exitCode = (await import('../cli/commands/statusline.ts')).runStatusline()
+    return
+  }
+  const { route } = await import('../cli/router.ts')
   const wantsJson = argv.includes('--json')
 
   try {
