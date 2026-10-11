@@ -9,10 +9,11 @@ import { runDelete } from './commands/delete.ts'
 import { runHook } from './commands/hook.ts'
 import { runHooks } from './commands/hooks.ts'
 import { runMerge } from './commands/merge.ts'
+import { runReport } from './commands/report.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '1.1.2'
+export const VERSION = '1.2.0'
 
 export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
   jira: 'Jira lives in atl now. Use atl jira … (atl jira --help).',
@@ -64,6 +65,7 @@ Entries:
   entries [preset]           List time entries (--from, --to, --last-days)
   entries get <id>           One entry with its blocks
   entries --brief            Only id, title, project, start, stop and seconds (with --json too)
+  report [preset]            Time per project, day and week, zero days included (--from, --to, --last-days)
   statusline                 One short line with the running timers, for Claude Code's statusLine
 
 Projects:
@@ -121,6 +123,10 @@ Amend options:
   --project ID|NAME          Set the project
   --kind KIND|none           Set or clear the kind
                              Any change fires the amend event
+
+Report options:
+  --project ID|NAME          Only this project
+  --entries                  Also list the entries, one row per entry and day
 
 Merge options:
   --into ID                  The entry that survives (default: the oldest)
@@ -194,6 +200,8 @@ export async function route(argv: string[]): Promise<number> {
       return runProject(rest)
     case 'entries':
       return runEntries(rest)
+    case 'report':
+      return runReport(rest)
     case 'repo':
       return runRepo(rest)
     case 'scope':

@@ -123,6 +123,7 @@ bita ls --json
 bita entries today|yesterday|week|last-week|month|last-month --brief --json
 bita entries --from YYYY-MM-DD --to YYYY-MM-DD --brief --json
 bita entries get <id> --json         una entrada con sus bloques
+bita report week --json              horas por proyecto, día y semana [--project X] [--entries]
 ```
 
 Usa siempre `--brief` (id, título, proyecto, inicio, fin, segundos). Volcar a

@@ -47,7 +47,7 @@ function daysBetween(fromDay: string, toDay: string): number {
   return Math.round((to - from) / 86400000) + 1
 }
 
-function startOfWeek(isoDay: string, beginningOfWeek: number): string {
+export function startOfWeek(isoDay: string, beginningOfWeek: number): string {
   const current = weekdayIndex(isoDay)
   const delta = (current - beginningOfWeek + 7) % 7
   return addDays(isoDay, -delta)
