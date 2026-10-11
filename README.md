@@ -93,24 +93,72 @@ bita setup --target all
 
 | Agente | Qué recibe |
 |---|---|
-| Claude Code | `~/.claude/skills/bita`, `~/.claude/commands` y los permisos y hooks en `settings.json` |
+| Claude Code | El plugin `bita` del marketplace `bita` (este repositorio): skill, skills de usuario y hooks. En `settings.json` solo quedan los permisos de `bita` |
 | OpenCode | `~/.config/opencode/skills/bita`, `commands` y `plugins/bita.*` |
-| Codex | `~/.agents/skills/bita`, `~/.codex/prompts` y `~/.codex/hooks.json` |
+| Codex | `~/.agents/skills/bita`, `~/.codex/prompts` y `~/.codex/hooks.json` (el `PostToolUse` solo para las herramientas que editan) |
 | Gemini CLI | La extensión `~/.gemini/extensions/bita`: skill, comandos y hooks (`bita hook gemini`) |
+
+### El plugin de Claude Code
+
+En Claude Code, `bita setup` corre `claude plugin marketplace add
+KikeDeAlba/bita-cli`, `claude plugin marketplace update bita` y `claude plugin
+install bita@bita` (o `update` si ya estaba). A mano, dentro de Claude Code:
+
+```
+/plugin marketplace add KikeDeAlba/bita-cli
+/plugin install bita@bita
+```
+
+El plugin trae:
+
+- **La skill `bita`**, corta: el flujo del cronómetro. Claude solo lee su
+  descripción hasta que la necesita.
+- **Skills de usuario** `/bita-start`, `/bita-stop`, `/bita-log`, `/bita-amend`,
+  `/bita-timers` y `/bita-init`, con `disable-model-invocation: true`: no
+  ocupan contexto hasta que las escribes. Reemplazan a los comandos sueltos de
+  `~/.claude/commands`.
+- **Hooks** (`hooks/hooks.json`):
+  - `SessionStart` → `bita hook session-start`: en un repo mapeado, la regla del
+    cronómetro y lo que corre, en menos de 400 caracteres.
+  - `UserPromptSubmit` → `bita hook prompt`: un solo proceso que avisa del
+    borrador sin título y del recordatorio de nota, en un solo contexto. Si no
+    hay nada que decir, no imprime nada.
+  - `PostToolUse` en `Edit|Write|MultiEdit` → `bita hook touched`, asíncrono:
+    lee la ruta del JSON del hook y registra el archivo sin bloquear al agente.
+
+`bita setup --mod` instala además el plugin `bita-timer` (la banda con los
+cronómetros sobre el prompt). Al pasar al plugin, `setup` quita lo que versiones
+anteriores dejaron sueltas en `~/.claude`: la skill y los comandos enlazados y
+los hooks de `settings.json` (incluido el de `jq`). Si `claude` no está en el
+`PATH`, no quita nada y dice qué correr. `bita hook prompt-submit` y `bita hook
+checkpoint` siguen respondiendo para instalaciones viejas.
+
+En OpenCode, si `claude-compat` todavía reejecuta los hooks y comandos viejos de
+`~/.claude`, kit no instala los de bita para que no corran dos veces.
+
+### La línea de estado de Claude Code
+
+`bita statusline` imprime una línea con los cronómetros que corren (`#12 Título ·
+Proyecto · 1h 5m`, separados por `|`) o nada. No usa red ni gasta tokens: solo
+lee la base. Para verla en Claude Code, en `~/.claude/settings.json`:
+
+```json
+{ "statusLine": { "type": "command", "command": "bita statusline" } }
+```
 
 Al actualizar desde una versión anterior, `setup` también quita lo que ya no es
 de bita: el comando `/bita-check`, el hook `bita hook ref` y los permisos de
 Claude de los comandos que se fueron. **No toca** un MCP de Atlassian que ya
 esté configurado: bita ya no lo instala, pero tampoco lo quita.
 
-Hay una sola skill (`skill/SKILL.md`); lo que solo aplica a un agente va en
-bloques `::: agent <nombre>` y kit genera la copia de cada uno. **Después de
-actualizar bita, vuelve a correr `bita setup`** para que los agentes lean la
-skill nueva.
+Las skills viven en `skills/`: `skills/bita` es la del modelo y las demás son
+las de usuario. Para OpenCode, Codex y Gemini CLI, kit convierte las de usuario
+en sus comandos y prompts. **Después de actualizar bita, vuelve a correr `bita
+setup`** para que los agentes lean lo nuevo.
 
-`--no-settings` omite los permisos y hooks de Claude. `--no-atlassian`,
-`--no-docs-git`, `--no-drawio` y `--no-recap` se aceptan y se ignoran con un
-aviso.
+`--no-settings` omite los permisos de Claude y no toca su `settings.json`.
+`--no-atlassian`, `--no-docs-git`, `--no-drawio` y `--no-recap` se aceptan y se
+ignoran con un aviso.
 
 ### Cómo se publica
 
@@ -203,7 +251,7 @@ Eso crea un borrador, que se rellena después y en buena parte solo:
 | Proyecto | El agente por el prompt, o el hook por el primer archivo que se cambia |
 | Archivos tocados | El hook, en cada edición |
 
-El hook `prompt-submit` recuerda que hay un contador sin nombre y se calla en
+El hook `prompt` recuerda que hay un contador sin nombre y se calla en
 cuanto lo tiene. A mano:
 
 ```sh
@@ -309,6 +357,7 @@ bita hooks remove 1
 bita capabilities --json       # nombre, versión, sobre, capacidades y eventos
 bita entries --json            # entradas de un rango, con sus segmentos
 bita entries get <id> --json   # { id, description, kind, projectId, projectName, startedAt, stoppedAt, durationSeconds, mergedInto, segments }
+bita entries today --brief --json   # [{ id, title, project, start, stop, seconds }]: lo justo para un agente
 ```
 
 Las entradas ya no traen `registered`, `issueKey` ni `jira`, ni `entries get`
@@ -357,6 +406,8 @@ Warning: 2026-09-19: 4h 8m tracked over 3h 7m of clock time (1h overlapping)
 
 ## Los comandos del agente
 
+En Claude Code son skills de usuario del plugin; en los demás agentes, comandos.
+
 | Comando | Qué hace |
 |---|---|
 | `/bita-start [título]` | Arranca un cronómetro, en blanco o con título |
@@ -387,7 +438,9 @@ src/state/     configuración y repos de git
 src/hooks/     los eventos: suscriptores del registro de kit y hooks de config.json
 src/kit/       el manifiesto de bita, sus capacidades y la integración con los agentes
 src/integrations/ el plugin de OpenCode
-skill/         la skill, con bloques por agente
-commands/      los slash commands
+skills/        la skill del modelo (bita) y las skills de usuario (bita-*)
+hooks/         los hooks del plugin de Claude Code
+.claude-plugin/ el manifiesto del plugin y el marketplace
+plugins/       bita-timer, el mod de la banda
 scripts/       el instalador
 ```

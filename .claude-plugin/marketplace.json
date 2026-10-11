@@ -1,0 +1,21 @@
+{
+  "name": "bita",
+  "owner": {
+    "name": "Jesus Enrique De Alba Gaytan"
+  },
+  "metadata": {
+    "description": "Plugins de bita para Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "bita",
+      "source": "./",
+      "description": "Cronómetro de trabajo con bita: skill, comandos de usuario y hooks de sesión."
+    },
+    {
+      "name": "bita-timer",
+      "source": "./plugins/bita-timer",
+      "description": "Banda sobre el prompt con los cronómetros de bita que están corriendo."
+    }
+  ]
+}

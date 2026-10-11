@@ -2,7 +2,7 @@ import './helpers/isolate.ts'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { CAPABILITIES } from '../src/kit/manifest.ts'
@@ -27,10 +27,13 @@ function sandbox(): Sandbox {
   const root = mkdtempSync(join(tmpdir(), 'bita-setup-'))
   const home = join(root, 'home')
   const binDir = join(root, 'bin')
+  const nodeDir = join(root, 'node-bin')
   mkdirSync(home, { recursive: true })
   mkdirSync(binDir, { recursive: true })
+  mkdirSync(nodeDir, { recursive: true })
+  symlinkSync(process.execPath, join(nodeDir, 'node'))
   const env: NodeJS.ProcessEnv = {
-    PATH: [binDir, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
+    PATH: [binDir, nodeDir, '/usr/bin', '/bin'].join(delimiter),
     HOME: home,
     XDG_CONFIG_HOME: join(root, 'config'),
     XDG_DATA_HOME: join(root, 'data'),
@@ -123,53 +126,179 @@ test('setup keeps its own path when the bita on PATH reports another version', (
   }
 })
 
-test('setup installs the skill, commands, settings and hooks in all four agents', () => {
+function fakeClaude(box: Sandbox): string {
+  const log = join(box.root, 'claude-argv.log')
+  const path = join(box.binDir, 'claude')
+  writeFileSync(
+    path,
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncase "$*" in\n  *--json*) printf '[]\\n' ;;\nesac\nexit 0\n`,
+    'utf8',
+  )
+  chmodSync(path, 0o755)
+  return log
+}
+
+function claudeCalls(log: string): string[] {
+  return existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter((line) => line.length > 0) : []
+}
+
+test('setup installs the Claude Code plugin and the skill, commands and hooks in the other agents', () => {
   const box = sandbox()
   try {
+    const log = fakeClaude(box)
     const result = setup(box, '--target', 'all')
     const data = result['data'] as { agents: string[] }
     assert.deepEqual(data.agents, ['claude', 'opencode', 'codex', 'gemini'])
 
-    const claudeSkill = readFileSync(join(box.claude, 'skills', 'bita', 'SKILL.md'), 'utf8')
-    assert.doesNotMatch(claudeSkill, /Los avisos de bita en (OpenCode|Codex|Gemini CLI)/)
-    assert.doesNotMatch(claudeSkill, /::: agent/)
-    assert.equal(existsSync(join(box.claude, 'commands', 'bita-start.md')), true)
+    const calls = claudeCalls(log)
+    assert.ok(calls.includes('plugin marketplace add KikeDeAlba/bita-cli'), calls.join(' | '))
+    assert.ok(calls.includes('plugin install bita@bita --scope user'), calls.join(' | '))
+    assert.ok(!calls.some((call) => call.includes('bita-timer')))
+    assert.equal(existsSync(join(box.claude, 'skills', 'bita')), false)
+    assert.equal(existsSync(join(box.claude, 'commands', 'bita-start.md')), false)
     const settings = readJson(join(box.claude, 'settings.json')) as {
       permissions: { allow: string[]; ask: string[] }
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>
+      hooks?: Record<string, unknown>
     }
     assert.ok(settings.permissions.allow.includes('Bash(bita start:*)'))
     assert.ok(settings.permissions.ask.includes('Bash(bita cancel:*)'))
-    assert.equal(settings.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook session-start')
-    assert.equal(settings.hooks['UserPromptSubmit']?.length, 2)
+    assert.equal(settings.hooks, undefined)
 
     const openCodeSkill = readFileSync(join(box.opencode, 'skills', 'bita', 'SKILL.md'), 'utf8')
-    assert.match(openCodeSkill, /Los avisos de bita en OpenCode/)
-    assert.doesNotMatch(openCodeSkill, /Los avisos de bita en Codex/)
-    assert.equal(existsSync(join(box.opencode, 'commands', 'bita-stop.md')), true)
+    assert.match(openCodeSkill, /^name: bita$/m)
+    assert.ok(existsSync(join(box.opencode, 'commands', 'bita-stop.md')))
     assert.equal(existsSync(join(box.opencode, 'plugins', 'bita.ts')), true)
     assert.equal(existsSync(join(box.opencode, 'opencode.json')), false)
 
-    const codexSkill = readFileSync(join(box.agentsSkills, 'bita', 'SKILL.md'), 'utf8')
-    assert.match(codexSkill, /Los avisos de bita en Codex/)
-    assert.doesNotMatch(codexSkill, /Los avisos de bita en OpenCode/)
-    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    assert.ok(existsSync(join(box.agentsSkills, 'bita', 'SKILL.md')))
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> }
     assert.equal(codexHooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook codex')
+    assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
+    assert.match(codexHooks.hooks['PostToolUse']?.[0]?.matcher ?? '', /apply_patch/)
     assert.ok(existsSync(join(box.codex, 'prompts', 'bita-start.md')))
     assert.equal(existsSync(join(box.codex, 'config.toml')), false)
-    assert.equal(existsSync(join(box.claude, 'commands', 'bita-check.md')), false)
-    assert.ok(!settings.permissions.allow.includes('Bash(bita docs:*)'))
 
     const extension = join(box.gemini, 'extensions', 'bita')
-    const geminiSkill = readFileSync(join(extension, 'skills', 'bita', 'SKILL.md'), 'utf8')
-    assert.match(geminiSkill, /Los avisos de bita en Gemini CLI/)
-    assert.doesNotMatch(geminiSkill, /Los avisos de bita en Codex/)
+    assert.ok(existsSync(join(extension, 'skills', 'bita', 'SKILL.md')))
     assert.ok(existsSync(join(extension, 'commands', 'bita-start.toml')))
-    const geminiHooks = readJson(join(extension, 'hooks', 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    const geminiHooks = readJson(join(extension, 'hooks', 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> }
     assert.equal(geminiHooks.hooks['AfterTool']?.[0]?.hooks[0]?.command, 'bita hook gemini')
+    assert.notEqual(geminiHooks.hooks['AfterTool']?.[0]?.matcher, '.*')
     assert.equal(geminiHooks.hooks['BeforeAgent']?.[0]?.hooks[0]?.command, 'bita hook gemini')
     const geminiManifest = readJson(join(extension, 'gemini-extension.json'))
     assert.equal(geminiManifest['mcpServers'], undefined)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('setup --mod also installs the bita-timer plugin', () => {
+  const box = sandbox()
+  try {
+    const log = fakeClaude(box)
+    setup(box, '--target', 'claude', '--mod')
+    const calls = claudeCalls(log)
+    assert.ok(calls.includes('plugin install bita@bita --scope user'))
+    assert.ok(calls.includes('plugin install bita-timer@bita --scope user'))
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('setup removes the loose Claude files and hooks an older bita wrote, keeping the user ones', () => {
+  const box = sandbox()
+  try {
+    fakeClaude(box)
+    mkdirSync(join(box.claude, 'commands'), { recursive: true })
+    mkdirSync(join(box.claude, 'skills'), { recursive: true })
+    const oldCommand = join(box.claude, 'commands', 'bita-start.md')
+    const oldSkill = join(box.claude, 'skills', 'bita')
+    symlinkSync(join(repo, 'commands', 'bita-start.md'), oldCommand)
+    symlinkSync(join(repo, 'skill'), oldSkill)
+    writeFileSync(
+      join(box.claude, 'settings.json'),
+      JSON.stringify({
+        permissions: { allow: ['Bash(bita start:*)', 'Bash(git status:*)'] },
+        hooks: {
+          SessionStart: [{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: 'bita hook session-start', timeout: 5 }] }],
+          UserPromptSubmit: [
+            { hooks: [{ type: 'command', command: 'bita hook prompt-submit', timeout: 5 }] },
+            { hooks: [{ type: 'command', command: 'bita hook checkpoint', timeout: 5 }] },
+            { hooks: [{ type: 'command', command: 'echo mine' }] },
+          ],
+        },
+      }),
+    )
+
+    setup(box, '--target', 'claude')
+
+    assert.throws(() => lstatSync(oldCommand))
+    assert.throws(() => lstatSync(oldSkill))
+    const settings = readJson(join(box.claude, 'settings.json')) as {
+      permissions: { allow: string[] }
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>
+    }
+    const commands = Object.values(settings.hooks).flat().flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.deepEqual(commands, ['echo mine'])
+    assert.ok(settings.permissions.allow.includes('Bash(git status:*)'))
+    assert.ok(settings.permissions.allow.includes('Bash(bita start:*)'))
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('setup --no-settings still drops the old Claude hooks but leaves the permissions alone', () => {
+  const box = sandbox()
+  try {
+    fakeClaude(box)
+    mkdirSync(box.claude, { recursive: true })
+    writeFileSync(
+      join(box.claude, 'settings.json'),
+      JSON.stringify({
+        permissions: { allow: ['Bash(bita summary:*)'] },
+        hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'bita hook prompt-submit', timeout: 5 }] }] },
+      }),
+    )
+    setup(box, '--target', 'claude', '--no-settings')
+    const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] }; hooks?: Record<string, unknown> }
+    assert.deepEqual(settings.hooks ?? {}, {})
+    assert.deepEqual(settings.permissions.allow, ['Bash(bita summary:*)'])
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('setup leaves the old Claude files alone when the plugin could not be installed', () => {
+  const box = sandbox()
+  try {
+    writeFileSync(
+      join(box.root, 'settings-seed.json'),
+      JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'bita hook prompt-submit', timeout: 5 }] }] } }),
+    )
+    mkdirSync(box.claude, { recursive: true })
+    writeFileSync(join(box.claude, 'settings.json'), readFileSync(join(box.root, 'settings-seed.json'), 'utf8'))
+    const result = setup(box, '--target', 'claude')
+    const steps = (result['data'] as { steps: Array<{ item: string; state: string }> }).steps
+    assert.ok(steps.some((step) => step.item === 'plugin bita@bita' && step.state === 'unavailable'))
+    const settings = readJson(join(box.claude, 'settings.json')) as { hooks: Record<string, unknown[]> }
+    assert.equal(settings.hooks['UserPromptSubmit']?.length, 1)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('setup narrows an older catch-all Codex PostToolUse hook to the edit tools', () => {
+  const box = sandbox()
+  try {
+    mkdirSync(box.codex, { recursive: true })
+    writeFileSync(
+      join(box.codex, 'hooks.json'),
+      JSON.stringify({ hooks: { PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] }] } }),
+    )
+    setup(box, '--target', 'codex')
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string }>> }
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
+    assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
   } finally {
     rmSync(box.root, { recursive: true, force: true })
   }
@@ -180,6 +309,7 @@ test('running setup twice keeps the settings and hooks without duplicates', () =
   try {
     mkdirSync(box.codex, { recursive: true })
     writeFileSync(join(box.codex, 'hooks.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo keep' }] }] } }))
+    fakeClaude(box)
     setup(box, '--target', 'claude,codex')
     const firstWrite = statSync(join(box.claude, 'settings.json')).mtimeMs
     setup(box, '--target', 'claude,codex')
@@ -188,9 +318,9 @@ test('running setup twice keeps the settings and hooks without duplicates', () =
     assert.equal(codexHooks.hooks['Stop']?.[0]?.hooks[0]?.command, 'echo keep')
     assert.equal(codexHooks.hooks['SessionStart']?.length, 1)
     assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
-    const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] }; hooks: Record<string, unknown[]> }
+    const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] }; hooks?: Record<string, unknown[]> }
     assert.equal(settings.permissions.allow.filter((rule) => rule === 'Bash(bita start:*)').length, 1)
-    assert.equal(settings.hooks['PostToolUse']?.length, 1)
+    assert.equal(settings.hooks, undefined)
   } finally {
     rmSync(box.root, { recursive: true, force: true })
   }
@@ -234,9 +364,10 @@ test('the old setup flags are accepted and ignored with a warning', () => {
 test('setup cleans what an older bita installed for documents and Atlassian', () => {
   const box = sandbox()
   try {
+    fakeClaude(box)
     mkdirSync(join(box.claude, 'commands'), { recursive: true })
     const stale = join(box.claude, 'commands', 'bita-check.md')
-    symlinkSync(join(box.root, 'gone', 'bita-check.md'), stale)
+    symlinkSync(join(repo, 'commands', 'bita-check.md'), stale)
     writeFileSync(
       join(box.claude, 'settings.json'),
       JSON.stringify({
@@ -297,11 +428,57 @@ test('the commands that moved to other tools fail with a hint to the right one',
   }
 })
 
-test('the shared skill keeps the agent-specific sections in agent blocks', () => {
-  const skill = readFileSync(join(repo, 'skill', 'SKILL.md'), 'utf8')
-  assert.match(skill, /^::: agent codex$/m)
-  assert.match(skill, /^::: agent opencode$/m)
-  assert.match(skill, /^::: agent gemini$/m)
-  assert.equal(existsSync(join(repo, 'skill-codex')), false)
-  assert.equal(existsSync(join(repo, 'skill-opencode')), false)
+test('the plugin manifests parse and point at the plugin contents', () => {
+  const plugin = readJson(join(repo, '.claude-plugin', 'plugin.json'))
+  assert.equal(plugin['name'], 'bita')
+  assert.equal(plugin['version'], VERSION)
+  const marketplace = readJson(join(repo, '.claude-plugin', 'marketplace.json')) as { name: string; plugins: Array<{ name: string; source: string }> }
+  assert.equal(marketplace.name, 'bita')
+  assert.deepEqual(
+    marketplace.plugins.map((entry) => [entry.name, entry.source]),
+    [
+      ['bita', './'],
+      ['bita-timer', './plugins/bita-timer'],
+    ],
+  )
+  const hooks = readJson(join(repo, 'hooks', 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; async?: boolean }> }>> }
+  assert.equal(hooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook session-start')
+  assert.equal(hooks.hooks['UserPromptSubmit']?.length, 1)
+  assert.equal(hooks.hooks['UserPromptSubmit']?.[0]?.hooks[0]?.command, 'bita hook prompt')
+  const touched = hooks.hooks['PostToolUse']?.[0]
+  assert.equal(touched?.matcher, 'Edit|Write|MultiEdit')
+  assert.equal(touched?.hooks[0]?.command, 'bita hook touched')
+  assert.equal(touched?.hooks[0]?.async, true)
+})
+
+function frontmatter(text: string): Record<string, string> {
+  const match = /^---\n([\s\S]*?)\n---\n/.exec(text)
+  assert.ok(match, 'missing frontmatter')
+  const attributes: Record<string, string> = {}
+  for (const line of (match[1] ?? '').split('\n')) {
+    const pair = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line)
+    if (pair) attributes[pair[1] ?? ''] = pair[2] ?? ''
+  }
+  return attributes
+}
+
+test('the user skills replace the commands and only run when the user types them', () => {
+  assert.equal(existsSync(join(repo, 'commands')), false)
+  assert.equal(existsSync(join(repo, 'skill')), false)
+  for (const name of ['bita-start', 'bita-stop', 'bita-log', 'bita-amend', 'bita-timers', 'bita-init']) {
+    const attributes = frontmatter(readFileSync(join(repo, 'skills', name, 'SKILL.md'), 'utf8'))
+    assert.equal(attributes['name'], name)
+    assert.equal(attributes['disable-model-invocation'], 'true', name)
+    assert.ok((attributes['description'] ?? '').length > 0)
+  }
+})
+
+test('the main skill is short, model-invocable and never mentions Rovo', () => {
+  const skill = readFileSync(join(repo, 'skills', 'bita', 'SKILL.md'), 'utf8')
+  assert.ok(skill.split('\n').length < 150)
+  assert.equal(frontmatter(skill)['disable-model-invocation'], undefined)
+  assert.match(skill, /--brief/)
+  for (const dir of ['bita', 'bita-start', 'bita-stop', 'bita-log', 'bita-amend', 'bita-timers', 'bita-init']) {
+    assert.doesNotMatch(readFileSync(join(repo, 'skills', dir, 'SKILL.md'), 'utf8'), /rovo/i)
+  }
 })

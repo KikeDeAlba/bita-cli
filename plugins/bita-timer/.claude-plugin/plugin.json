@@ -1,0 +1,9 @@
+{
+  "name": "bita-timer",
+  "version": "0.1.0",
+  "description": "Shows bita's running timers in a band above the prompt, without spending tokens.",
+  "author": { "name": "Jesus Enrique De Alba Gaytan" },
+  "homepage": "https://github.com/KikeDeAlba/bita-cli#readme",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

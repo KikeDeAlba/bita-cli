@@ -5,7 +5,19 @@ import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString, type ParsedArg
 import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { MOVED_OUT, SIBLING_INSTALLS, TOOL_NAME, binCommand, packageRoot } from '../../kit/manifest.ts'
 import { VERSION } from '../router.ts'
-import { RETIRED_CLAUDE_ALLOW, RETIRED_COMMANDS, integration, manifest, retiredIntegration } from '../../kit/integration.ts'
+import {
+  CLAUDE_MARKETPLACE,
+  CLAUDE_MOD_PLUGIN,
+  CLAUDE_PLUGIN,
+  CODEX_EDIT_MATCHER,
+  GEMINI_EDIT_MATCHER,
+  RETIRED_COMMANDS,
+  claudePermissions,
+  integration,
+  legacyClaudeIntegration,
+  manifest,
+  retiredIntegration,
+} from '../../kit/integration.ts'
 
 export { packageRoot }
 
@@ -22,6 +34,7 @@ const OPTIONS = {
   'gemini-home': { type: 'string' as const },
   'no-settings': { type: 'boolean' as const, default: false },
   'no-register': { type: 'boolean' as const, default: false },
+  mod: { type: 'boolean' as const, default: false },
   'no-atlassian': { type: 'boolean' as const, default: false },
   'no-docs-git': { type: 'boolean' as const, default: false },
   'no-drawio': { type: 'boolean' as const, default: false },
@@ -83,23 +96,30 @@ function present(path: string): boolean {
   }
 }
 
-export function retiredCommandsPresent(homes: { claude: string; opencode: string; codex: string }): boolean {
+export function retiredCommandsPresent(homes: { opencode: string; codex: string }): boolean {
   return RETIRED_COMMANDS.some(
-    (name) =>
-      present(join(homes.claude, 'commands', `${name}.md`)) ||
-      present(join(homes.opencode, 'commands', `${name}.md`)) ||
-      present(join(homes.codex, 'prompts', `${name}.md`)),
+    (name) => present(join(homes.opencode, 'commands', `${name}.md`)) || present(join(homes.codex, 'prompts', `${name}.md`)),
   )
 }
 
-export function retiredSettingsPresent(claudeHome: string): boolean {
-  let text: string
+export function codexHooksStale(codexHome: string, editMatcher: string): boolean {
+  let parsed: unknown
   try {
-    text = readFileSync(join(claudeHome, 'settings.json'), 'utf8')
+    parsed = JSON.parse(readFileSync(join(codexHome, 'hooks.json'), 'utf8'))
   } catch {
     return false
   }
-  return text.includes('bita hook ref') || RETIRED_CLAUDE_ALLOW.some((rule) => text.includes(JSON.stringify(rule)))
+  const groups = (parsed as { hooks?: Record<string, unknown> } | null)?.hooks?.['PostToolUse']
+  if (!Array.isArray(groups)) return false
+  return groups.some((group) => {
+    const record = group as { matcher?: unknown; hooks?: Array<{ command?: unknown }> }
+    const ours = Array.isArray(record.hooks) && record.hooks.some((hook) => hook.command === 'bita hook codex')
+    return ours && record.matcher !== editMatcher
+  })
+}
+
+function pluginInPlace(steps: readonly Step[], plugin: string): boolean {
+  return steps.some((step) => step.item === `plugin ${plugin}@${CLAUDE_MARKETPLACE.marketplaceName}` && (step.state === 'installed' || step.state === 'present'))
 }
 
 export async function runSetup(argv: string[]): Promise<number> {
@@ -108,9 +128,9 @@ export async function runSetup(argv: string[]): Promise<number> {
   const requested = readAgents(readString(args, 'agents') ?? readString(args, 'target') ?? process.env['BITA_TARGET'])
   const root = packageRoot()
 
-  if (!existsSync(join(root, 'skill', 'SKILL.md')) || !existsSync(join(root, 'commands'))) {
+  if (!existsSync(join(root, 'skills', TOOL_NAME, 'SKILL.md')) || !existsSync(join(root, '.claude-plugin', 'plugin.json'))) {
     throw new UsageError(
-      `This copy of bita has no skill to install (looked in ${root}). Install it from npm or from a clone of the repository.`,
+      `This copy of bita has no skills to install (looked in ${root}). Install it from npm or from a clone of the repository.`,
     )
   }
 
@@ -128,15 +148,42 @@ export async function runSetup(argv: string[]): Promise<number> {
     : await kit.registerTool(manifest(root, await kit.stableBin(TOOL_NAME, VERSION, binCommand(root), ctx)), ctx)
 
   const settings = !readBoolean(args, 'no-settings')
-  const wanted = integration(root, { settings })
-  const cleanSettings = settings && agents.includes('claude') && retiredSettingsPresent(homes.claude)
-  const retired =
-    cleanSettings || retiredCommandsPresent(homes)
-      ? (await kit.agents.uninstallIntegration(retiredIntegration(root, cleanSettings), { agents: agents.filter((agent) => agent !== 'gemini'), ctx, homes })).filter(
+  const matchers = kit.agents.EDIT_TOOL_MATCHERS
+  const codexEditMatcher = matchers?.codex ?? CODEX_EDIT_MATCHER
+  const steps: Step[] = []
+
+  if (agents.includes('claude')) {
+    const plugin = await kit.agents.installClaudePlugin({ ...CLAUDE_MARKETPLACE, plugin: CLAUDE_PLUGIN }, { ctx, homes })
+    steps.push(...plugin)
+    if (readBoolean(args, 'mod')) steps.push(...(await kit.agents.installClaudePlugin({ ...CLAUDE_MARKETPLACE, plugin: CLAUDE_MOD_PLUGIN }, { ctx, homes })))
+    if (pluginInPlace(plugin, CLAUDE_PLUGIN)) {
+      const legacy = legacyClaudeIntegration(root)
+      if (!settings && legacy.claude) delete legacy.claude.permissions
+      steps.push(...(await kit.agents.removeLegacyClaude(legacy, { ctx, homes })).filter((step) => step.state === 'removed'))
+    }
+    if (settings) steps.push(...(await kit.agents.installIntegration(claudePermissions(), { agents: ['claude'], ctx, homes })))
+  }
+
+  const others = agents.filter((agent) => agent !== 'claude')
+  if (others.length > 0) {
+    const wanted = integration(root, { codexEditMatcher, geminiEditMatcher: matchers?.gemini ?? GEMINI_EDIT_MATCHER })
+    const cleanup = others.filter((agent) => agent !== 'gemini')
+    if (cleanup.length > 0 && retiredCommandsPresent(homes)) {
+      steps.push(
+        ...(await kit.agents.uninstallIntegration(retiredIntegration(root), { agents: cleanup, ctx, homes })).filter(
           (step) => step.state === 'removed' && step.item !== 'extension',
-        )
-      : []
-  const steps: Step[] = [...retired, ...(await kit.agents.installIntegration(wanted, { agents, ctx, homes, skipMcp: true }))]
+        ),
+      )
+    }
+    if (others.includes('codex') && codexHooksStale(homes.codex, codexEditMatcher)) {
+      steps.push(
+        ...(await kit.agents.uninstallIntegration({ tool: TOOL_NAME, version: VERSION, codex: { hooks: wanted.codex?.hooks ?? {} } }, { agents: ['codex'], ctx, homes })).filter(
+          (step) => step.state === 'removed',
+        ),
+      )
+    }
+    steps.push(...(await kit.agents.installIntegration(wanted, { agents: others, ctx, homes, skipMcp: true, claudeCompat: 'auto' })))
+  }
 
   if (json) {
     writeJson(successEnvelope('setup', { root, agents, registered, steps, movedOut: MOVED_OUT, warnings }))
@@ -154,5 +201,8 @@ export async function runSetup(argv: string[]): Promise<number> {
   writeOut('Next:')
   writeOut('  bita project add "<name>"     create a project')
   writeOut('  bita scope set . <projectId>  map this repository to it')
+  if (agents.includes('claude')) {
+    writeOut('  Claude Code status line: "statusLine": { "type": "command", "command": "bita statusline" } in ~/.claude/settings.json')
+  }
   return 0
 }
