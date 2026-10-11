@@ -12,7 +12,7 @@ export const INSTALL_HINT = 'npm install -g @kikedealba/bita && bita setup'
 export const HOMEPAGE = 'https://github.com/KikeDeAlba/bita-cli'
 export const DESCRIPTION = 'Local time tracker: timers, entries and projects'
 
-export const DEN_RELEASES = 'https://github.com/KikeDeAlba/bita-desktop/releases/latest'
+export const DEN_RELEASES = 'https://github.com/KikeDeAlba/den/releases/latest'
 
 export const SIBLING_INSTALLS = {
   inkwell: 'npm i -g @kikedealba/inkwell && inkwell setup',
