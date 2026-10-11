@@ -12,7 +12,7 @@ import { runMerge } from './commands/merge.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '1.1.1'
+export const VERSION = '1.1.2'
 
 export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
   jira: 'Jira lives in atl now. Use atl jira … (atl jira --help).',
@@ -29,7 +29,7 @@ export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
   map: 'Jira mappings live in tally now. Use tally map ….',
   link: 'Marking entries as sent to Jira lives in tally now. Use tally link ….',
   config: 'The Jira configuration lives in tally now. Use tally config ….',
-  app: 'bita no longer installs the desktop app. Download Den from https://github.com/KikeDeAlba/bita-desktop/releases/latest',
+  app: 'bita no longer installs the desktop app. Download Den from https://github.com/KikeDeAlba/den/releases/latest',
 }
 
 const MOVED_TIMER_FLAGS: Readonly<Record<string, string>> = {
