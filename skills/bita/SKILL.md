@@ -1,16 +1,9 @@
 ---
 name: bita
 description: >-
-  Lleva el cronómetro de trabajo con bita: arranca, para, registra bloques que
-  ya pasaron, corrige título, proyecto o tipo, une y borra entradas, y mapea
-  repositorios a proyectos. Úsala cuando el usuario quiera arrancar o parar el
-  conteo de tiempo, saber cuánto lleva o qué tiene corriendo, registrar un
-  bloque que se le olvidó, o ver en qué trabajó. Frases que la disparan:
-  "arranca el tiempo", "para el cronómetro", "cuánto llevo", "qué tengo
-  corriendo", "registra una hora de esta mañana", "une estos contadores", "qué
-  trabajé hoy". bita solo lleva el tiempo: documentar el trabajo es de inkwell,
-  volcar las horas a Jira es de tally, Jira y Confluence directos son de atl, y
-  grabar reuniones es de recap.
+  Cronómetro de trabajo con bita: arrancar, parar, ver qué corre, registrar
+  bloques olvidados y corregir entradas. Frases: "arranca el tiempo", "para el
+  cronómetro", "cuánto llevo", "qué trabajé hoy".
 ---
 
 # bita

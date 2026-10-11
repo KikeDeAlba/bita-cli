@@ -1,6 +1,6 @@
 ---
 name: bita-timers
-description: Muestra los cronómetros de bita que están corriendo y lo de hoy
+description: Muestra los cronómetros que corren y lo de hoy
 allowed-tools: Bash(bita ls:*), Bash(bita entries:*)
 disable-model-invocation: true
 ---

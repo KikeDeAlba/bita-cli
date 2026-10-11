@@ -1,6 +1,6 @@
 ---
 name: bita-init
-description: Crea el proyecto de bita para un repositorio y lo deja mapeado
+description: Crea y mapea el proyecto de bita de un repositorio
 argument-hint: [ruta del repositorio, vacío para el actual]
 allowed-tools: Bash(bita repo init:*), Bash(bita repo show:*), Bash(bita projects:*), Bash(bita scope list:*)
 disable-model-invocation: true
