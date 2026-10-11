@@ -118,8 +118,8 @@ export function codexHooksStale(codexHome: string, editMatcher: string): boolean
   })
 }
 
-function healthy(steps: readonly Step[]): boolean {
-  return steps.length > 0 && steps.every((step) => step.state !== 'failed' && step.state !== 'unavailable')
+function pluginInPlace(steps: readonly Step[], plugin: string): boolean {
+  return steps.some((step) => step.item === `plugin ${plugin}@${CLAUDE_MARKETPLACE.marketplaceName}` && (step.state === 'installed' || step.state === 'present'))
 }
 
 export async function runSetup(argv: string[]): Promise<number> {
@@ -156,9 +156,9 @@ export async function runSetup(argv: string[]): Promise<number> {
     const plugin = await kit.agents.installClaudePlugin({ ...CLAUDE_MARKETPLACE, plugin: CLAUDE_PLUGIN }, { ctx, homes })
     steps.push(...plugin)
     if (readBoolean(args, 'mod')) steps.push(...(await kit.agents.installClaudePlugin({ ...CLAUDE_MARKETPLACE, plugin: CLAUDE_MOD_PLUGIN }, { ctx, homes })))
-    if (healthy(plugin)) {
+    if (pluginInPlace(plugin, CLAUDE_PLUGIN)) {
       const legacy = legacyClaudeIntegration(root)
-      if (!settings) delete legacy.claude
+      if (!settings && legacy.claude) delete legacy.claude.permissions
       steps.push(...(await kit.agents.removeLegacyClaude(legacy, { ctx, homes })).filter((step) => step.state === 'removed'))
     }
     if (settings) steps.push(...(await kit.agents.installIntegration(claudePermissions(), { agents: ['claude'], ctx, homes })))

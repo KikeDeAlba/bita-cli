@@ -93,7 +93,7 @@ export const CLAUDE_MARKETPLACE = { marketplace: 'KikeDeAlba/bita-cli', marketpl
 export const CLAUDE_PLUGIN = 'bita'
 export const CLAUDE_MOD_PLUGIN = 'bita-timer'
 
-export const CODEX_EDIT_MATCHER = 'apply_patch|edit|write'
+export const CODEX_EDIT_MATCHER = 'apply_patch|Edit|Write'
 
 export function codexHooks(editMatcher: string = CODEX_EDIT_MATCHER): HookMap {
   return {

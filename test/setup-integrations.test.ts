@@ -247,6 +247,27 @@ test('setup removes the loose Claude files and hooks an older bita wrote, keepin
   }
 })
 
+test('setup --no-settings still drops the old Claude hooks but leaves the permissions alone', () => {
+  const box = sandbox()
+  try {
+    fakeClaude(box)
+    mkdirSync(box.claude, { recursive: true })
+    writeFileSync(
+      join(box.claude, 'settings.json'),
+      JSON.stringify({
+        permissions: { allow: ['Bash(bita summary:*)'] },
+        hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'bita hook prompt-submit', timeout: 5 }] }] },
+      }),
+    )
+    setup(box, '--target', 'claude', '--no-settings')
+    const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] }; hooks?: Record<string, unknown> }
+    assert.deepEqual(settings.hooks ?? {}, {})
+    assert.deepEqual(settings.permissions.allow, ['Bash(bita summary:*)'])
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
 test('setup leaves the old Claude files alone when the plugin could not be installed', () => {
   const box = sandbox()
   try {

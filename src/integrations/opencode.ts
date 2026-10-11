@@ -67,7 +67,7 @@ export default {
     const pending = new Map<string, string[]>()
 
     await ctx.session.hook('prompt', async (event) => {
-      const output = await runBita(['hook', 'prompt'])
+      const output = await runBita(['hook', 'prompt-submit'])
       const context = contextOf(output)
       if (context) pending.set(event.sessionID, [context])
     })
@@ -82,6 +82,9 @@ export default {
         const context = contextOf(output)
         if (context) contexts.unshift(context)
       }
+
+      const checkpoint = contextOf(await runBita(['hook', 'checkpoint']))
+      if (checkpoint) contexts.push(checkpoint)
 
       for (const text of contexts) event.system.push({ type: 'text', text })
     })
