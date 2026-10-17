@@ -5,6 +5,7 @@ import { UsageError } from '../../errors.ts'
 import { parseCommandArgs, readBoolean, readString, BASE_OPTIONS } from '../args.ts'
 import { createLocalContext } from '../local-context.ts'
 import { findProjectById, findProjectByName, insertProject } from '../../db/projects.ts'
+import { findCheckoutProject } from '../../db/project-repos.ts'
 import { readRepoContext } from '../../state/git.ts'
 import { resolveRepoIdentity, type RepoIdentity } from '../../domain/repo.ts'
 import { readConfig, setScopeMapping } from '../../state/config.ts'
@@ -162,5 +163,27 @@ export async function runRepo(argv: string[]): Promise<number> {
     return 0
   }
 
-  throw new UsageError(`Unknown repo subcommand "${subcommand}". Use show or init; scopes live in "bita scope".`)
+  if (subcommand === 'which') {
+    const identity = await currentRepoIdentity()
+    let mapped: { projectId: number; projectName: string } | null | undefined = identity ? resolveMappedProject(identity.slug, await readConfig()) : null
+    if (identity && !mapped) {
+      const toplevel = (await readRepoContext(process.cwd())).toplevel
+      const ctx = createLocalContext(args)
+      try {
+        mapped = toplevel ? findCheckoutProject(ctx.db, toplevel, identity.slug) : undefined
+      } finally {
+        ctx.db.close()
+      }
+    }
+    const found = identity && mapped ? { slug: identity.slug, projectId: mapped.projectId, projectName: mapped.projectName } : null
+
+    if (json) {
+      writeJson(successEnvelope('repo which', found))
+      return 0
+    }
+    writeOut(found ? `${found.projectName} (${found.projectId})` : identity ? `${identity.slug} resolves to no project.` : 'Not inside a git repository.')
+    return 0
+  }
+
+  throw new UsageError(`Unknown repo subcommand "${subcommand}". Use show, which or init; scopes live in "bita scope".`)
 }

@@ -2,6 +2,7 @@ import { UsageError, NotFoundError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean } from '../args.ts'
 import { withLocalContext, type LocalContext } from '../local-context.ts'
 import { findEntryWithProject } from '../../db/entries.ts'
+import { listTouches } from '../../db/touches.ts'
 import { collectEntries } from '../collect.ts'
 import { renderTable } from '../table.ts'
 import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
@@ -18,7 +19,9 @@ export interface EntryDetail {
   stoppedAt: string | null
   durationSeconds: number
   mergedInto: number | null
+  jiraIssue: boolean | null
   segments: LogicalEntry['segments']
+  touched: string[]
 }
 
 export function readEntryDetail(ctx: LocalContext, id: number): EntryDetail {
@@ -35,7 +38,9 @@ export function readEntryDetail(ctx: LocalContext, id: number): EntryDetail {
     stoppedAt: row.stoppedAt,
     durationSeconds: logical.durationSeconds,
     mergedInto: row.mergedInto,
+    jiraIssue: row.jiraIssue,
     segments: logical.segments,
+    touched: [...new Set([row.id, ...logical.segments.map((segment) => segment.entryId)].flatMap((entryId) => listTouches(ctx.db, entryId)))],
   }
 }
 

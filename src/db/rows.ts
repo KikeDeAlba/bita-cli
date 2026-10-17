@@ -21,6 +21,7 @@ export interface EntryRow {
   externalId: number | null
   mergedInto: number | null
   kind: string | null
+  jiraIssue: boolean | null
   createdAt: string
   updatedAt: string
 }

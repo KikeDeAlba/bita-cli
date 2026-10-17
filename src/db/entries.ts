@@ -14,6 +14,7 @@ interface RawEntry {
   external_id: number | null
   merged_into: number | null
   kind: string | null
+  jira_issue?: number | null
   created_at: string
   updated_at: string
 }
@@ -43,6 +44,7 @@ function toEntry(raw: RawEntry): EntryRow {
     externalId: raw.external_id,
     mergedInto: raw.merged_into ?? null,
     kind: raw.kind ?? null,
+    jiraIssue: raw.jira_issue === null || raw.jira_issue === undefined ? null : raw.jira_issue === 1,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   }
@@ -65,6 +67,7 @@ export interface NewEntry {
   source: EntrySource
   externalId?: number | null
   kind?: string | null
+  jiraIssue?: boolean | null
   now: string
 }
 
@@ -72,8 +75,8 @@ export function insertEntry(db: DatabaseSync, entry: NewEntry): EntryRow {
   const result = db
     .prepare(
       `INSERT INTO entries
-         (project_id, description, started_at, stopped_at, billable, source, external_id, kind, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (project_id, description, started_at, stopped_at, billable, source, external_id, kind, jira_issue, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       entry.projectId,
@@ -84,6 +87,7 @@ export function insertEntry(db: DatabaseSync, entry: NewEntry): EntryRow {
       entry.source,
       entry.externalId ?? null,
       entry.kind ?? null,
+      entry.jiraIssue === undefined || entry.jiraIssue === null ? null : fromBoolean(entry.jiraIssue),
       toUtcIso(entry.now),
       toUtcIso(entry.now),
     )

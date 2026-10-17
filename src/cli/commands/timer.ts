@@ -46,6 +46,15 @@ const TIMER_OPTIONS = {
   for: { type: 'string' as const },
   'require-running': { type: 'boolean' as const, default: false },
   kind: { type: 'string' as const },
+  jira: { type: 'boolean' as const, default: false },
+  'no-jira': { type: 'boolean' as const, default: false },
+}
+
+function readJiraIssue(args: ParsedArgs): boolean | null {
+  const jira = readBoolean(args, 'jira')
+  const noJira = readBoolean(args, 'no-jira')
+  if (jira && noJira) throw new UsageError('Use either --jira or --no-jira, not both.')
+  return jira ? true : noJira ? false : null
 }
 
 function readKind(args: ParsedArgs): string | null {
@@ -131,6 +140,7 @@ export async function runStart(argv: string[]): Promise<number> {
   const json = readBoolean(args, 'json')
   const title = readTitle(args)
   const kind = readKind(args)
+  const jiraIssue = readJiraIssue(args)
   const ctx = createLocalContext(args)
 
   try {
@@ -146,6 +156,7 @@ export async function runStart(argv: string[]): Promise<number> {
       startedAt,
       source: 'timer',
       kind,
+      jiraIssue,
       now: ctx.now.toISOString(),
     })
 
@@ -169,6 +180,7 @@ export async function runStart(argv: string[]): Promise<number> {
       writeOut(isDraft ? `Started #${created.id}, still a draft` : `Started #${created.id}: ${title}`)
       if (enriched?.projectName) writeOut(`Project : ${enriched.projectName}`)
       if (kind) writeOut(`Kind    : ${kind}`)
+      if (jiraIssue !== null) writeOut(`Jira    : ${jiraIssue ? 'open a card' : 'no card'}`)
       writeOut(`Since   : ${enriched?.startLocal.slice(11, 16) ?? ''}`)
       if (isDraft) {
         writeOut('')

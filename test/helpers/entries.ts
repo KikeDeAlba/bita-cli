@@ -40,5 +40,6 @@ export function makeEntry(overrides: EntryOverrides = {}): EnrichedTimeEntry {
     running: overrides.running ?? false,
     mergedInto: overrides.mergedInto ?? null,
     kind: overrides.kind ?? null,
+    jiraIssue: null,
   }
 }
