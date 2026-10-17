@@ -162,5 +162,18 @@ export async function runRepo(argv: string[]): Promise<number> {
     return 0
   }
 
-  throw new UsageError(`Unknown repo subcommand "${subcommand}". Use show or init; scopes live in "bita scope".`)
+  if (subcommand === 'which') {
+    const identity = await currentRepoIdentity()
+    const mapped = identity ? resolveMappedProject(identity.slug, await readConfig()) : null
+    const found = identity && mapped ? { slug: identity.slug, projectId: mapped.projectId, projectName: mapped.projectName } : null
+
+    if (json) {
+      writeJson(successEnvelope('repo which', found))
+      return 0
+    }
+    writeOut(found ? `${found.projectName} (${found.projectId})` : identity ? `${identity.slug} resolves to no project.` : 'Not inside a git repository.')
+    return 0
+  }
+
+  throw new UsageError(`Unknown repo subcommand "${subcommand}". Use show, which or init; scopes live in "bita scope".`)
 }

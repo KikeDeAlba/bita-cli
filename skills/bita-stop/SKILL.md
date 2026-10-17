@@ -2,7 +2,7 @@
 name: bita-stop
 description: Deja la nota al día y después para el cronómetro
 argument-hint: [id, vacío si solo hay uno, o "all"]
-allowed-tools: Bash(bita stop:*), Bash(bita ls:*), Bash(bita amend:*), Bash(bita project:*), Bash(inkwell note:*), Bash(inkwell guide:*), Bash(recap wait:*), Bash(recap status:*), Read, Write, Edit
+allowed-tools: Bash(bita stop:*), Bash(bita ls:*), Bash(bita amend:*), Bash(bita project:*), Bash(inkwell note:*), Bash(inkwell guide:*), Bash(recap wait:*), Bash(recap status:*), Bash(tally issue show:*), Bash(tally issue fill:*), Read, Write, Edit
 disable-model-invocation: true
 ---
 
@@ -47,7 +47,21 @@ Por cada sugerencia con `mapped: false` que **de verdad sea del proyecto**:
 `bita project repo add <path> --project <X> --source stop`. Lo que se tocó de
 paso no se mapea; ante la duda, fuera. Sin proyecto, no mapees nada.
 
-## 3. Parar
+## 3. La tarjeta de Jira
+
+Solo si la entrada tiene tarjeta: `tally issue show <id> --json` (sin tally o
+con `data: null`, sáltate este paso). Escribe en un archivo una descripción
+breve en español de lo hecho en la sesión:
+
+```
+## Objetivo
+## Hecho
+## Pendiente
+```
+
+y `tally issue fill <id> --description @<archivo> --json`.
+
+## 4. Parar
 
 `bita stop <id>`. Responde con el id, el título, el tiempo registrado y los que
 sigan corriendo.

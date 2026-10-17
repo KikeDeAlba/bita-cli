@@ -223,6 +223,7 @@ vayas a leer o preguntar.
 
 ```sh
 bita start "Despliegue de infraestructura"   # arranca; puede haber varios
+bita start "Ajustar pipeline" --jira         # y pide a tally la tarjeta de Jira (--no-jira: nunca)
 bita ls                                      # qué está corriendo ahora
 bita stop 12                                 # para uno
 bita log "Sesión con QA" --from 14:00 --for 1h
@@ -344,6 +345,9 @@ bita hooks remove 1
   `entry` es la que queda). También recibe `KIT_EVENT`, `KIT_EVENT_SOURCE`,
   `BITA_HOOK_EVENT`, `BITA_ENTRY_ID`, `BITA_ENTRY_KIND`, `BITA_DB_PATH` y
   `BITA_DOCS_DIR`.
+- `entry.jiraIssue` es `true` si se arrancó con `--jira`, `false` con
+  `--no-jira` y `null` si no se dijo nada; tally lo usa para abrir (o no) la
+  tarjeta de Jira del cronómetro.
 - `amend` solo se dispara si algo cambió de verdad.
 - Corre desacoplado: bita espera solo a entregarle el JSON, nunca a que termine,
   y un oyente que falla no hace fallar el comando. Su salida va a `hooks.log`,
@@ -357,7 +361,8 @@ bita hooks remove 1
 ```sh
 bita capabilities --json       # nombre, versión, sobre, capacidades y eventos
 bita entries --json            # entradas de un rango, con sus segmentos
-bita entries get <id> --json   # { id, description, kind, projectId, projectName, startedAt, stoppedAt, durationSeconds, mergedInto, segments }
+bita entries get <id> --json   # { id, description, kind, projectId, projectName, startedAt, stoppedAt, durationSeconds, mergedInto, jiraIssue, segments, touched }
+bita repo which --json         # { slug, projectId, projectName } del repo actual, o null si no tiene proyecto
 bita entries today --brief --json   # [{ id, title, project, start, stop, seconds }]: lo justo para un agente
 ```
 
@@ -447,8 +452,8 @@ En Claude Code son skills de usuario del plugin; en los demás agentes, comandos
 
 | Comando | Qué hace |
 |---|---|
-| `/bita-start [título]` | Arranca un cronómetro, en blanco o con título |
-| `/bita-stop [id]` | Deja la nota al día con inkwell y para. Con varios abiertos, pregunta cuál |
+| `/bita-start [título]` | Arranca un cronómetro, en blanco o con título; con tally, abre su tarjeta de Jira |
+| `/bita-stop [id]` | Deja la nota al día con inkwell, describe la tarjeta de Jira si la hay y para. Con varios abiertos, pregunta cuál |
 | `/bita-timers` | Qué está corriendo y cuánto llevas hoy |
 | `/bita-log <texto>` | Registra un bloque que ya pasó |
 | `/bita-init [ruta]` | Da de alta un repositorio: crea su proyecto y lo mapea |
