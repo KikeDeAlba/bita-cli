@@ -153,6 +153,21 @@ test('repo which answers the mapped project of the current repository, or null',
   assert.equal(bita(env, dir, 'repo', 'which').json['data'], null)
 })
 
+test('repo which falls back to the repositories a project already knows', () => {
+  const { dir, env } = sandbox('repo-which-known')
+  const checkout = join(dir, 'gadget')
+  mkdirSync(checkout, { recursive: true })
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: checkout, env }).status, 0)
+  assert.equal(spawnSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/gadget.git'], { cwd: checkout, env }).status, 0)
+
+  assert.equal(bita(env, dir, 'project', 'add', 'Gadget').status, 0)
+  const added = bita(env, dir, 'project', 'repo', 'add', checkout, '--project', 'Gadget')
+  assert.equal(added.status, 0, added.stderr)
+  const which = bita(env, checkout, 'repo', 'which')
+  assert.equal(which.status, 0, which.stderr)
+  assert.equal((which.json['data'] as { projectName: string }).projectName, 'Gadget')
+})
+
 test('events reach registry subscribers and config hooks with the bita document', async () => {
   const { dir, env } = sandbox('events')
   const fromRegistry = join(dir, 'registry-events.ndjson')

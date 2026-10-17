@@ -5,6 +5,7 @@ import { UsageError } from '../../errors.ts'
 import { parseCommandArgs, readBoolean, readString, BASE_OPTIONS } from '../args.ts'
 import { createLocalContext } from '../local-context.ts'
 import { findProjectById, findProjectByName, insertProject } from '../../db/projects.ts'
+import { findCheckoutProject } from '../../db/project-repos.ts'
 import { readRepoContext } from '../../state/git.ts'
 import { resolveRepoIdentity, type RepoIdentity } from '../../domain/repo.ts'
 import { readConfig, setScopeMapping } from '../../state/config.ts'
@@ -164,7 +165,16 @@ export async function runRepo(argv: string[]): Promise<number> {
 
   if (subcommand === 'which') {
     const identity = await currentRepoIdentity()
-    const mapped = identity ? resolveMappedProject(identity.slug, await readConfig()) : null
+    let mapped: { projectId: number; projectName: string } | null | undefined = identity ? resolveMappedProject(identity.slug, await readConfig()) : null
+    if (identity && !mapped) {
+      const toplevel = (await readRepoContext(process.cwd())).toplevel
+      const ctx = createLocalContext(args)
+      try {
+        mapped = toplevel ? findCheckoutProject(ctx.db, toplevel, identity.slug) : undefined
+      } finally {
+        ctx.db.close()
+      }
+    }
     const found = identity && mapped ? { slug: identity.slug, projectId: mapped.projectId, projectName: mapped.projectName } : null
 
     if (json) {
