@@ -57,6 +57,12 @@ export function findProjectRepo(db: DatabaseSync, projectId: number, path: strin
   return raw ? toRow(raw) : undefined
 }
 
+export function findCheckoutProject(db: DatabaseSync, path: string, slug: string): ProjectRepoRow | undefined {
+  const rows = queryAll<RawProjectRepo>(db.prepare(`${SELECT_REPOS} WHERE r.path = ? OR r.slug = ? ORDER BY r.last_seen_at DESC`), path, slug).map(toRow)
+  const projects = new Set(rows.map((row) => row.projectId))
+  return projects.size === 1 ? rows[0] : undefined
+}
+
 export interface UpsertProjectRepo {
   projectId: number
   path: string
