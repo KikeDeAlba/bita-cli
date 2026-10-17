@@ -30,8 +30,9 @@ queda claro cuál, pregunta solo eso.
 Si en la lista de arriba ya hay uno con el mismo título y proyecto, no arranques
 otro: dímelo. Si hay otros de otra cosa, arranca igual y menciónalo.
 
-**Tarjeta de Jira.** Si `tally` está instalado y no se pidió sin tarjeta
-(`--no-jira`), tras arrancar: `tally issue open <id> --json`.
+**Tarjeta de Jira**, solo si se pidió (`--jira`, «con tarjeta», «ábrele
+tarjeta»): arranca con `--jira` y luego `tally issue open <id> --json`. Sin
+pedirla no hagas nada: los proyectos con `tally map auto` ya la abren solos.
 `NOT_A_JIRA_PROJECT`: nada. Con `NEEDS_PROJECT`, pregunta con
 AskUserQuestion entre `data.options` (máx. 4, `jiraProjectKey` y sus
 `projectNames`) más «No crear tarjeta», y reintenta con `--jira-project <KEY>`.
