@@ -17,4 +17,5 @@ export interface EnrichedTimeEntry {
   running: boolean
   mergedInto: number | null
   kind: string | null
+  jiraIssue: boolean | null
 }

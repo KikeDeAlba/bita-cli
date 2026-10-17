@@ -284,6 +284,8 @@ const PROJECT_REPOS: readonly string[] = [
   `CREATE INDEX project_repos_path ON project_repos (path)`,
 ]
 
+const ENTRY_JIRA_ISSUE: readonly string[] = [`ALTER TABLE entries ADD COLUMN jira_issue INTEGER`]
+
 function backfillBacklogKeys(db: DatabaseSync): void {
   backfillProjectKeys(db)
   backfillBacklogSequence(db)
@@ -304,6 +306,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 10, statements: PROJECT_JIRA },
   { version: 11, statements: PROJECT_ATLASSIAN },
   { version: 12, statements: PROJECT_REPOS },
+  { version: 13, statements: ENTRY_JIRA_ISSUE },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

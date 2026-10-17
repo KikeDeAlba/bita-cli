@@ -78,6 +78,7 @@ Projects:
   project repo ls|add|rm     Local repositories of a project: ls [--project P], add <path>, rm <path>
   project repo suggest <id>  Repositories behind the files an entry touched, and which are mapped
   repo show                  Where am I, and which project resolves here
+  repo which                 Only the mapped project here: slug, projectId and projectName, or null
   repo init [path]           Create a project for a repository and map it (--name, --client, --scope)
   scope list|set|unset|which Map a path prefix to a project; the longest one wins
 
@@ -106,6 +107,7 @@ Common options:
 Timer options:
   --project ID|NAME          Project; otherwise inferred from the repository
   --kind KIND                With start or log, the kind of work (remote-meeting, in-person-meeting, ...)
+  --jira | --no-jira         With start, ask tally to open (or never open) the Jira card of the timer
   --at HH:MM                 Start or stop at this time instead of now
   --all                      stop or cancel every running timer
   --last                     stop or cancel the most recently started one

@@ -103,7 +103,7 @@ test('entries get returns one entry without a note', () => {
   assert.equal(detail.status, 0, detail.stderr)
   assert.equal(detail.json['command'], 'entries get')
   const data = detail.json['data'] as Record<string, unknown>
-  assert.deepEqual(Object.keys(data).sort(), ['description', 'durationSeconds', 'id', 'kind', 'mergedInto', 'projectId', 'projectName', 'segments', 'startedAt', 'stoppedAt'])
+  assert.deepEqual(Object.keys(data).sort(), ['description', 'durationSeconds', 'id', 'jiraIssue', 'kind', 'mergedInto', 'projectId', 'projectName', 'segments', 'startedAt', 'stoppedAt', 'touched'])
   assert.equal(data['id'], id)
   assert.equal(data['description'], 'Wire kit')
   assert.equal(data['projectName'], 'Kit')
@@ -112,6 +112,45 @@ test('entries get returns one entry without a note', () => {
   const missing = bita(env, dir, 'entries', 'get', '9999')
   assert.notEqual(missing.status, 0)
   assert.equal((missing.json['error'] as { code: string }).code, 'ENTRY_NOT_FOUND')
+})
+
+test('start --jira and --no-jira travel with the entry, and entries get lists the touched files', () => {
+  const { dir, env } = sandbox('jira-flag')
+  assert.equal(bita(env, dir, 'project', 'add', 'Kit').status, 0)
+  const flagged = bita(env, dir, 'start', 'Wire kit', '--project', 'Kit', '--jira')
+  assert.equal(flagged.status, 0, flagged.stderr)
+  const flaggedEntry = flagged.json['data'] as { id: number; jiraIssue: boolean | null }
+  assert.equal(flaggedEntry.jiraIssue, true)
+  assert.equal((bita(env, dir, 'stop', String(flaggedEntry.id), '--file', 'src/kit.ts').status), 0)
+  const detail = bita(env, dir, 'entries', 'get', String(flaggedEntry.id)).json['data'] as { jiraIssue: boolean | null; touched: string[] }
+  assert.equal(detail.jiraIssue, true)
+  assert.deepEqual(detail.touched, ['src/kit.ts'])
+
+  const refused = bita(env, dir, 'start', 'Sin tarjeta', '--project', 'Kit', '--no-jira')
+  assert.equal((refused.json['data'] as { jiraIssue: boolean | null }).jiraIssue, false)
+  const plain = bita(env, dir, 'start', 'Normal', '--project', 'Kit')
+  assert.equal((plain.json['data'] as { jiraIssue: boolean | null }).jiraIssue, null)
+  const both = bita(env, dir, 'start', 'Ambos', '--project', 'Kit', '--jira', '--no-jira')
+  assert.notEqual(both.status, 0)
+})
+
+test('repo which answers the mapped project of the current repository, or null', () => {
+  const { dir, env } = sandbox('repo-which')
+  const checkout = join(dir, 'widget')
+  mkdirSync(checkout, { recursive: true })
+  assert.equal(spawnSync('git', ['init', '-q'], { cwd: checkout, env }).status, 0)
+  assert.equal(spawnSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/widget.git'], { cwd: checkout, env }).status, 0)
+
+  const before = bita(env, checkout, 'repo', 'which')
+  assert.equal(before.status, 0, before.stderr)
+  assert.equal(before.json['data'], null)
+
+  const init = bita(env, checkout, 'repo', 'init')
+  assert.equal(init.status, 0, init.stderr)
+  const projectId = (init.json['data'] as { projectId: number }).projectId
+  const which = bita(env, checkout, 'repo', 'which')
+  assert.deepEqual(which.json['data'], { slug: 'github.com/acme/widget', projectId, projectName: 'widget' })
+  assert.equal(bita(env, dir, 'repo', 'which').json['data'], null)
 })
 
 test('events reach registry subscribers and config hooks with the bita document', async () => {
