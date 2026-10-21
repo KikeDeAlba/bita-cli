@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, statSync } from 'node:fs'
 import os from 'node:os'
 import { dirname } from 'node:path'
@@ -42,6 +42,8 @@ const SCRUBBED_ENV = [
 
 const ORPHAN_RETRY_MS = 15 * 60_000
 const STALE_CLAIM_MS = 10 * 60_000
+const PROCESS_START_SLACK_MS = 1_000
+const PS_TIMEOUT_MS = 2_000
 
 export interface WrapperEnv {
   wrapperId: string
@@ -63,7 +65,7 @@ export type FinalizeSpawner = (entryId: number, options: { cwd: string; database
 
 export interface SessionDeps {
   spawnFinalize?: FinalizeSpawner
-  isAlive?: (pid: number) => boolean
+  isAlive?: (pid: number, sinceIso: string) => boolean
 }
 
 export interface SessionStartInput {
@@ -258,6 +260,27 @@ export function processAlive(pid: number): boolean {
   }
 }
 
+export function processStartedAt(pid: number): number | null {
+  try {
+    const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      env: { ...process.env, LC_ALL: 'C' },
+      timeout: PS_TIMEOUT_MS,
+    })
+    if (result.status !== 0) return null
+    const started = Date.parse(result.stdout.trim())
+    return Number.isNaN(started) ? null : started
+  } catch {
+    return null
+  }
+}
+
+export function wrapperAlive(pid: number, sinceIso: string): boolean {
+  if (!processAlive(pid)) return false
+  const started = processStartedAt(pid)
+  return started === null || started <= Date.parse(sinceIso) + PROCESS_START_SLACK_MS
+}
+
 function orphanEnd(db: DatabaseSync, row: { entryId: number; transcriptPath: string | null }, nowIso: string): string {
   if (row.transcriptPath) {
     try {
@@ -268,10 +291,10 @@ function orphanEnd(db: DatabaseSync, row: { entryId: number; transcriptPath: str
 }
 
 export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): Promise<number[]> {
-  const alive = deps.isAlive ?? processAlive
+  const alive = deps.isAlive ?? wrapperAlive
   const now = Date.now()
   const pending = immediate(ctx.db, () => {
-    const orphans = listOpenSessions(ctx.db).filter((row) => !alive(row.wrapperPid))
+    const orphans = listOpenSessions(ctx.db).filter((row) => !alive(row.wrapperPid, row.startedAt))
     const nowIso = new Date(now).toISOString()
     for (const row of orphans) markSessionEnded(ctx.db, row.id, orphanEnd(ctx.db, row, nowIso), 'orphan')
     const stale = listUnfinalizedEnded(

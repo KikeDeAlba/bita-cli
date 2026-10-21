@@ -17,6 +17,7 @@ import {
   handleSessionStart,
   startSessionEntry,
   sweepOrphans,
+  wrapperAlive,
   wrapperEnv,
   type SessionDeps,
   type WrapperEnv,
@@ -260,6 +261,24 @@ test('sweepOrphans without a transcript ends at the last touch, or at the sweep 
     assert.equal(findSessionByEntry(h.ctx.db, touched)?.endedAt, touchAt)
     const bareEnd = Date.parse(findSessionByEntry(h.ctx.db, bare)?.endedAt ?? '')
     assert.ok(bareEnd >= before - 1_000 && bareEnd <= Date.now(), String(bareEnd))
+  } finally {
+    h.ctx.db.close()
+  }
+})
+
+test('a live pid that started after the row is a reused pid, so the row is an orphan', async () => {
+  assert.equal(wrapperAlive(process.pid, new Date().toISOString()), true)
+  assert.equal(wrapperAlive(process.pid, '2000-01-01T00:00:00.000Z'), false)
+  assert.equal(wrapperAlive(deadPid(), '2000-01-01T00:00:00.000Z'), false)
+
+  const h = await setup()
+  try {
+    const entryId = await started(h)
+    h.ctx.db.prepare('UPDATE entry_sessions SET started_at = ? WHERE entry_id = ?').run('2000-01-01T00:00:00.000Z', entryId)
+    const fresh = await started(h)
+    assert.deepEqual(await sweepOrphans(h.ctx, h.deps), [entryId])
+    assert.equal(findSessionByEntry(h.ctx.db, entryId)?.endReason, 'orphan')
+    assert.equal(findSessionByEntry(h.ctx.db, fresh)?.endedAt, null)
   } finally {
     h.ctx.db.close()
   }
