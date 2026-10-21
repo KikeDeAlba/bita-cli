@@ -1,14 +1,22 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { UsageError } from '../errors.ts'
+import { ConflictError, UsageError } from '../errors.ts'
 
 export const SHELLS = ['zsh', 'bash'] as const
 export type ShellName = (typeof SHELLS)[number]
 
 export const SHELL_BLOCK_START = '# >>> bita session >>>'
 export const SHELL_BLOCK_END = '# <<< bita session <<<'
-const SHELL_FUNCTION = 'function claude { command bita session -- "$@"; }'
+const SHELL_FUNCTION = [
+  'function claude {',
+  '  if command -v bita >/dev/null 2>&1; then',
+  '    command bita session -- "$@"',
+  '  else',
+  '    command claude "$@"',
+  '  fi',
+  '}',
+].join('\n')
 
 export function isShellName(value: unknown): value is ShellName {
   return typeof value === 'string' && (SHELLS as readonly string[]).includes(value)
@@ -48,11 +56,17 @@ interface BlockRange {
   end: number
 }
 
-function findBlock(content: string): BlockRange | null {
+function findBlock(rc: string, content: string): BlockRange | null {
   const start = content.indexOf(SHELL_BLOCK_START)
   if (start === -1) return null
   const endMarker = content.indexOf(SHELL_BLOCK_END, start)
-  if (endMarker === -1) return null
+  if (endMarker === -1) {
+    throw new ConflictError(
+      `${rc} has "${SHELL_BLOCK_START}" without "${SHELL_BLOCK_END}"; it was left untouched.`,
+      'SHELL_BLOCK_UNTERMINATED',
+      `Add "${SHELL_BLOCK_END}" after the bita function in ${rc}, or remove the start marker, and run setup again.`,
+    )
+  }
   let end = endMarker + SHELL_BLOCK_END.length
   if (content[end] === '\n') end += 1
   return { start, end }
@@ -65,7 +79,7 @@ export function hasClaudeAlias(content: string): boolean {
 export async function installShellFunction(rc: string, shell: ShellName): Promise<'installed' | 'updated' | 'present'> {
   const content = await readRc(rc)
   const block = shellBlock(shell)
-  const range = findBlock(content)
+  const range = findBlock(rc, content)
   if (range) {
     if (content.slice(range.start, range.end) === block) return 'present'
     await writeFile(rc, `${content.slice(0, range.start)}${block}${content.slice(range.end)}`, 'utf8')
@@ -79,7 +93,7 @@ export async function installShellFunction(rc: string, shell: ShellName): Promis
 
 export async function removeShellFunction(rc: string): Promise<'removed' | 'absent'> {
   const content = await readRc(rc)
-  const range = findBlock(content)
+  const range = findBlock(rc, content)
   if (!range) return 'absent'
   await writeFile(rc, `${content.slice(0, range.start)}${content.slice(range.end)}`, 'utf8')
   return 'removed'

@@ -27,7 +27,16 @@ function rc(content?: string): string {
   return path
 }
 
-const EXPECTED = `${SHELL_BLOCK_START}\nfunction claude { command bita session -- "$@"; }\n${SHELL_BLOCK_END}\n`
+const FUNCTION = [
+  'function claude {',
+  '  if command -v bita >/dev/null 2>&1; then',
+  '    command bita session -- "$@"',
+  '  else',
+  '    command claude "$@"',
+  '  fi',
+  '}',
+].join('\n')
+const EXPECTED = `${SHELL_BLOCK_START}\n${FUNCTION}\n${SHELL_BLOCK_END}\n`
 
 test('the block is exactly the marked claude function', () => {
   assert.equal(shellBlock('zsh'), EXPECTED)
@@ -101,6 +110,37 @@ test('the function sends claude through bita session with every argument', (t) =
   }
   assert.equal(check.status, 0, check.stderr)
   assert.equal(readFileSync(log, 'utf8'), 'session\n--\n-c\ntwo words\n')
+})
+
+for (const shell of ['zsh', 'bash'] as const) {
+  test(`in ${shell}, the function falls back to the real claude when bita is not on PATH`, (t) => {
+    const dir = mkdtempSync(join(root, 'fallback-'))
+    const binDir = join(dir, 'bin')
+    mkdirSync(binDir)
+    const log = join(dir, 'argv')
+    writeFileSync(join(binDir, 'claude'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${log}'\n`, { mode: 0o755 })
+    const check = spawnSync(shell, ['-c', `${shellBlock(shell)}claude -c "two words"`], {
+      env: { PATH: [binDir, '/usr/bin', '/bin'].join(delimiter) },
+      encoding: 'utf8',
+    })
+    if (check.error) {
+      t.skip(`${shell} is not installed`)
+      return
+    }
+    assert.equal(check.status, 0, check.stderr)
+    assert.equal(readFileSync(log, 'utf8'), '-c\ntwo words\n')
+  })
+}
+
+test('a start marker without its end leaves the rc untouched and fails clearly', async () => {
+  const content = `export A=1\n${SHELL_BLOCK_START}\nfunction claude { old; }\nexport KEEP=1\n`
+  const path = rc(content)
+  await assert.rejects(installShellFunction(path, 'zsh'), (error: Error) => {
+    assert.match(error.message, /without "# <<< bita session <<<"; it was left untouched/)
+    return true
+  })
+  await assert.rejects(removeShellFunction(path), /left untouched/)
+  assert.equal(readFileSync(path, 'utf8'), content)
 })
 
 function sandboxEnv(dir: string): NodeJS.ProcessEnv {
