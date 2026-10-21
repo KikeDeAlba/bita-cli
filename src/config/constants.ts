@@ -1,6 +1,3 @@
 export const MIN_SPLIT_SECONDS = 5 * 60
 
 export const SCHEMA_VERSION = 3
-
-export const CHECKPOINT_STALE_MINUTES = 45
-export const CHECKPOINT_TOUCH_THRESHOLD = 3

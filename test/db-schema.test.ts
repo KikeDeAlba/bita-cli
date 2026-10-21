@@ -159,3 +159,28 @@ test('version 11 gives projects their Atlassian settings and maps pages to Confl
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM confluence_page_map').get() as { n: number }).n, 0)
   db.close()
 })
+
+test('version 14 links sessions to entries, checks their states and cascades on delete', () => {
+  const db = openMemoryDatabase()
+  const at = '2026-10-20T10:00:00.000Z'
+  const entry = Number(
+    db
+      .prepare(`INSERT INTO entries (description, started_at, source, created_at, updated_at) VALUES ('', ?, 'session', ?, ?)`)
+      .run(at, at, at).lastInsertRowid,
+  )
+  const insert = db.prepare(
+    `INSERT INTO entry_sessions (entry_id, wrapper_id, wrapper_pid, harness, cwd, started_at, ended_at, finalized_at, outcome)
+     VALUES (?, 'w', 1, ?, '/tmp', ?, ?, ?, ?)`,
+  )
+  assert.throws(() => insert.run(entry, 'cursor', at, null, null, null), /CHECK/)
+  assert.throws(() => insert.run(entry, 'claude', at, '2026-10-20T09:00:00.000Z', null, null), /CHECK/)
+  assert.throws(() => insert.run(entry, 'claude', at, null, at, null), /CHECK/)
+  assert.throws(() => insert.run(entry, 'claude', at, null, at, 'lost'), /CHECK/)
+  assert.throws(() => insert.run(999, 'claude', at, null, null, null), /FOREIGN KEY/i)
+  insert.run(entry, 'claude', at, null, null, null)
+  assert.throws(() => insert.run(entry, 'codex', at, null, null, null), /UNIQUE/)
+
+  db.prepare('DELETE FROM entries WHERE id = ?').run(entry)
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions').get() as { n: number }).n, 0)
+  db.close()
+})

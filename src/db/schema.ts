@@ -286,6 +286,31 @@ const PROJECT_REPOS: readonly string[] = [
 
 const ENTRY_JIRA_ISSUE: readonly string[] = [`ALTER TABLE entries ADD COLUMN jira_issue INTEGER`]
 
+const ENTRY_SESSIONS: readonly string[] = [
+  `CREATE TABLE entry_sessions (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     entry_id INTEGER NOT NULL UNIQUE REFERENCES entries (id) ON DELETE CASCADE,
+     wrapper_id TEXT NOT NULL,
+     wrapper_pid INTEGER NOT NULL,
+     harness TEXT NOT NULL CHECK (harness IN ('claude', 'opencode', 'codex', 'gemini')),
+     session_id TEXT,
+     transcript_path TEXT,
+     cwd TEXT NOT NULL,
+     started_at TEXT NOT NULL,
+     ended_at TEXT,
+     end_reason TEXT,
+     claimed_at TEXT,
+     finalized_at TEXT,
+     outcome TEXT CHECK (outcome IS NULL OR outcome IN ('summarized', 'fallback', 'skipped')),
+     error TEXT,
+     CHECK (ended_at IS NULL OR ended_at >= started_at),
+     CHECK ((finalized_at IS NULL) = (outcome IS NULL))
+   )`,
+  `CREATE INDEX entry_sessions_wrapper ON entry_sessions (wrapper_id, ended_at)`,
+  `CREATE INDEX entry_sessions_session ON entry_sessions (harness, session_id) WHERE session_id IS NOT NULL`,
+  `CREATE INDEX entry_sessions_open ON entry_sessions (ended_at) WHERE ended_at IS NULL`,
+]
+
 function backfillBacklogKeys(db: DatabaseSync): void {
   backfillProjectKeys(db)
   backfillBacklogSequence(db)
@@ -307,6 +332,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 11, statements: PROJECT_ATLASSIAN },
   { version: 12, statements: PROJECT_REPOS },
   { version: 13, statements: ENTRY_JIRA_ISSUE },
+  { version: 14, statements: ENTRY_SESSIONS },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

@@ -1,14 +1,13 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
-import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { openDatabase } from '../src/db/open.ts'
 import { insertEntry, listRunning } from '../src/db/entries.ts'
 import { listTouches } from '../src/db/touches.ts'
-import { recordTouch } from '../src/db/touches.ts'
 import { statusLine } from '../src/cli/commands/statusline.ts'
 
 const bin = join(import.meta.dirname, '..', 'src', 'bin', 'bita.ts')
@@ -30,69 +29,19 @@ function run(dir: string, args: string[], input = ''): { status: number | null; 
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 
-function contextOf(stdout: string): string {
-  return (JSON.parse(stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } }).hookSpecificOutput.additionalContext
-}
-
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
 
-test('hook prompt answers the draft reminder and the checkpoint in one context', () => {
+test('the old prompt, prompt-submit and checkpoint hooks are silent no-ops', () => {
   const dir = mkdtempSync(join(tmpdir(), 'bita-prompt-'))
   try {
     const db = openDatabase(join(dir, 'bita.db'))
-    const draft = insertEntry(db, { description: '', projectId: null, startedAt: ago(3), source: 'timer', now: ago(3) })
-    const busy = insertEntry(db, { description: 'Wire kit', projectId: null, startedAt: ago(60), source: 'timer', now: ago(60) })
-    for (const file of ['a.ts', 'b.ts', 'c.ts']) recordTouch(db, busy.id, join(dir, file), ago(5))
+    insertEntry(db, { description: '', projectId: null, startedAt: ago(90), source: 'timer', now: ago(90) })
     db.close()
-
-    const first = run(dir, ['hook', 'prompt'], '{"prompt":"hola"}')
-    assert.equal(first.status, 0, first.stderr)
-    assert.equal(first.stdout.trim().split('\n').length, 1)
-    const parsed = JSON.parse(first.stdout) as { hookSpecificOutput: { hookEventName: string } }
-    assert.equal(parsed.hookSpecificOutput.hookEventName, 'UserPromptSubmit')
-    const context = contextOf(first.stdout)
-    assert.match(context, new RegExp(`#${draft.id} lleva`))
-    assert.match(context, /bita amend --draft/)
-    assert.match(context, new RegExp(`#${busy.id} "Wire kit"`))
-    assert.match(context, new RegExp(`inkwell note save ${busy.id}`))
-    assert.ok(context.length < 900, `context is ${context.length} chars`)
-
-    const second = contextOf(run(dir, ['hook', 'prompt']).stdout)
-    assert.match(second, /SIN TITULO/)
-    assert.doesNotMatch(second, /Wire kit/)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('hook prompt is silent with nothing running, and the old events keep answering', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bita-prompt-'))
-  try {
-    assert.equal(run(dir, ['hook', 'prompt']).stdout, '')
-    const db = openDatabase(join(dir, 'bita.db'))
-    insertEntry(db, { description: '', projectId: null, startedAt: ago(1), source: 'timer', now: ago(1) })
-    db.close()
-    assert.match(contextOf(run(dir, ['hook', 'prompt-submit']).stdout), /SIN TITULO/)
-    assert.equal(run(dir, ['hook', 'checkpoint']).stdout, '')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('the session-start context stays short', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bita-session-'))
-  try {
-    const repo = join(dir, 'work', 'app')
-    mkdirSync(repo, { recursive: true })
-    execFileSync('git', ['init', '-q'], { cwd: repo, env: env(dir) })
-    assert.equal(run(repo, ['project', 'add', 'Apps', '--json']).status, 0)
-    assert.equal(run(repo, ['scope', 'set', '.', '1', '--json']).status, 0)
-    const out = run(repo, ['hook', 'session-start'])
-    assert.equal(out.status, 0, out.stderr)
-    const context = contextOf(out.stdout)
-    assert.match(context, /Apps/)
-    assert.match(context, /Nada corriendo/)
-    assert.ok(context.length <= 400, `context is ${context.length} chars`)
+    for (const event of ['prompt', 'prompt-submit', 'checkpoint']) {
+      const out = run(dir, ['hook', event], '{"prompt":"hola"}')
+      assert.equal(out.status, 0, out.stderr)
+      assert.equal(out.stdout, '')
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -1,6 +1,28 @@
+import { spawn } from 'node:child_process'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, statSync } from 'node:fs'
+import os from 'node:os'
+import { dirname } from 'node:path'
+import type { DatabaseSync } from 'node:sqlite'
 import type { LocalContext } from '../cli/local-context.ts'
 import { isHarnessId } from '../harness/registry.ts'
 import type { HarnessId } from '../harness/types.ts'
+import { findEntryWithProject, insertEntry } from '../db/entries.ts'
+import {
+  fillTranscriptPath,
+  findLatestByWrapper,
+  findOpenByWrapper,
+  findUnfinalizedByWrapper,
+  findWrapperSession,
+  insertEntrySession,
+  linkSession,
+  listOpenSessions,
+  listUnfinalizedEnded,
+  markSessionEnded,
+} from '../db/sessions.ts'
+import { emitHooks } from '../hooks/emit.ts'
+import { hooksLogPath, type HookPayload } from '../hooks/hooks.ts'
+import { binEntry } from '../kit/manifest.ts'
+import { enrichEntry } from './enrich.ts'
 
 export const WRAPPER_ID_ENV = 'BITA_WRAPPER_ID'
 export const HARNESS_ENV = 'BITA_HARNESS'
@@ -17,6 +39,9 @@ const SCRUBBED_ENV = [
   'CODEX_SANDBOX_NETWORK_DISABLED',
 ]
 
+const ORPHAN_RETRY_MS = 15 * 60_000
+const STALE_CLAIM_MS = 10 * 60_000
+
 export interface WrapperEnv {
   wrapperId: string
   harness: HarnessId
@@ -31,6 +56,33 @@ export interface StartSessionInput {
   cwd: string
   sessionId?: string | null
   transcriptPath?: string | null
+}
+
+export type FinalizeSpawner = (entryId: number, options: { cwd: string; databasePath: string }) => void
+
+export interface SessionDeps {
+  spawnFinalize?: FinalizeSpawner
+  isAlive?: (pid: number) => boolean
+}
+
+export interface SessionStartInput {
+  harness: HarnessId
+  sessionId: string
+  transcriptPath: string | null
+  cwd: string
+  source: string | null
+}
+
+export interface SessionStartResult {
+  action: 'linked' | 'rotated' | 'same' | 'ignored'
+  entryId?: number
+  endedEntryIds: number[]
+}
+
+export interface SessionEndInput {
+  harness: HarnessId
+  sessionId: string
+  reason: string
 }
 
 export function isChild(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -56,18 +108,214 @@ export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   return next
 }
 
-export async function startSessionEntry(_ctx: LocalContext, _input: StartSessionInput): Promise<{ entryId: number; rowId: number }> {
-  throw new Error('not implemented')
+function immediate<T>(db: DatabaseSync, run: () => T): T {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const result = run()
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
-export async function closeWrapper(_ctx: LocalContext, _wrapperId: string): Promise<number[]> {
-  throw new Error('not implemented')
+function insertSessionEntry(db: DatabaseSync, input: StartSessionInput, nowIso: string): { entryId: number; rowId: number } {
+  const entry = insertEntry(db, {
+    description: '',
+    projectId: input.projectId,
+    startedAt: nowIso,
+    source: 'session',
+    now: nowIso,
+  })
+  const row = insertEntrySession(db, {
+    entryId: entry.id,
+    wrapperId: input.wrapperId,
+    wrapperPid: input.wrapperPid,
+    harness: input.harness,
+    sessionId: input.sessionId ?? null,
+    transcriptPath: input.transcriptPath ?? null,
+    cwd: input.cwd,
+    startedAt: nowIso,
+  })
+  return { entryId: entry.id, rowId: row.id }
 }
 
-export async function sweepOrphans(_ctx: LocalContext): Promise<number[]> {
-  throw new Error('not implemented')
+async function emitStart(ctx: LocalContext, entryId: number): Promise<void> {
+  const row = findEntryWithProject(ctx.db, entryId)
+  if (!row) return
+  const payload: HookPayload = { event: 'start', entry: enrichEntry(row, ctx.timezone, new Date()), docPath: null }
+  await emitHooks(ctx, [payload])
 }
 
-export function spawnFinalize(_entryId: number, _options: { cwd: string; databasePath: string }): void {
-  throw new Error('not implemented')
+export async function startSessionEntry(ctx: LocalContext, input: StartSessionInput): Promise<{ entryId: number; rowId: number }> {
+  const created = immediate(ctx.db, () => insertSessionEntry(ctx.db, input, new Date().toISOString()))
+  await emitStart(ctx, created.entryId)
+  return created
+}
+
+function launch(ctx: LocalContext, deps: SessionDeps, entryId: number, cwd: string): void {
+  const spawner = deps.spawnFinalize ?? spawnFinalize
+  spawner(entryId, { cwd, databasePath: ctx.databasePath })
+}
+
+export async function handleSessionStart(
+  ctx: LocalContext,
+  env: WrapperEnv,
+  input: SessionStartInput,
+  deps: SessionDeps = {},
+): Promise<SessionStartResult> {
+  if (input.harness !== env.harness || input.source === 'compact') return { action: 'ignored', endedEntryIds: [] }
+
+  const nowIso = new Date().toISOString()
+  const outcome = immediate(ctx.db, (): SessionStartResult & { ended: { entryId: number; cwd: string }[] } => {
+    const open = findOpenByWrapper(ctx.db, env.wrapperId)
+
+    const same = open.find((row) => row.sessionId === input.sessionId)
+    if (same) {
+      if (input.transcriptPath) fillTranscriptPath(ctx.db, same.id, input.transcriptPath)
+      return { action: 'same', entryId: same.entryId, endedEntryIds: [], ended: [] }
+    }
+
+    const unlinked = open.find((row) => row.sessionId === null)
+    if (unlinked) {
+      linkSession(ctx.db, unlinked.id, input.sessionId, input.transcriptPath)
+      return { action: 'linked', entryId: unlinked.entryId, endedEntryIds: [], ended: [] }
+    }
+
+    if (input.source === 'startup') return { action: 'ignored', endedEntryIds: [], ended: [] }
+
+    const ended = open.filter((row) => markSessionEnded(ctx.db, row.id, nowIso, 'rotated'))
+    const wrapperPid = findLatestByWrapper(ctx.db, env.wrapperId)?.wrapperPid ?? process.ppid
+    const created = insertSessionEntry(
+      ctx.db,
+      {
+        wrapperId: env.wrapperId,
+        wrapperPid,
+        harness: env.harness,
+        projectId: env.projectId,
+        cwd: input.cwd,
+        sessionId: input.sessionId,
+        transcriptPath: input.transcriptPath,
+      },
+      nowIso,
+    )
+    const endedRows = ended.map((row) => ({ entryId: row.entryId, cwd: row.cwd }))
+    return {
+      action: 'rotated',
+      entryId: created.entryId,
+      endedEntryIds: endedRows.map((row) => row.entryId),
+      ended: endedRows,
+    }
+  })
+
+  for (const row of outcome.ended) launch(ctx, deps, row.entryId, row.cwd)
+  if (outcome.action === 'rotated' && outcome.entryId !== undefined) await emitStart(ctx, outcome.entryId)
+
+  return {
+    action: outcome.action,
+    ...(outcome.entryId !== undefined ? { entryId: outcome.entryId } : {}),
+    endedEntryIds: outcome.endedEntryIds,
+  }
+}
+
+export async function handleSessionEnd(
+  ctx: LocalContext,
+  env: WrapperEnv,
+  input: SessionEndInput,
+  deps: SessionDeps = {},
+): Promise<number | null> {
+  if (input.harness !== env.harness) return null
+  const row = findWrapperSession(ctx.db, env.wrapperId, input.sessionId)
+  if (!row) return null
+  markSessionEnded(ctx.db, row.id, new Date().toISOString(), input.reason)
+  launch(ctx, deps, row.entryId, row.cwd)
+  return row.entryId
+}
+
+export function currentSessionEntryId(db: DatabaseSync, env: WrapperEnv | null): number | null {
+  if (!env) return null
+  return findOpenByWrapper(db, env.wrapperId).at(-1)?.entryId ?? null
+}
+
+export async function closeWrapper(ctx: LocalContext, wrapperId: string, deps: SessionDeps = {}): Promise<number[]> {
+  const nowIso = new Date().toISOString()
+  const pending = immediate(ctx.db, () => {
+    for (const row of findOpenByWrapper(ctx.db, wrapperId)) markSessionEnded(ctx.db, row.id, nowIso, 'exit')
+    return findUnfinalizedByWrapper(ctx.db, wrapperId)
+  })
+  for (const row of pending) launch(ctx, deps, row.entryId, row.cwd)
+  return pending.map((row) => row.entryId)
+}
+
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+function orphanEnd(transcriptPath: string | null, startedAt: string): string {
+  if (transcriptPath) {
+    try {
+      const mtime = statSync(transcriptPath).mtime.toISOString()
+      if (mtime > startedAt) return mtime
+    } catch {
+      return startedAt
+    }
+  }
+  return startedAt
+}
+
+export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): Promise<number[]> {
+  const alive = deps.isAlive ?? processAlive
+  const now = Date.now()
+  const pending = immediate(ctx.db, () => {
+    const orphans = listOpenSessions(ctx.db).filter((row) => !alive(row.wrapperPid))
+    for (const row of orphans) markSessionEnded(ctx.db, row.id, orphanEnd(row.transcriptPath, row.startedAt), 'orphan')
+    const stale = listUnfinalizedEnded(
+      ctx.db,
+      new Date(now - ORPHAN_RETRY_MS).toISOString(),
+      new Date(now - STALE_CLAIM_MS).toISOString(),
+    )
+    const byEntry = new Map<number, string>()
+    for (const row of [...orphans, ...stale]) byEntry.set(row.entryId, row.cwd)
+    return [...byEntry.entries()]
+  })
+  for (const [entryId, cwd] of pending) launch(ctx, deps, entryId, cwd)
+  return pending.map(([entryId]) => entryId)
+}
+
+export function appendHookLog(databasePath: string, line: string): void {
+  try {
+    const logPath = hooksLogPath(databasePath)
+    mkdirSync(dirname(logPath), { recursive: true })
+    appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`)
+  } catch {
+    return
+  }
+}
+
+export function spawnFinalize(entryId: number, options: { cwd: string; databasePath: string }): void {
+  const logPath = hooksLogPath(options.databasePath)
+  let fd: number | null = null
+  try {
+    mkdirSync(dirname(logPath), { recursive: true })
+    fd = openSync(logPath, 'a')
+    const child = spawn(process.execPath, [binEntry(), 'session', 'finalize', String(entryId)], {
+      detached: true,
+      stdio: ['ignore', fd, fd],
+      cwd: existsSync(options.cwd) ? options.cwd : os.tmpdir(),
+      env: { ...childEnv(), BITA_DB_PATH: options.databasePath },
+    })
+    child.on('error', (error) => appendHookLog(options.databasePath, `session finalize #${entryId} failed to start: ${error.message}`))
+    child.unref()
+    appendHookLog(options.databasePath, `session finalize #${entryId} launched (pid ${child.pid ?? '?'})`)
+  } catch (error) {
+    appendHookLog(options.databasePath, `session finalize #${entryId} failed to start: ${(error as Error).message}`)
+  } finally {
+    if (fd !== null) closeSync(fd)
+  }
 }
