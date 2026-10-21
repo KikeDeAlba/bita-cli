@@ -2,7 +2,22 @@ import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
 import { PassThrough } from 'node:stream'
 import { test } from 'node:test'
-import { createState, parseKeys, reduce, render, select, type Key, type SelectItem, type SelectState, type SelectStep } from '../src/cli/select.ts'
+import { setTimeout as delay } from 'node:timers/promises'
+import {
+  collapsed,
+  createState,
+  displayWidth,
+  pageSizeFor,
+  parseKeys,
+  reduce,
+  render,
+  scanKeys,
+  select,
+  type Key,
+  type SelectItem,
+  type SelectState,
+  type SelectStep,
+} from '../src/cli/select.ts'
 
 const harnesses: SelectItem<string>[] = [
   { label: 'Claude', value: 'claude' },
@@ -156,7 +171,7 @@ test('parseKeys decodes the terminal sequences', () => {
     { name: 'pageup' },
     { name: 'pagedown' },
   ])
-  assert.deepEqual(parseKeys('\r\n\x03\x7f\b\x15\x1b'), [
+  assert.deepEqual(parseKeys('\r\n\n\x03\x7f\b\x15\x1b'), [
     { name: 'enter' },
     { name: 'enter' },
     { name: 'interrupt' },
@@ -179,7 +194,13 @@ interface FakeTerminal {
   stream: PassThrough
 }
 
-function terminal(): FakeTerminal {
+interface TerminalOptions {
+  rows?: number
+  failWrite?: (chunk: string) => boolean
+  failRaw?: (mode: boolean) => boolean
+}
+
+function terminal(options: TerminalOptions = {}): FakeTerminal {
   const stream = new PassThrough()
   const raw: boolean[] = []
   const fakeInput = Object.assign(stream, {
@@ -187,6 +208,7 @@ function terminal(): FakeTerminal {
     isRaw: false,
     setRawMode(mode: boolean) {
       raw.push(mode)
+      if (options.failRaw?.(mode)) throw new Error('raw mode failed')
       fakeInput.isRaw = mode
       return fakeInput
     },
@@ -195,8 +217,10 @@ function terminal(): FakeTerminal {
   const fakeOutput = {
     isTTY: true,
     columns: 80,
+    ...(options.rows === undefined ? {} : { rows: options.rows }),
     hasColors: () => true,
     write(chunk: string) {
+      if (options.failWrite?.(chunk)) throw new Error('write failed')
       chunks.push(chunk)
       return true
     },
@@ -301,4 +325,199 @@ test('SIGTERM during the picker restores the terminal, then re-raises the signal
   } finally {
     process.kill = realKill
   }
+})
+
+test('scanKeys keeps an incomplete escape sequence for the next chunk', () => {
+  assert.deepEqual(scanKeys('a\x1b', false), { keys: [{ key: { name: 'char', char: 'a' }, end: 1 }], rest: '\x1b' })
+  assert.deepEqual(scanKeys('\x1b[', false), { keys: [], rest: '\x1b[' })
+  assert.deepEqual(scanKeys('\x1b[1;5', false), { keys: [], rest: '\x1b[1;5' })
+  assert.deepEqual(scanKeys('\x1b[B', false).keys, [{ key: { name: 'down' }, end: 3 }])
+  assert.deepEqual(scanKeys('\x1b', true).keys, [{ key: { name: 'escape' }, end: 1 }])
+  assert.deepEqual(scanKeys('\x1b[', true), { keys: [], rest: '' })
+  assert.deepEqual(parseKeys('\x1bx\x1bé'), [])
+  assert.deepEqual(parseKeys('\x1b\x03'), [{ name: 'escape' }, { name: 'interrupt' }])
+})
+
+test('an arrow split across chunks moves the cursor instead of cancelling or typing', async () => {
+  const split = terminal()
+  const first = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: split.input, output: split.output, env: {} })
+  split.send('\x1b')
+  await delay(5)
+  split.send('[B')
+  await delay(5)
+  split.send('\r')
+  assert.equal(await first, 'opencode')
+  assertRestored(split)
+
+  const csi = terminal()
+  const second = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: csi.input, output: csi.output, env: { NO_COLOR: '1' } })
+  csi.send('\x1b[')
+  await delay(5)
+  csi.send('B')
+  await delay(5)
+  csi.send('\r')
+  assert.equal(await second, 'opencode')
+  assert.doesNotMatch(csi.written(), /Harness: B▏/)
+  assertRestored(csi)
+})
+
+test('Alt+key is ignored and does not cancel', async () => {
+  const fake = terminal()
+  const picked = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  fake.send('\x1bx')
+  await delay(80)
+  fake.send('\r')
+  assert.equal(await picked, 'claude')
+  assertRestored(fake)
+})
+
+test('a pending Esc timer is cleared when the picker ends', async () => {
+  const fake = terminal()
+  const picked = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  fake.send('\x1b')
+  await delay(5)
+  fake.stream.end()
+  assert.equal(await picked, null)
+  const before = fake.written()
+  await delay(80)
+  assert.equal(fake.written(), before)
+  assert.ok(before.endsWith('\x1b[?25h'))
+})
+
+test('displayWidth counts terminal columns', () => {
+  assert.equal(displayWidth('abc'), 3)
+  assert.equal(displayWidth('日本'), 4)
+  assert.equal(displayWidth('ＡＢ'), 4)
+  assert.equal(displayWidth('한국'), 4)
+  assert.equal(displayWidth('👍🏽'), 2)
+  assert.equal(displayWidth('👨‍👩‍👧'), 2)
+  assert.equal(displayWidth('🇲🇽'), 2)
+  assert.equal(displayWidth('é'), 1)
+  assert.equal(displayWidth('́'), 0)
+  assert.equal(displayWidth('©'), 1)
+  assert.equal(displayWidth('❯ Ejecución'), 11)
+})
+
+test('render truncates by columns, including the title line', () => {
+  const wide: SelectItem<string>[] = [
+    { label: '日本語のプロジェクト名', value: 'jp' },
+    { label: '🚀🚀🚀🚀🚀🚀🚀', value: 'rocket' },
+  ]
+  const lines = render(createState('Project', wide, 0), { color: false, width: 12 }).split('\n')
+  for (const line of lines) assert.ok(displayWidth(line) < 12, `${line} is ${displayWidth(line)} columns`)
+  assert.equal(lines[1], '❯ 日本語の…')
+  assert.equal(lines[2], '  🚀🚀🚀🚀…')
+  const title = render(createState('A very long project title', wide, 0), { color: true, width: 12 }).split('\n')[0]!
+  assert.equal(title.replace(/\x1b\[\d+m/g, ''), 'A very lon…')
+  const query = type(createState('Project', projects, 0), 'laboratorio')
+  assert.equal(render(query, { color: false, width: 16 }).split('\n')[0], 'Project: labor…')
+})
+
+test('the window fits the terminal height', async () => {
+  assert.equal(pageSizeFor(undefined), 10)
+  assert.equal(pageSizeFor(40), 10)
+  assert.equal(pageSizeFor(8), 5)
+  assert.equal(pageSizeFor(3), 1)
+  assert.equal(pageSizeFor(1), 1)
+  const small = createState('Project', many(25), 0, 2)
+  assert.equal(render(small, { color: false }).split('\n').length, 4)
+  assert.equal(current(press(small, { name: 'pagedown' })), 'Item 3')
+  assert.equal(press(small, { name: 'down' }, { name: 'down' }).offset, 1)
+
+  const fake = terminal({ rows: 5 })
+  const picked = select({ title: 'Project', items: projects, initialIndex: 0, input: fake.input, output: fake.output, env: { NO_COLOR: '1' } })
+  fake.send('\x1b[B')
+  await delay(5)
+  fake.send('\r')
+  assert.equal(await picked, 'apartados')
+  assert.match(fake.written(), /1-2 of 4/)
+  assert.doesNotMatch(fake.written(), /Beta/)
+})
+
+test('a write failure after a key rejects and still restores the terminal', async () => {
+  const fake = terminal({ failWrite: (chunk) => chunk.includes('zz▏') })
+  const picked = select({ title: 'Project', items: projects, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  fake.send('zz')
+  await assert.rejects(picked, /write failed/)
+  assertRestored(fake)
+})
+
+test('a write failure on the collapsed line rejects and still restores the terminal', async () => {
+  const fake = terminal({ failWrite: (chunk) => chunk.includes('Harness: Claude\n') })
+  const picked = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  fake.send('\r')
+  await assert.rejects(picked, /write failed/)
+  assertRestored(fake)
+})
+
+test('a raw mode failure on restore rejects but the cursor, listeners and pause still happen', async () => {
+  const fake = terminal({ failRaw: (mode) => !mode })
+  const picked = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  fake.send('\r')
+  await assert.rejects(picked, /raw mode failed/)
+  assertRestored(fake)
+})
+
+test('keys typed after Enter in the same chunk reach the next picker', async () => {
+  const fake = terminal()
+  const first = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  fake.send('\rabc\r')
+  assert.equal(await first, 'claude')
+  const items: SelectItem<string>[] = [
+    { label: 'Alpha', value: 'alpha' },
+    { label: 'Xabcx', value: 'abc' },
+  ]
+  const second = select({ title: 'Project', items, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  assert.equal(await second, 'abc')
+  assert.match(fake.written(), /Project: Xabcx\n/)
+  assert.deepEqual(fake.raw, [true, false, true, false])
+  assert.equal(fake.stream.listenerCount('data'), 0)
+})
+
+test('pasted text with line breaks becomes the search; only a final Enter accepts', () => {
+  assert.deepEqual(parseKeys('be\nta'), Array.from('beta', (char): Key => ({ name: 'char', char })))
+  assert.deepEqual(parseKeys('ab\r').at(-1), { name: 'enter' })
+  assert.deepEqual(parseKeys('ab\r\n'), [{ name: 'char', char: 'a' }, { name: 'char', char: 'b' }, { name: 'enter' }])
+  assert.deepEqual(parseKeys('\r\n'), [{ name: 'enter' }])
+  assert.deepEqual(parseKeys('\x1b[200~be\r\nta\x1b[201~'), [{ name: 'paste', text: 'beta' }])
+  assert.deepEqual(scanKeys('\x1b[200~be', false), { keys: [], rest: '\x1b[200~be' })
+  assert.deepEqual(parseKeys('\x1b[200~\x1b[201~\r'), [{ name: 'enter' }])
+})
+
+test('select treats a multi-line paste as search text', async () => {
+  const plain = terminal()
+  const first = select({ title: 'Project', items: projects, initialIndex: 0, input: plain.input, output: plain.output, env: {} })
+  plain.send('be\nta')
+  await delay(5)
+  plain.send('\r')
+  assert.equal(await first, 'beta')
+
+  const bracketed = terminal()
+  const second = select({ title: 'Project', items: projects, initialIndex: 0, input: bracketed.input, output: bracketed.output, env: {} })
+  bracketed.send('\x1b[200~apar')
+  await delay(5)
+  bracketed.send('\ntados\x1b[201~')
+  await delay(5)
+  bracketed.send('\r')
+  assert.equal(await second, 'apartados')
+  assert.match(bracketed.written(), /apartados▏/)
+})
+
+test('control characters are stripped from the title, labels and hints', () => {
+  const evil: SelectItem<string>[] = [{ label: 'Evil\x1b[31m\x9b2J\x07', hint: '\x1b]0;x\x07id', value: 'evil' }]
+  const frame = render(createState('Pro\x1bject', evil, 0), { color: false })
+  assert.doesNotMatch(frame, /[\x00-\x09\x0b-\x1f\x7f-\x9f]/)
+  assert.equal(frame, 'Project: type to search\n❯ Evil[31m2J (]0;xid)')
+  assert.equal(collapsed('Pro\x1bject', evil[0]!), 'Project: Evil[31m2J')
+  assert.deepEqual(parseKeys('\x85\x9b\x9fa'), [{ name: 'char', char: 'a' }])
+})
+
+test('Backspace removes a whole grapheme', () => {
+  const start = createState('Project', projects, 0)
+  const emoji = press(start, ...Array.from('ab👍🏽', (char): Key => ({ name: 'char', char })), { name: 'backspace' })
+  assert.equal(emoji.query, 'ab')
+  const accent = press(start, { name: 'char', char: 'e' }, { name: 'char', char: '́' }, { name: 'backspace' })
+  assert.equal(accent.query, '')
+  const flag = press(start, { name: 'paste', text: 'x🇲🇽' }, { name: 'backspace' })
+  assert.equal(flag.query, 'x')
 })
