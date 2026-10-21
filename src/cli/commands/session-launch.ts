@@ -23,39 +23,11 @@ import {
   startSessionEntry,
   sweepOrphans,
 } from '../../domain/session.ts'
-import { harnessBinEnvVar, isHarnessId, listAdapters } from '../../harness/registry.ts'
+import { isHarnessId, listAdapters } from '../../harness/registry.ts'
 import type { HarnessAdapter, HarnessId } from '../../harness/types.ts'
 
 export const EXIT_INTERRUPTED = 130
 export const EXIT_NOT_FOUND = 127
-
-const CLAUDE_SUBCOMMANDS = new Set([
-  'agents',
-  'attach',
-  'auth',
-  'auto-mode',
-  'doctor',
-  'gateway',
-  'import',
-  'install',
-  'logs',
-  'mcp',
-  'plugin',
-  'plugins',
-  'purge',
-  'respawn',
-  'rm',
-  'setup-token',
-  'stop',
-  'kill',
-  'ultrareview',
-  'update',
-  'upgrade',
-  'config',
-  'migrate-installer',
-])
-
-const PASSTHROUGH_FLAGS = new Set(['-p', '--print', '-v', '--version', '-h', '--help', '--bg', '--background'])
 
 const LAUNCH_OPTIONS = {
   harness: { type: 'string' as const },
@@ -74,23 +46,6 @@ export interface LaunchDeps {
   closeWrapper: typeof closeWrapper
   sweepOrphans: typeof sweepOrphans
   projectForCwd(ctx: LocalContext, cwd: string): Promise<number | null>
-}
-
-export function isPassthrough(
-  args: readonly string[],
-  io: { stdinIsTTY: boolean; stdoutIsTTY: boolean },
-  env: NodeJS.ProcessEnv,
-): boolean {
-  if (isChild(env)) return true
-  if (env[WRAPPER_ID_ENV]) return true
-  if (!io.stdinIsTTY || !io.stdoutIsTTY) return true
-  const first = args[0]
-  if (first !== undefined && CLAUDE_SUBCOMMANDS.has(first)) return true
-  for (const arg of args) {
-    if (arg === '--') break
-    if (PASSTHROUGH_FLAGS.has(arg)) return true
-  }
-  return false
 }
 
 export function splitLaunchArgv(argv: readonly string[]): { own: string[]; harnessArgs: string[] } {
@@ -162,11 +117,6 @@ function defaultDeps(): LaunchDeps {
     sweepOrphans,
     projectForCwd: mappedProjectId,
   }
-}
-
-function claudeBin(deps: LaunchDeps): string {
-  const adapter = deps.adapters.find((candidate) => candidate.id === 'claude')
-  return adapter?.resolveBin(deps.env) ?? deps.env[harnessBinEnvVar('claude')] ?? 'claude'
 }
 
 function errorMessage(error: unknown): string {
@@ -311,6 +261,20 @@ async function closeSession(args: ParsedArgs, deps: LaunchDeps, wrapperId: strin
   }
 }
 
+function isNested(env: NodeJS.ProcessEnv): boolean {
+  return isChild(env) || Boolean(env[WRAPPER_ID_ENV])
+}
+
+async function launchNested(args: ParsedArgs, deps: LaunchDeps, harnessArgs: readonly string[]): Promise<number> {
+  writeErr('bita: already inside a bita session; launching the harness without a new timer.')
+  const harness = await pickHarness(deps, readString(args, 'harness') ?? 'claude')
+  if ('interrupted' in harness) return EXIT_INTERRUPTED
+  const adapter = harness.value
+  const plan = adapter.launchArgs(harnessArgs)
+  for (const warning of plan.warnings) writeErr(warning)
+  return deps.spawnHarness(adapter.resolveBin(deps.env) ?? adapter.bin, plan.args, deps.env)
+}
+
 export async function runSessionLaunch(argv: string[], overrides: Partial<LaunchDeps> = {}): Promise<number> {
   const given: LaunchDeps = { ...defaultDeps(), ...overrides }
   const interactive = given.stdinIsTTY && given.stdoutIsTTY
@@ -318,13 +282,10 @@ export async function runSessionLaunch(argv: string[], overrides: Partial<Launch
   const { own, harnessArgs } = splitLaunchArgv(argv)
   const args = parseCommandArgs(own, LAUNCH_OPTIONS, BASE_OPTIONS)
   if (args.positionals.length > 0) {
-    throw new UsageError(`Unexpected argument "${args.positionals[0]}". Pass the harness arguments after --: bita session -- ${args.positionals.join(' ')}`)
+    throw new UsageError(`Unexpected argument "${args.positionals[0]}". Pass the harness arguments after --: bita work -- ${args.positionals.join(' ')}`)
   }
 
-  const requestedHarness = readString(args, 'harness')
-  if ((requestedHarness === undefined || requestedHarness === 'claude') && isPassthrough(harnessArgs, deps, deps.env)) {
-    return deps.spawnHarness(claudeBin(deps), harnessArgs, deps.env)
-  }
+  if (isNested(deps.env)) return launchNested(args, deps, harnessArgs)
 
   const wrapperId = randomUUID()
   const prepared = await prepare(args, deps, wrapperId)

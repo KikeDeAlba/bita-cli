@@ -17,7 +17,7 @@ process.env['KIT_NO_EVENTS'] = '1'
 process.env['GIT_CONFIG_NOSYSTEM'] = '1'
 process.env['GIT_CONFIG_GLOBAL'] = join(root, 'gitconfig')
 
-const { isPassthrough, mappedProjectId, runSessionLaunch, spawnHarness, splitLaunchArgv } = await import('../src/cli/commands/session-launch.ts')
+const { mappedProjectId, runSessionLaunch, spawnHarness, splitLaunchArgv } = await import('../src/cli/commands/session-launch.ts')
 const { openDatabase } = await import('../src/db/open.ts')
 const { insertProject, setProjectActive } = await import('../src/db/projects.ts')
 const { upsertProjectRepo } = await import('../src/db/project-repos.ts')
@@ -137,36 +137,6 @@ function harness(): Harness {
   }
   return state
 }
-
-test('isPassthrough lets non-interactive and informational calls through untouched', () => {
-  const env = {}
-  const through: string[][] = [
-    ['-p', 'hola'],
-    ['--print', 'x'],
-    ['-v'],
-    ['--version'],
-    ['-h'],
-    ['--help'],
-    ['--bg'],
-    ['--background'],
-    ['mcp', 'list'],
-    ['update'],
-    ['plugin', 'install', 'x'],
-    ['config'],
-    ['doctor'],
-    ['--model', 'opus', '-p', 'x'],
-  ]
-  for (const args of through) assert.equal(isPassthrough(args, TTY, env), true, args.join(' '))
-
-  const wrapped: string[][] = [[], ['-c'], ['--continue'], ['--resume', 'x'], ['update the docs'], ['--model', 'opus'], ['--', '-p'], ['hola', 'mcp']]
-  for (const args of wrapped) assert.equal(isPassthrough(args, TTY, env), false, args.join(' '))
-
-  assert.equal(isPassthrough([], { stdinIsTTY: false, stdoutIsTTY: true }, env), true)
-  assert.equal(isPassthrough([], { stdinIsTTY: true, stdoutIsTTY: false }, env), true)
-  assert.equal(isPassthrough([], TTY, { BITA_CHILD: '1' }), true)
-  assert.equal(isPassthrough([], TTY, { BITA_CHILD: '0' }), false)
-  assert.equal(isPassthrough([], TTY, { BITA_WRAPPER_ID: 'w' }), true)
-})
 
 test('splitLaunchArgv cuts at the first --', () => {
   assert.deepEqual(splitLaunchArgv(['--harness', 'codex', '--', '-c', '--', 'x']), { own: ['--harness', 'codex'], harnessArgs: ['-c', '--', 'x'] })
@@ -333,19 +303,46 @@ test('a picker without a terminal does not read stdin and says why it stopped', 
   assert.match(errors.text(), /needs a terminal; pass --harness and --project/)
 })
 
-test('passthrough runs claude with the args and env as they came, without the DB', async () => {
+test('-- --version with a terminal still asks and passes the flag to the harness', async () => {
   const h = harness()
-  const env = { PATH: '/usr/bin', BITA_HARNESS_BIN_CLAUDE: '/opt/claude' }
-  const code = await h.run(['--', '-p', 'hola'], { env, exitCode: 9, adapters: [] })
-  assert.equal(code, 9)
-  assert.equal(h.swept, 0)
-  assert.deepEqual(h.spawned, [{ bin: '/opt/claude', args: ['-p', 'hola'], env }])
+  const code = await h.run(['--', '--version'], { answers: ['', '1'] })
+  assert.equal(code, 0)
+  assert.equal(h.questions.length, 2)
+  assert.equal(h.started.length, 1)
+  assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--version'])
+})
 
-  const piped = harness()
-  await piped.run(['--', 'hola'], { tty: false })
-  assert.deepEqual(piped.spawned[0]?.args, ['hola'])
-  assert.equal(piped.spawned[0]?.bin, '/fake/claude')
-  assert.equal(piped.questions.length, 0)
+for (const nested of [{ BITA_WRAPPER_ID: 'outer' }, { BITA_CHILD: '1' }]) {
+  test(`inside a session (${Object.keys(nested)[0]}) it warns and launches without a timer`, async () => {
+    const h = harness()
+    const env = { PATH: '/usr/bin', ...nested }
+    const errors = captureStderr()
+    let code: number
+    try {
+      code = await h.run(['--', 'hola'], { env, exitCode: 9 })
+    } finally {
+      errors.restore()
+    }
+    assert.equal(code, 9)
+    assert.equal(h.questions.length, 0)
+    assert.equal(h.swept, 0)
+    assert.equal(h.started.length, 0)
+    assert.equal(h.closed.length, 0)
+    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env }])
+    assert.match(errors.text(), /already inside a bita session; launching the harness without a new timer/)
+  })
+}
+
+test('inside a session --harness picks which harness to launch', async () => {
+  const h = harness()
+  const errors = captureStderr()
+  try {
+    await h.run(['--harness', 'codex', '--project', 'Alpha'], { env: { BITA_WRAPPER_ID: 'outer' } })
+  } finally {
+    errors.restore()
+  }
+  assert.equal(h.started.length, 0)
+  assert.equal(h.spawned[0]?.bin, '/fake/codex')
 })
 
 test('mappedProjectId resolves the cwd through the mapped checkouts', async () => {
@@ -395,20 +392,29 @@ function e2eEnv(dir: string, binDir: string): NodeJS.ProcessEnv {
   }
 }
 
-test('bita session -- --version runs the real claude and exits with its code', () => {
-  const dir = mkdtempSync(join(root, 'e2e-'))
-  const binDir = join(dir, 'bin')
-  mkdirSync(binDir)
-  const log = join(dir, 'argv.log')
-  script(binDir, 'claude', `require('node:fs').writeFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2))); process.exit(3)`)
-  const run = spawnSync(process.execPath, [bin, 'session', '--', '--version'], { cwd: dir, env: e2eEnv(dir, binDir), encoding: 'utf8' })
-  assert.equal(run.status, 3, run.stderr)
-  assert.deepEqual(JSON.parse(readFileSync(log, 'utf8')), ['--version'])
+for (const command of ['work', 'session']) {
+  test(`bita ${command} routes to the launcher and starts the agent with a timer`, () => {
+    const dir = mkdtempSync(join(root, `e2e-${command}-`))
+    const binDir = join(dir, 'bin')
+    mkdirSync(binDir)
+    const log = join(dir, 'argv.log')
+    script(binDir, 'claude', `require('node:fs').writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), wrapper: process.env.BITA_WRAPPER_ID ?? null })); process.exit(3)`)
+    const env = e2eEnv(dir, binDir)
+    const add = spawnSync(process.execPath, [bin, 'project', 'add', 'Alpha', '--json'], { cwd: dir, env, encoding: 'utf8' })
+    assert.equal(add.status, 0, add.stderr)
+    const run = spawnSync(process.execPath, [bin, command, '--harness', 'claude', '--project', 'Alpha', '--', '--version'], { cwd: dir, env, encoding: 'utf8' })
+    assert.equal(run.status, 3, run.stderr)
+    const seen = JSON.parse(readFileSync(log, 'utf8')) as { argv: string[]; wrapper: string | null }
+    assert.ok(seen.argv.includes('--version'))
+    assert.ok(seen.wrapper)
+  })
+}
 
-  const help = spawnSync(process.execPath, [bin, 'session', '--', '--help'], { cwd: dir, env: e2eEnv(dir, binDir), encoding: 'utf8' })
-  assert.equal(help.status, 3, help.stderr)
-  assert.doesNotMatch(help.stdout, /Usage: bita/)
-  assert.deepEqual(JSON.parse(readFileSync(log, 'utf8')), ['--help'])
+test('bita work --help prints the bita help', () => {
+  const dir = mkdtempSync(join(root, 'e2e-help-'))
+  const run = spawnSync(process.execPath, [bin, 'work', '--help'], { cwd: dir, env: e2eEnv(dir, join(dir, 'none')), encoding: 'utf8' })
+  assert.equal(run.status, 0, run.stderr)
+  assert.match(run.stdout, /work \[--harness ID\]/)
 })
 
 test('the wrapper forwards SIGTERM to the agent and exits with its code', async () => {
@@ -421,7 +427,7 @@ test('the wrapper forwards SIGTERM to the agent and exits with its code', async 
     'claude',
     `process.on('SIGTERM', () => process.exit(42)); require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'x'); setTimeout(() => process.exit(1), 20000)`,
   )
-  const child = spawn(process.execPath, [bin, 'session', '--', '-p', 'x'], { cwd: dir, env: e2eEnv(dir, binDir), stdio: 'ignore' })
+  const child = spawn(process.execPath, [bin, 'work', '--harness', 'claude', '--project', '0', '--', '-p', 'x'], { cwd: dir, env: e2eEnv(dir, binDir), stdio: 'ignore' })
   const exited = new Promise<number | null>((resolve) => child.once('exit', (code) => resolve(code)))
   const deadline = Date.now() + 15_000
   while (!existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50))
