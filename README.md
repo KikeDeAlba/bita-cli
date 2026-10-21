@@ -112,7 +112,7 @@ install bita@bita` (o `update` si ya estaba). A mano, dentro de Claude Code:
 El plugin trae:
 
 - **La skill `bita`**, de referencia (`disable-model-invocation: true`): el
-  modelo no la invoca. Las sesiones las cronometra `bita session`, no el agente.
+  modelo no la invoca. Las sesiones las cronometra `bita work`, no el agente.
 - **Skills de usuario** `/bita-start`, `/bita-stop`, `/bita-log`, `/bita-amend`,
   `/bita-timers` y `/bita-init`, con `disable-model-invocation: true`: no
   ocupan contexto hasta que las escribes. Reemplazan a los comandos sueltos de
@@ -120,8 +120,8 @@ El plugin trae:
 - **Hooks** (`hooks/hooks.json`), que no inyectan nada al agente:
   - `SessionStart` → `bita hook session-start` y `SessionEnd` → `bita hook
     session-end`: ligan la sesión del agente con la entrada que abrió `bita
-    session` y rotan la entrada con `/clear` o `/resume`. Sin `bita session` de
-    por medio, no hacen nada.
+    work` y rotan la entrada con `/clear` o `/resume`. Sin `bita work` de por
+    medio, no hacen nada.
   - `PostToolUse` en `Edit|Write|MultiEdit` → `bita hook touched`, asíncrono:
     lee la ruta del JSON del hook y registra el archivo sin bloquear al agente.
 
@@ -214,7 +214,7 @@ bita project add "Mi proyecto"     # devuelve un id
 bita scope set . <projectId>
 ```
 
-Con el repositorio mapeado, `bita session` preselecciona su proyecto en el
+Con el repositorio mapeado, `bita work` preselecciona su proyecto en el
 selector (ver [Sesiones](#sesiones)). bita ya no le pide nada al agente.
 
 ## Uso
@@ -256,7 +256,7 @@ bita amend --draft --title "Lo que sea" --project Apartados
 ```
 
 Si prefieres que el título, el tipo y la nota salgan solos, arranca el agente
-con `bita session` (siguiente sección).
+con `bita work` (ver [Sesiones](#sesiones)).
 
 ### Borrar y cancelar
 
@@ -306,35 +306,26 @@ cuando hay algo concreto que hacer. Los avisos van a stderr.
 
 ## Sesiones
 
-`bita session` envuelve al agente: pregunta con qué agente y en qué proyecto
+`bita work` envuelve al agente: pregunta con qué agente y en qué proyecto
 trabajas, arranca el cronómetro, lanza el agente y, al cerrarlo, rellena la
 entrada y la para. El agente no sabe que existe: no se le inyecta nada.
+`bita session` es un alias de `bita work`.
 
-### Instalar la función `claude`
+`claude` (y los demás agentes) siguen siendo el binario normal: tecleados a
+secas no abren selectores ni arrancan cronómetro.
 
-```sh
-bita setup --shell zsh      # o bash
-```
-
-Además de lo de siempre, añade a `~/.zshrc` (`$ZDOTDIR/.zshrc` si está
-definido) o `~/.bashrc` un bloque delimitado por `# >>> bita session >>>` y
-`# <<< bita session <<<` con una función `claude`. Si `bita` no está en el
-`PATH`, la función corre `claude` sin más. `--rc-file FILE` cambia el archivo.
-Es idempotente: repetirlo no duplica el bloque y lo actualiza si cambió. Un
-`alias claude=` en ese archivo gana a la función; `setup` lo avisa y hay que
-quitarlo. Abre una terminal nueva para que aplique.
-
-Sin la función, lo mismo se hace a mano: `bita session -- <args del agente>`.
-
-Para quitarla: `bita setup --remove-shell` (con `--shell` y `--rc-file` si no
-se deduce del `$SHELL`). Solo borra el bloque y no toca nada más.
+> **Si vienes de 1.4.0.** Esa versión instalaba con `bita setup --shell` una
+> función `claude` en `~/.zshrc` o `~/.bashrc`. Ya no existe: `bita setup`
+> borra ese bloque (`# >>> bita session >>>` … `# <<< bita session <<<`) de
+> `$ZDOTDIR/.zshrc` (o `~/.zshrc`) y de `~/.bashrc`, y lo dice solo si borró
+> algo. Abre una terminal nueva para que `claude` vuelva a ser el binario.
 
 ### El flujo
 
 ```sh
-claude                          # selector de agente, selector de proyecto, y a trabajar
-claude "arregla el pipeline"    # el texto va al agente como prompt
-bita session --harness codex --project Apartados -- "arregla el pipeline"
+bita work                            # selector de agente, selector de proyecto, y a trabajar
+bita work -- "arregla el pipeline"   # lo que va tras -- es para el agente
+bita work --harness codex --project Apartados -- "arregla el pipeline"
 ```
 
 1. **Agente.** Si hay más de uno instalado (Claude, OpenCode, Codex, Gemini),
@@ -353,7 +344,7 @@ sin cronómetro.
 
 ### Flags por agente
 
-Los argumentos tras `--` (o los que pasa la función) son los de Claude. Con otro
+Los argumentos tras `--` son los de Claude. Con otro
 agente, bita los traduce; lo que no tiene equivalente se descarta con un aviso
 (`bita: <Agente> has no equivalent for <flag>; dropped.`).
 
@@ -369,19 +360,16 @@ pasaste `--allow-dangerously-skip-permissions` ni
 `--dangerously-skip-permissions`. En Gemini, un `-y`, `--yolo` o
 `--approval-mode` tuyo reemplaza al por defecto.
 
-### Cuándo no interviene
+### Terminal y sesiones anidadas
 
-La función pasa directo a `claude`, sin selectores ni cronómetro, cuando:
+`bita work` siempre muestra los selectores; para usar el agente sin cronómetro,
+llámalo directo (`claude -p …`, `claude mcp …`).
 
-- hay `-p`/`--print`, `-v`/`--version`, `-h`/`--help`, `--bg` o `--background`;
-- el primer argumento es un subcomando de Claude (`mcp`, `plugin`, `auth`,
-  `doctor`, `update`, `install`, …);
-- stdin o stdout no son una terminal (pipes, scripts, CI);
-- ya estás dentro de una sesión de bita (`BITA_WRAPPER_ID`) o el proceso lo
-  lanzó el propio bita (`BITA_CHILD`).
-
-Con otro agente por `--harness`, los selectores exigen terminal: sin ella, bita
-avisa y sale con 130.
+- Sin terminal (pipes, scripts, CI), los selectores no pueden preguntar: pasa
+  `--harness` y `--project`, o bita avisa y sale con 130.
+- Dentro de una sesión de bita (`BITA_WRAPPER_ID`) o en un proceso que lanzó el
+  propio bita (`BITA_CHILD`), avisa en una línea y lanza el agente (Claude, o el
+  de `--harness`) sin abrir otro cronómetro, para no anidar entradas.
 
 ### `/clear`, `/resume` y entradas
 
@@ -429,7 +417,7 @@ rama, lo que haya). Nunca se queda corriendo.
 título, se **cancela**: se borra la entrada y sale `cancel` en vez de `stop`.
 
 **Huérfanos.** Si el wrapper muere sin cerrar (terminal cerrada, `kill -9`), el
-siguiente `bita session` lo detecta, termina la entrada en la última actividad
+siguiente `bita work` lo detecta, termina la entrada en la última actividad
 conocida (la transcripción o el último archivo tocado) y la finaliza. Los
 huérfanos nunca se cancelan. Un cierre atascado se reintenta pasados 15 minutos.
 
@@ -449,7 +437,7 @@ otra), `busy` (otro proceso la tiene), `already-finalized` o `not-found`.
 | Variable | Qué hace |
 |---|---|
 | `BITA_HARNESS_BIN_CLAUDE`, `_OPENCODE`, `_CODEX`, `_GEMINI` | Ruta absoluta del ejecutable de ese agente en vez de buscarlo en el `PATH`. Si no es ejecutable, ese agente cuenta como no instalado |
-| `BITA_WRAPPER_ID`, `BITA_HARNESS`, `BITA_SESSION_PROJECT` | Las pone `bita session` al agente para ligar sus hooks; no las definas tú |
+| `BITA_WRAPPER_ID`, `BITA_HARNESS`, `BITA_SESSION_PROJECT` | Las pone `bita work` al agente para ligar sus hooks; no las definas tú |
 | `BITA_NO_HOOKS=1`, `KIT_NO_EVENTS=1` | Apagan los eventos (`start`, `stop`, …) |
 
 ### Cómo se verifica
