@@ -1,6 +1,6 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, afterEach, beforeEach, test } from 'node:test'
@@ -200,6 +200,58 @@ test('gemini gives up after the second invalid answer and surfaces API errors', 
   process.env['FAKE_BIN_REPLY'] = JSON.stringify({ error: { type: 'Error', message: 'IneligibleTierError' } })
   process.env['FAKE_BIN_EXIT'] = '55'
   assert.deepEqual(await getAdapter('gemini').summarize(input()), { ok: false, error: 'gemini failed: IneligibleTierError' })
+})
+
+const REGISTERING_GEMINI = `#!/usr/bin/env node
+const fs = require('node:fs')
+const path = require('node:path')
+process.stdin.resume()
+process.stdin.on('end', () => {
+  const home = path.join(process.env.GEMINI_CLI_HOME, '.gemini')
+  const cwd = process.cwd()
+  const slug = path.basename(cwd).toLowerCase().replace(/[^a-z0-9]/g, '-')
+  const registry = path.join(home, 'projects.json')
+  const data = JSON.parse(fs.readFileSync(registry, 'utf8'))
+  data.projects[cwd] = slug
+  fs.writeFileSync(registry, JSON.stringify(data))
+  for (const base of ['tmp', 'history']) {
+    fs.mkdirSync(path.join(home, base, slug, 'chats'), { recursive: true })
+    fs.writeFileSync(path.join(home, base, slug, '.project_root'), cwd)
+  }
+  fs.appendFileSync(process.env.FAKE_BIN_LOG, cwd + '\\n')
+  process.stdout.write(process.env.FAKE_BIN_REPLY)
+})
+`
+
+test('gemini runs each summary in its own workspace and removes what it registered, keeping the user projects', async () => {
+  const geminiHome = mkdtempSync(join(root, 'gemini-home-'))
+  const home = join(geminiHome, '.gemini')
+  mkdirSync(join(home, 'tmp', 'mine'), { recursive: true })
+  writeFileSync(join(home, 'tmp', 'mine', '.project_root'), '/work/mine')
+  writeFileSync(join(home, 'projects.json'), JSON.stringify({ projects: { '/work/mine': 'mine' } }))
+  const fake = join(dir, 'gemini')
+  writeFileSync(fake, REGISTERING_GEMINI)
+  chmodSync(fake, 0o755)
+  process.env[harnessBinEnvVar('gemini')] = fake
+  process.env['GEMINI_CLI_HOME'] = geminiHome
+  process.env['FAKE_BIN_REPLY'] = JSON.stringify({ response: JSON.stringify(summary) })
+  try {
+    assert.deepEqual(await getAdapter('gemini').summarize(input()), expected)
+    assert.deepEqual(await getAdapter('gemini').summarize(input()), expected)
+    const workspaces = readFileSync(log, 'utf8').split('\n').filter(Boolean)
+    assert.equal(workspaces.length, 2)
+    assert.notEqual(workspaces[0], workspaces[1])
+    for (const workspace of workspaces) assert.equal(existsSync(workspace), false, workspace)
+    assert.deepEqual(JSON.parse(readFileSync(join(home, 'projects.json'), 'utf8')), { projects: { '/work/mine': 'mine' } })
+    assert.equal(existsSync(join(home, 'tmp', 'mine', '.project_root')), true)
+    for (const base of ['tmp', 'history']) {
+      const left = existsSync(join(home, base)) ? readdirSync(join(home, base)) : []
+      assert.deepEqual(left.filter((name) => name.startsWith('bita-gemini-summary')), [], base)
+    }
+    assert.equal(existsSync(join(home, 'projects.json.lock')), false)
+  } finally {
+    delete process.env['GEMINI_CLI_HOME']
+  }
 })
 
 test('opencode runs standalone with an empty config dir, retries once and deletes its sessions', async () => {

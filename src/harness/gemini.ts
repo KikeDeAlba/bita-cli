@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { childEnv } from '../domain/session.ts'
 import { droppedWarning, parseClaudeArgs } from './args.ts'
@@ -97,11 +97,86 @@ export function parseGeminiChat(text: string): Turn[] {
   return turns
 }
 
+const REGISTRY_LOCK_ATTEMPTS = 20
+const REGISTRY_LOCK_DELAY_MS = 50
+
 async function prepareWorkspace(): Promise<string> {
-  const dir = join(tmpdir(), GEMINI_SUMMARY_DIR)
-  await mkdir(join(dir, '.gemini'), { recursive: true })
+  const dir = await mkdtemp(join(tmpdir(), `${GEMINI_SUMMARY_DIR}-`))
+  await mkdir(join(dir, '.gemini'))
   await writeFile(join(dir, '.gemini', 'settings.json'), JSON.stringify(GEMINI_SUMMARY_SETTINGS))
   return dir
+}
+
+export function geminiHomeDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(env['GEMINI_CLI_HOME'] || homedir(), '.gemini')
+}
+
+async function removeOwnedSlugs(home: string, owners: ReadonlySet<string>): Promise<void> {
+  for (const base of [join(home, 'tmp'), join(home, 'history')]) {
+    let names: string[]
+    try {
+      names = await readdir(base)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!name.startsWith(GEMINI_SUMMARY_DIR)) continue
+      let owner: string
+      try {
+        owner = (await readFile(join(base, name, '.project_root'), 'utf8')).trim()
+      } catch {
+        continue
+      }
+      if (owners.has(owner)) await rm(join(base, name), { recursive: true, force: true })
+    }
+  }
+}
+
+async function acquireLock(lock: string): Promise<boolean> {
+  for (let attempt = 0; attempt < REGISTRY_LOCK_ATTEMPTS; attempt++) {
+    try {
+      await mkdir(lock)
+      return true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return false
+      await new Promise((resolve) => setTimeout(resolve, REGISTRY_LOCK_DELAY_MS))
+    }
+  }
+  return false
+}
+
+async function dropRegistryEntries(file: string, owners: ReadonlySet<string>): Promise<void> {
+  const lock = `${file}.lock`
+  if (!(await acquireLock(lock))) return
+  try {
+    let data: unknown
+    try {
+      data = JSON.parse(await readFile(file, 'utf8')) as unknown
+    } catch {
+      return
+    }
+    if (!isRecord(data) || !isRecord(data['projects'])) return
+    const projects = data['projects']
+    const stale = Object.keys(projects).filter((key) => owners.has(key))
+    if (stale.length === 0) return
+    for (const key of stale) delete projects[key]
+    const temp = `${file}.bita-${process.pid}.tmp`
+    await writeFile(temp, JSON.stringify(data, null, 2))
+    await rename(temp, file)
+  } finally {
+    await rm(lock, { recursive: true, force: true })
+  }
+}
+
+async function disposeWorkspace(dir: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const owners = new Set([dir])
+  try {
+    owners.add(await realpath(dir))
+  } catch {}
+  const home = geminiHomeDir(env)
+  await removeOwnedSlugs(home, owners).catch(() => {})
+  await dropRegistryEntries(join(home, 'projects.json'), owners).catch(() => {})
+  await rm(dir, { recursive: true, force: true }).catch(() => {})
 }
 
 function extractResponse(stdout: string): { text: string } | { error: string } {
@@ -125,20 +200,24 @@ async function summarize(input: SummaryInput): Promise<SummaryResult> {
     return { ok: false, error: `gemini workspace: ${errorMessage(error)}` }
   }
   const env = { ...childEnv(), GEMINI_CLI_TRUST_WORKSPACE: 'true' }
-  const context = summaryContext(input)
-  let instructions = summaryInstructions(input)
-  let last: SummaryResult = { ok: false, error: 'gemini was not called' }
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const args = ['-m', model, '--approval-mode', 'plan', '-e', 'none', '-o', 'json', '-p', instructions]
-    const result = await runProcess(bin, args, { input: context, env, cwd, timeoutMs: remainingMs(deadline) })
-    if (result.timedOut) return { ok: false, error: describeFailure('gemini', result) }
-    const response = extractResponse(result.stdout)
-    if ('error' in response) return { ok: false, error: response.error.startsWith('gemini failed') || result.code === 0 ? response.error : describeFailure('gemini', result) }
-    last = validateSessionSummary(parseJsonLoose(response.text), input.kinds)
-    if (last.ok) return last
-    instructions = retryInstructions(input, last.error)
+  try {
+    const context = summaryContext(input)
+    let instructions = summaryInstructions(input)
+    let last: SummaryResult = { ok: false, error: 'gemini was not called' }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const args = ['-m', model, '--approval-mode', 'plan', '-e', 'none', '-o', 'json', '-p', instructions]
+      const result = await runProcess(bin, args, { input: context, env, cwd, timeoutMs: remainingMs(deadline) })
+      if (result.timedOut) return { ok: false, error: describeFailure('gemini', result) }
+      const response = extractResponse(result.stdout)
+      if ('error' in response) return { ok: false, error: response.error.startsWith('gemini failed') || result.code === 0 ? response.error : describeFailure('gemini', result) }
+      last = validateSessionSummary(parseJsonLoose(response.text), input.kinds)
+      if (last.ok) return last
+      instructions = retryInstructions(input, last.error)
+    }
+    return last
+  } finally {
+    await disposeWorkspace(cwd, env)
   }
-  return last
 }
 
 export const geminiAdapter: HarnessAdapter = {
