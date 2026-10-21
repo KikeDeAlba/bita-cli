@@ -13,7 +13,7 @@ import { runReport } from './commands/report.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '1.3.1'
+export const VERSION = '1.4.0'
 
 export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
   jira: 'Jira lives in atl now. Use atl jira … (atl jira --help).',
@@ -82,6 +82,11 @@ Projects:
   repo init [path]           Create a project for a repository and map it (--name, --client, --scope)
   scope list|set|unset|which Map a path prefix to a project; the longest one wins
 
+Sessions:
+  session [-- ARGS...]       Pick a harness and a project, start a timer and launch the agent;
+                             the timer stops and gets its title when the session ends
+  session finalize <id>      Fill and stop the entry of a finished session (run by the hooks)
+
 Integration:
   setup                      Register bita and install the integration for Claude Code, OpenCode, Codex and Gemini CLI
   capabilities               What this bita offers to the other tools (--json)
@@ -89,9 +94,9 @@ Integration:
   hooks [list]               Commands run on start, stop, cancel, amend, delete and merge, plus the installed tools subscribed to them
   hooks add --on E -- CMD    Register one (see Hooks options)
   hooks remove N             Remove hook number N
-  hook session-start|prompt|touched|codex|gemini
-                             Agent lifecycle hooks (installed by setup; prompt-submit and
-                             checkpoint still answer for older setups)
+  hook session-start|session-end|touched|codex|gemini
+                             Agent lifecycle hooks (installed by setup; prompt, prompt-submit
+                             and checkpoint do nothing and remain for older setups)
 
 Range presets:
   today, yesterday, week, last-week, month, last-month
@@ -146,6 +151,11 @@ Hooks options:
   --kind KINDS               With "hooks add", only entries of these kinds
   -- COMMAND ARGS            With "hooks add", the command; it gets the event as JSON on stdin
 
+Session options:
+  --harness ID               claude, opencode, codex or gemini, instead of asking
+  --project ID|NAME|0        Project of the timer, instead of asking; 0 launches without a timer
+  -- ARGS                    Arguments for the agent; Claude flags are translated for the others
+
 Setup options:
   --target TARGETS           claude, opencode, codex, gemini, all, or a comma list (default: the agents found)
   --agents TARGETS           Alias of --target
@@ -157,6 +167,9 @@ Setup options:
   --no-settings              Skip Claude settings changes
   --no-register              Skip registering bita for the other tools
   --mod                      Also install the bita-timer plugin for Claude Code (the timer band)
+  --shell zsh|bash           Also add the claude function that runs "bita session" to the shell rc
+  --rc-file FILE             The rc file for --shell or --remove-shell (default: ~/.zshrc or ~/.bashrc)
+  --remove-shell             Only remove that function from the rc file
 `
 
 function assertNoMovedFlags(command: string, rest: readonly string[]): void {
@@ -185,7 +198,7 @@ export async function route(argv: string[]): Promise<number> {
   const moved = Object.hasOwn(MOVED_COMMANDS, command) ? MOVED_COMMANDS[command] : undefined
   if (moved !== undefined) throw new UnknownCommandError(`"bita ${command}" is no longer part of bita, which only keeps the time.`, moved)
 
-  const ownArgs = command === 'hooks' && rest.includes('--') ? rest.slice(0, rest.indexOf('--')) : rest
+  const ownArgs = (command === 'hooks' || command === 'session') && rest.includes('--') ? rest.slice(0, rest.indexOf('--')) : rest
   if (ownArgs.includes('--help')) {
     writeOut(HELP)
     return 0
@@ -223,6 +236,9 @@ export async function route(argv: string[]): Promise<number> {
       return (await import('./commands/statusline.ts')).runStatusline()
     case 'hooks':
       return runHooks(rest)
+    case 'session':
+      if (rest[0] === 'finalize') return (await import('./commands/session.ts')).runSessionFinalize(rest.slice(1))
+      return (await import('./commands/session-launch.ts')).runSessionLaunch(rest)
     case 'merge':
       return runMerge(rest)
     case 'start':

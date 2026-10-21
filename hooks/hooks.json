@@ -2,13 +2,12 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear|compact",
         "hooks": [{ "type": "command", "command": "bita hook session-start", "timeout": 5 }]
       }
     ],
-    "UserPromptSubmit": [
+    "SessionEnd": [
       {
-        "hooks": [{ "type": "command", "command": "bita hook prompt", "timeout": 5 }]
+        "hooks": [{ "type": "command", "command": "bita hook session-end", "timeout": 5 }]
       }
     ],
     "PostToolUse": [

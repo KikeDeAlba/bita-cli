@@ -173,6 +173,8 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     assert.ok(existsSync(join(box.agentsSkills, 'bita', 'SKILL.md')))
     const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> }
     assert.equal(codexHooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook codex')
+    assert.equal(codexHooks.hooks['SessionEnd']?.[0]?.hooks[0]?.command, 'bita hook codex')
+    assert.equal(codexHooks.hooks['UserPromptSubmit'], undefined)
     assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
     assert.match(codexHooks.hooks['PostToolUse']?.[0]?.matcher ?? '', /apply_patch/)
     assert.ok(existsSync(join(box.codex, 'prompts', 'bita-start.md')))
@@ -184,7 +186,9 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     const geminiHooks = readJson(join(extension, 'hooks', 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> }
     assert.equal(geminiHooks.hooks['AfterTool']?.[0]?.hooks[0]?.command, 'bita hook gemini')
     assert.notEqual(geminiHooks.hooks['AfterTool']?.[0]?.matcher, '.*')
-    assert.equal(geminiHooks.hooks['BeforeAgent']?.[0]?.hooks[0]?.command, 'bita hook gemini')
+    assert.equal(geminiHooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook gemini')
+    assert.equal(geminiHooks.hooks['SessionEnd']?.[0]?.hooks[0]?.command, 'bita hook gemini')
+    assert.equal(geminiHooks.hooks['BeforeAgent'], undefined)
     const geminiManifest = readJson(join(extension, 'gemini-extension.json'))
     assert.equal(geminiManifest['mcpServers'], undefined)
   } finally {
@@ -299,6 +303,35 @@ test('setup narrows an older catch-all Codex PostToolUse hook to the edit tools'
     const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string }>> }
     assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
     assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
+  } finally {
+    rmSync(box.root, { recursive: true, force: true })
+  }
+})
+
+test('setup drops the old Codex UserPromptSubmit hook and keeps the user ones', () => {
+  const box = sandbox()
+  try {
+    mkdirSync(box.codex, { recursive: true })
+    writeFileSync(
+      join(box.codex, 'hooks.json'),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 5 }] }],
+          UserPromptSubmit: [
+            { hooks: [{ type: 'command', command: 'bita hook codex', timeout: 5 }] },
+            { hooks: [{ type: 'command', command: 'echo mine' }] },
+          ],
+          PostToolUse: [{ matcher: 'apply_patch|Edit|Write', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] }],
+        },
+      }),
+    )
+    setup(box, '--target', 'codex')
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    const prompt = (codexHooks.hooks['UserPromptSubmit'] ?? []).flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.deepEqual(prompt, ['echo mine'])
+    assert.equal(codexHooks.hooks['SessionStart']?.length, 1)
+    assert.equal(codexHooks.hooks['SessionEnd']?.length, 1)
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
   } finally {
     rmSync(box.root, { recursive: true, force: true })
   }
@@ -442,9 +475,12 @@ test('the plugin manifests parse and point at the plugin contents', () => {
     ],
   )
   const hooks = readJson(join(repo, 'hooks', 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; async?: boolean }> }>> }
+  assert.equal(hooks.hooks['SessionStart']?.length, 1)
+  assert.equal(hooks.hooks['SessionStart']?.[0]?.matcher, undefined)
   assert.equal(hooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook session-start')
-  assert.equal(hooks.hooks['UserPromptSubmit']?.length, 1)
-  assert.equal(hooks.hooks['UserPromptSubmit']?.[0]?.hooks[0]?.command, 'bita hook prompt')
+  assert.equal(hooks.hooks['SessionEnd']?.length, 1)
+  assert.equal(hooks.hooks['SessionEnd']?.[0]?.hooks[0]?.command, 'bita hook session-end')
+  assert.equal(hooks.hooks['UserPromptSubmit'], undefined)
   const touched = hooks.hooks['PostToolUse']?.[0]
   assert.equal(touched?.matcher, 'Edit|Write|MultiEdit')
   assert.equal(touched?.hooks[0]?.command, 'bita hook touched')
@@ -473,11 +509,17 @@ test('the user skills replace the commands and only run when the user types them
   }
 })
 
-test('the main skill is short, model-invocable and never mentions Rovo', () => {
+test('the main skill is a short user reference the model never invokes and never mentions Rovo', () => {
   const skill = readFileSync(join(repo, 'skills', 'bita', 'SKILL.md'), 'utf8')
   assert.ok(skill.split('\n').length < 150)
-  assert.equal(frontmatter(skill)['disable-model-invocation'], undefined)
+  assert.equal(frontmatter(skill)['disable-model-invocation'], 'true')
   assert.match(skill, /--brief/)
+  assert.match(skill, /bita session/)
+  assert.doesNotMatch(skill, /bita amend --draft --title "<titulo corto>"/)
+  assert.match(readFileSync(join(repo, 'skills', 'bita', 'agents', 'openai.yaml'), 'utf8'), /allow_implicit_invocation: false/)
+  for (const dir of ['bita', 'bita-start', 'bita-stop', 'bita-timers', 'bita-init']) {
+    assert.doesNotMatch(readFileSync(join(repo, 'skills', dir, 'SKILL.md'), 'utf8'), /hook de bita lo recuerda|Cuándo proponerlo|ofrecerás el cronómetro/)
+  }
   for (const dir of ['bita', 'bita-start', 'bita-stop', 'bita-log', 'bita-amend', 'bita-timers', 'bita-init']) {
     assert.doesNotMatch(readFileSync(join(repo, 'skills', dir, 'SKILL.md'), 'utf8'), /rovo/i)
   }

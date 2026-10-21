@@ -37,3 +37,18 @@ export function parseClockTime(input: string, reference: Date, flag: string): Da
   }
   return new Date(parsed)
 }
+
+const ISO_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/i
+
+export function parseInstant(input: string, reference: Date, flag: string): Date {
+  const trimmed = input.trim()
+  if (/^\d{1,2}:\d{2}$/.test(trimmed)) return parseClockTime(trimmed, reference, flag)
+  if (!ISO_WITH_ZONE.test(trimmed)) {
+    throw new UsageError(
+      `Invalid value for ${flag}: "${input}". Use HH:MM or an ISO timestamp with Z or an offset, like 2026-10-20T18:30:00Z.`,
+    )
+  }
+  const parsed = Date.parse(trimmed)
+  if (!Number.isFinite(parsed)) throw new UsageError(`Invalid value for ${flag}: "${input}".`)
+  return new Date(parsed)
+}

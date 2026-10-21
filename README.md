@@ -111,18 +111,17 @@ install bita@bita` (o `update` si ya estaba). A mano, dentro de Claude Code:
 
 El plugin trae:
 
-- **La skill `bita`**, corta: el flujo del cronómetro. Claude solo lee su
-  descripción hasta que la necesita.
+- **La skill `bita`**, de referencia (`disable-model-invocation: true`): el
+  modelo no la invoca. Las sesiones las cronometra `bita session`, no el agente.
 - **Skills de usuario** `/bita-start`, `/bita-stop`, `/bita-log`, `/bita-amend`,
   `/bita-timers` y `/bita-init`, con `disable-model-invocation: true`: no
   ocupan contexto hasta que las escribes. Reemplazan a los comandos sueltos de
   `~/.claude/commands`.
-- **Hooks** (`hooks/hooks.json`):
-  - `SessionStart` → `bita hook session-start`: en un repo mapeado, la regla del
-    cronómetro y lo que corre, en menos de 400 caracteres.
-  - `UserPromptSubmit` → `bita hook prompt`: un solo proceso que avisa del
-    borrador sin título y del recordatorio de nota, en un solo contexto. Si no
-    hay nada que decir, no imprime nada.
+- **Hooks** (`hooks/hooks.json`), que no inyectan nada al agente:
+  - `SessionStart` → `bita hook session-start` y `SessionEnd` → `bita hook
+    session-end`: ligan la sesión del agente con la entrada que abrió `bita
+    session` y rotan la entrada con `/clear` o `/resume`. Sin `bita session` de
+    por medio, no hacen nada.
   - `PostToolUse` en `Edit|Write|MultiEdit` → `bita hook touched`, asíncrono:
     lee la ruta del JSON del hook y registra el archivo sin bloquear al agente.
 
@@ -130,8 +129,9 @@ El plugin trae:
 cronómetros sobre el prompt). Al pasar al plugin, `setup` quita lo que versiones
 anteriores dejaron sueltas en `~/.claude`: la skill y los comandos enlazados y
 los hooks de `settings.json` (incluido el de `jq`). Si `claude` no está en el
-`PATH`, no quita nada y dice qué correr. `bita hook prompt-submit` y `bita hook
-checkpoint` siguen respondiendo para instalaciones viejas.
+`PATH`, no quita nada y dice qué correr. `bita hook prompt`, `bita hook
+prompt-submit` y `bita hook checkpoint` ya no hacen nada; siguen respondiendo
+(sin salida) para que las instalaciones viejas no fallen.
 
 En OpenCode, si `claude-compat` todavía reejecuta los hooks y comandos viejos de
 `~/.claude`, kit no instala los de bita para que no corran dos veces.
@@ -214,10 +214,8 @@ bita project add "Mi proyecto"     # devuelve un id
 bita scope set . <projectId>
 ```
 
-**Mientras un repositorio no esté mapeado, el hook no dice nada.** En cuanto lo
-está, al abrir una sesión del agente se inyecta la regla que le pide ofrecer el
-cronómetro cuando el trabajo vaya a dejar un artefacto, y callarse cuando solo
-vayas a leer o preguntar.
+Con el repositorio mapeado, `bita session` preselecciona su proyecto en el
+selector (ver [Sesiones](#sesiones)). bita ya no le pide nada al agente.
 
 ## Uso
 
@@ -245,20 +243,20 @@ El caso normal es arrancar el reloj **antes de saber en qué se trabaja**:
 cd ~/dev && bita start        # sin título y sin proyecto
 ```
 
-Eso crea un borrador, que se rellena después y en buena parte solo:
+Eso crea un borrador, que se rellena después:
 
 | Qué | Quién lo pone |
 |---|---|
-| Título | El agente, en cuanto un mensaje dice en qué se va a trabajar |
-| Proyecto | El agente por el prompt, o el hook por el primer archivo que se cambia |
-| Archivos tocados | El hook, en cada edición |
-
-El hook `prompt` recuerda que hay un contador sin nombre y se calla en
-cuanto lo tiene. A mano:
+| Título | Tú, con `bita amend --draft` (o `/bita-amend`) |
+| Proyecto | Tú, con `bita amend --draft --project` |
+| Archivos tocados | El hook `touched`, en cada edición |
 
 ```sh
 bita amend --draft --title "Lo que sea" --project Apartados
 ```
+
+Si prefieres que el título, el tipo y la nota salgan solos, arranca el agente
+con `bita session` (siguiente sección).
 
 ### Borrar y cancelar
 
@@ -305,6 +303,162 @@ Todos los comandos aceptan `--json` y emiten un solo documento en stdout:
 Los errores salen con `ok: false` y un `error.code` estable (`USAGE_ERROR`,
 `UNKNOWN_COMMAND`, `ENTRY_NOT_FOUND`, `AMBIGUOUS_TIMER`, …), con `error.hint`
 cuando hay algo concreto que hacer. Los avisos van a stderr.
+
+## Sesiones
+
+`bita session` envuelve al agente: pregunta con qué agente y en qué proyecto
+trabajas, arranca el cronómetro, lanza el agente y, al cerrarlo, rellena la
+entrada y la para. El agente no sabe que existe: no se le inyecta nada.
+
+### Instalar la función `claude`
+
+```sh
+bita setup --shell zsh      # o bash
+```
+
+Además de lo de siempre, añade a `~/.zshrc` (`$ZDOTDIR/.zshrc` si está
+definido) o `~/.bashrc` un bloque delimitado por `# >>> bita session >>>` y
+`# <<< bita session <<<` con una función `claude`. Si `bita` no está en el
+`PATH`, la función corre `claude` sin más. `--rc-file FILE` cambia el archivo.
+Es idempotente: repetirlo no duplica el bloque y lo actualiza si cambió. Un
+`alias claude=` en ese archivo gana a la función; `setup` lo avisa y hay que
+quitarlo. Abre una terminal nueva para que aplique.
+
+Sin la función, lo mismo se hace a mano: `bita session -- <args del agente>`.
+
+Para quitarla: `bita setup --remove-shell` (con `--shell` y `--rc-file` si no
+se deduce del `$SHELL`). Solo borra el bloque y no toca nada más.
+
+### El flujo
+
+```sh
+claude                          # selector de agente, selector de proyecto, y a trabajar
+claude "arregla el pipeline"    # el texto va al agente como prompt
+bita session --harness codex --project Apartados -- "arregla el pipeline"
+```
+
+1. **Agente.** Si hay más de uno instalado (Claude, OpenCode, Codex, Gemini),
+   pregunta con Claude por defecto (Enter). Con uno solo, no pregunta.
+   `--harness claude|opencode|codex|gemini` se salta el selector.
+2. **Proyecto.** Lista los proyectos y preselecciona el que corresponde al
+   directorio actual (el prefijo de `bita scope` o un repo de `bita project
+   repo`). `0` es **sin cronómetro**: lanza el agente y no registra nada.
+   `--project <id|nombre|0>` se salta el selector.
+3. **Cronómetro.** Arranca una entrada en ese proyecto, sin título.
+4. **Agente.** Corre con la terminal tal cual; las señales se le reenvían.
+5. **Cierre.** Al salir, un proceso desacoplado resume la sesión (ver abajo).
+
+Si la base no se abre o el cronómetro no arranca, bita avisa y lanza el agente
+sin cronómetro.
+
+### Flags por agente
+
+Los argumentos tras `--` (o los que pasa la función) son los de Claude. Con otro
+agente, bita los traduce; lo que no tiene equivalente se descarta con un aviso
+(`bita: <Agente> has no equivalent for <flag>; dropped.`).
+
+| Agente | Flag por defecto | `-c` / `--continue` | `-r` / `--resume [id]` | Prompt |
+|---|---|---|---|---|
+| Claude | `--allow-dangerously-skip-permissions` | sin cambios | sin cambios | sin cambios |
+| OpenCode | `--auto` | `--continue` | `--session <id>` (sin id, se descarta) | `--prompt <texto>` |
+| Codex | `--dangerously-bypass-approvals-and-sandbox` | `resume --last` | `resume [id]` | posicional |
+| Gemini | `--approval-mode=yolo` | `--resume latest` | `--resume <id>` (sin id, `latest`) | `-i <texto>` |
+
+Claude recibe tus argumentos sin tocar y solo antepone el flag por defecto si no
+pasaste `--allow-dangerously-skip-permissions` ni
+`--dangerously-skip-permissions`. En Gemini, un `-y`, `--yolo` o
+`--approval-mode` tuyo reemplaza al por defecto.
+
+### Cuándo no interviene
+
+La función pasa directo a `claude`, sin selectores ni cronómetro, cuando:
+
+- hay `-p`/`--print`, `-v`/`--version`, `-h`/`--help`, `--bg` o `--background`;
+- el primer argumento es un subcomando de Claude (`mcp`, `plugin`, `auth`,
+  `doctor`, `update`, `install`, …);
+- stdin o stdout no son una terminal (pipes, scripts, CI);
+- ya estás dentro de una sesión de bita (`BITA_WRAPPER_ID`) o el proceso lo
+  lanzó el propio bita (`BITA_CHILD`).
+
+Con otro agente por `--harness`, los selectores exigen terminal: sin ella, bita
+avisa y sale con 130.
+
+### `/clear`, `/resume` y entradas
+
+Cada conversación del agente es una entrada. Los hooks de `SessionStart`
+(Claude, Codex, Gemini) y el plugin de OpenCode ven cuándo la sesión cambia:
+
+- La primera sesión se liga a la entrada que abrió el wrapper.
+- `/clear`, `/resume` o una conversación nueva **rotan**: cierran la entrada
+  anterior (que se resume por separado) y abren otra en el mismo proyecto.
+- `compact` y las subsesiones de OpenCode no rotan.
+
+### Al cerrar: título, tipo y nota
+
+Cuando termina una entrada, `bita session finalize <id>` corre desacoplado (su
+salida va a `hooks.log`, junto a la base):
+
+1. Lee la transcripción de la sesión.
+2. **El mismo agente** la resume en modo no interactivo y devuelve título,
+   `kind` (uno de los que ya existen) y la nota. El modelo del resumen es barato
+   por agente y se cambia en `~/.config/bita/config.json`:
+
+   | Agente | Modelo por defecto | Clave en config |
+   |---|---|---|
+   | Claude | `haiku` | `summary.claude.model` |
+   | OpenCode | `openai/gpt-5.6-luna` | `summary.opencode.model` |
+   | Codex | `gpt-5.6-luna` | `summary.codex.model` |
+   | Gemini | `flash-lite` | `summary.gemini.model` |
+
+   ```json
+   { "summary": { "claude": { "model": "sonnet" } } }
+   ```
+3. Guarda el título y el `kind` en la entrada (no pisa los que ya tenga).
+4. Escribe la nota con `inkwell note save` (contexto, qué se hizo, decisiones,
+   hallazgos, verificación y pendientes) si inkwell está instalado.
+5. **Para** la entrada con la hora exacta en que terminó la sesión, no la del
+   resumen, y emite `stop` para tally y los demás.
+
+El resumen tiene un plazo de 3 minutos más 15 s de gracia.
+
+**Respaldo.** Si no hay transcripción, el resumen falla o se agota, la entrada
+igual se para y recibe el título `Sesión <Agente> · <repo> · <rama>` (sin repo o
+rama, lo que haya). Nunca se queda corriendo.
+
+**Sesiones cortas.** Una sesión de menos de 60 s, sin ningún mensaje tuyo y sin
+título, se **cancela**: se borra la entrada y sale `cancel` en vez de `stop`.
+
+**Huérfanos.** Si el wrapper muere sin cerrar (terminal cerrada, `kill -9`), el
+siguiente `bita session` lo detecta, termina la entrada en la última actividad
+conocida (la transcripción o el último archivo tocado) y la finaliza. Los
+huérfanos nunca se cancelan. Un cierre atascado se reintenta pasados 15 minutos.
+
+### Finalizar a mano
+
+```sh
+bita session finalize 812          # cierra, resume y para la entrada 812
+bita session finalize 812 --json
+```
+
+Sirve para reintentar un cierre que no corrió. Es idempotente: el estado dice
+`summarized`, `fallback`, `cancelled`, `skipped` (la entrada se unificó con
+otra), `busy` (otro proceso la tiene), `already-finalized` o `not-found`.
+
+### Variables
+
+| Variable | Qué hace |
+|---|---|
+| `BITA_HARNESS_BIN_CLAUDE`, `_OPENCODE`, `_CODEX`, `_GEMINI` | Ruta absoluta del ejecutable de ese agente en vez de buscarlo en el `PATH`. Si no es ejecutable, ese agente cuenta como no instalado |
+| `BITA_WRAPPER_ID`, `BITA_HARNESS`, `BITA_SESSION_PROJECT` | Las pone `bita session` al agente para ligar sus hooks; no las definas tú |
+| `BITA_NO_HOOKS=1`, `KIT_NO_EVENTS=1` | Apagan los eventos (`start`, `stop`, …) |
+
+### Cómo se verifica
+
+```sh
+bita session finalize <id> --json   # status: summarized, o fallback con el motivo en error
+tail hooks.log                      # junto a la base de datos: una línea por paso del cierre
+pnpm test
+```
 
 ## Reuniones
 
@@ -479,7 +633,8 @@ src/cli/       comandos y formato de salida
 src/state/     configuración y repos de git
 src/hooks/     los eventos: suscriptores del registro de kit y hooks de config.json
 src/kit/       el manifiesto de bita, sus capacidades y la integración con los agentes
-src/integrations/ el plugin de OpenCode
+src/harness/   un adaptador por agente: argumentos, transcripción y resumen
+src/integrations/ el plugin de OpenCode y la nota de inkwell
 skills/        la skill del modelo (bita) y las skills de usuario (bita-*)
 hooks/         los hooks del plugin de Claude Code
 .claude-plugin/ el manifiesto del plugin y el marketplace

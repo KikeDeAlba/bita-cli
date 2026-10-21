@@ -1,8 +1,8 @@
 ---
 name: bita-start
-description: Arranca un cronómetro de bita, en blanco o con título
+description: Arranca a mano un cronómetro de bita, en blanco o con título
 argument-hint: [título corto, o vacío para arrancar en blanco]
-allowed-tools: Bash(bita start:*), Bash(bita ls:*), Bash(bita repo show:*), Bash(tally issue open:*), AskUserQuestion
+allowed-tools: Bash(bita start:*), Bash(bita ls:*)
 disable-model-invocation: true
 ---
 
@@ -10,34 +10,13 @@ Corriendo ahora mismo:
 
 !`bita ls`
 
-Arranca un cronómetro.
+Corre `bita start` con lo que trae `$ARGUMENTS`, sin explorar ni inventar nada:
 
-**Si `$ARGUMENTS` viene vacío, arranca en blanco y ya**: `bita start`. No
-preguntes ni explores para inventar un título; el reloj debe correr antes de que
-se sepa nada. Queda como borrador y se rellena en cuanto un mensaje diga en qué
-se trabaja (el hook de bita lo recuerda en cada prompt):
+- Vacío: `bita start`.
+- Con texto: `bita start "<título>"`, con el texto literal.
+- Si el texto pide flags de forma explícita (`--kind remote-meeting`,
+  `--kind in-person-meeting`, `--project X`, `--at HH:MM`, `--jira`), pásalos
+  tal cual.
 
-```
-bita amend --draft --title "<titulo corto>" --project <nombre o id>
-```
-
-**Si `$ARGUMENTS` trae texto**, úsalo literal como título: `bita start "<título>"`.
-
-**Si es una reunión**, márcala para que recap la grabe: `--kind remote-meeting`
-(Meet, Zoom, Teams, llamada) o `--kind in-person-meeting` (presencial). Si no
-queda claro cuál, pregunta solo eso.
-
-Si en la lista de arriba ya hay uno con el mismo título y proyecto, no arranques
-otro: dímelo. Si hay otros de otra cosa, arranca igual y menciónalo.
-
-**Tarjeta de Jira**, solo si se pidió (`--jira`, «con tarjeta», «ábrele
-tarjeta»): arranca con `--jira` y luego `tally issue open <id> --json`. Sin
-pedirla no hagas nada: los proyectos con `tally map auto` ya la abren solos.
-`NOT_A_JIRA_PROJECT`: nada. Con `NEEDS_PROJECT`, pregunta con
-AskUserQuestion entre `data.options` (máx. 4, `jiraProjectKey` y sus
-`projectNames`) más «No crear tarjeta», y reintenta con `--jira-project <KEY>`.
-Con `NEEDS_STORY`, igual con `data.options` y `--story <KEY>`. Otro error: una
-línea y sigue.
-
-Responde en una línea: el id y el título (o que quedó en blanco) y la key de la
-tarjeta si se abrió.
+Si falla, enseña el error en una línea. Responde en una línea con el id y el
+título (o que quedó en blanco).
