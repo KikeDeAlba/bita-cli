@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import type { HarnessAdapter, HarnessId } from '../src/harness/types.ts'
 import type { StartSessionInput } from '../src/domain/session.ts'
 import type { LocalContext } from '../src/cli/local-context.ts'
+import { UsageError } from '../src/errors.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'bita-session-launch-'))
 process.env['HOME'] = root
@@ -288,19 +289,32 @@ test('a database that cannot be opened still launches the harness, without the t
   assert.match(errors.text(), /could not open the database, launching without the timer/)
 })
 
-test('a picker without a terminal does not read stdin and says why it stopped', async () => {
+for (const args of [['--harness', 'gemini'], ['--project', 'Alpha'], []]) {
+  test(`a picker without a terminal is a usage error and prints no menu (${args.join(' ') || 'no flags'})`, async () => {
+    const h = harness()
+    const errors = captureStderr()
+    try {
+      await assert.rejects(h.run(args, { tty: false, answers: ['1'] }), (error: unknown) => {
+        assert.ok(error instanceof UsageError)
+        assert.match(error.message, /needs a terminal; pass --harness and --project/)
+        return true
+      })
+    } finally {
+      errors.restore()
+    }
+    assert.equal(h.questions.length, 0)
+    assert.equal(h.spawned.length, 0)
+    assert.equal(h.started.length, 0)
+    assert.doesNotMatch(errors.text(), /Harness:|Project:|No timer/)
+  })
+}
+
+test('without a terminal, --harness and --project still launch', async () => {
   const h = harness()
-  const errors = captureStderr()
-  let code: number
-  try {
-    code = await h.run(['--harness', 'gemini'], { tty: false, answers: ['1'] })
-  } finally {
-    errors.restore()
-  }
-  assert.equal(code, 130)
+  const code = await h.run(['--harness', 'gemini', '--project', 'Alpha'], { tty: false })
+  assert.equal(code, 0)
   assert.equal(h.questions.length, 0)
-  assert.equal(h.spawned.length, 0)
-  assert.match(errors.text(), /needs a terminal; pass --harness and --project/)
+  assert.equal(h.started.length, 1)
 })
 
 test('-- --version with a terminal still asks and passes the flag to the harness', async () => {

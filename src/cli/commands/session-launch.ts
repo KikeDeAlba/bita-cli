@@ -125,6 +125,11 @@ function errorMessage(error: unknown): string {
 
 type Choice<T> = { value: T } | { interrupted: true }
 
+function requireTerminal(deps: LaunchDeps): void {
+  if (deps.stdinIsTTY && deps.stdoutIsTTY) return
+  throw new UsageError('Picking a harness or project needs a terminal; pass --harness and --project, or run the harness directly.')
+}
+
 async function pickHarness(deps: LaunchDeps, requested: string | undefined): Promise<Choice<HarnessAdapter>> {
   const available = deps.adapters.filter((adapter) => adapter.available(deps.env))
   if (requested !== undefined) {
@@ -139,6 +144,7 @@ async function pickHarness(deps: LaunchDeps, requested: string | undefined): Pro
 
   const fallback = available.find((adapter) => adapter.id === 'claude') ?? only
   const defaultIndex = available.indexOf(fallback) + 1
+  requireTerminal(deps)
   writeErr('Harness:')
   for (const [index, adapter] of available.entries()) writeErr(`  ${index + 1}. ${adapter.label}`)
   for (;;) {
@@ -162,6 +168,7 @@ async function pickProject(
     return { value: resolveProjectArg(ctx.db, requested) }
   }
 
+  requireTerminal(deps)
   const projects = listProjects(ctx.db)
   let mapped: number | null = null
   try {
@@ -276,9 +283,7 @@ async function launchNested(args: ParsedArgs, deps: LaunchDeps, harnessArgs: rea
 }
 
 export async function runSessionLaunch(argv: string[], overrides: Partial<LaunchDeps> = {}): Promise<number> {
-  const given: LaunchDeps = { ...defaultDeps(), ...overrides }
-  const interactive = given.stdinIsTTY && given.stdoutIsTTY
-  const deps: LaunchDeps = interactive ? given : { ...given, ask: async () => null }
+  const deps: LaunchDeps = { ...defaultDeps(), ...overrides }
   const { own, harnessArgs } = splitLaunchArgv(argv)
   const args = parseCommandArgs(own, LAUNCH_OPTIONS, BASE_OPTIONS)
   if (args.positionals.length > 0) {
@@ -289,10 +294,7 @@ export async function runSessionLaunch(argv: string[], overrides: Partial<Launch
 
   const wrapperId = randomUUID()
   const prepared = await prepare(args, deps, wrapperId)
-  if (!prepared) {
-    if (!interactive) writeErr('bita: picking a harness or project needs a terminal; pass --harness and --project, or run the harness directly.')
-    return EXIT_INTERRUPTED
-  }
+  if (!prepared) return EXIT_INTERRUPTED
 
   const { adapter, project, entryId, databasePath } = prepared
   const plan = adapter.launchArgs(harnessArgs)
