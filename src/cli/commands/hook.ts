@@ -1,7 +1,15 @@
+import { openDatabase } from '../../db/open.ts'
 import { databasePath } from '../../db/paths.ts'
 import { isHarnessId } from '../../harness/registry.ts'
 import type { HarnessId } from '../../harness/types.ts'
-import { appendHookLog, handleSessionEnd, handleSessionStart, wrapperEnv, type WrapperEnv } from '../../domain/session.ts'
+import {
+  appendHookLog,
+  currentSessionEntryId,
+  handleSessionEnd,
+  handleSessionStart,
+  wrapperEnv,
+  type WrapperEnv,
+} from '../../domain/session.ts'
 import { createLocalContext } from '../local-context.ts'
 import { runTouched } from '../hooks/touched.ts'
 
@@ -125,7 +133,7 @@ async function runAgentHook(harness: HarnessId, events: Readonly<Record<string, 
   if (kind === undefined) return
 
   if (kind === 'tool') {
-    for (const file of touchedFiles(inputRecord(input['tool_input']))) await runTouched(file)
+    await touchFiles(touchedFiles(inputRecord(input['tool_input'])))
     return
   }
 
@@ -134,11 +142,27 @@ async function runAgentHook(harness: HarnessId, events: Readonly<Record<string, 
   await dispatchLifecycle(env, harness, kind, input)
 }
 
+function preferredEntryId(): number | null {
+  const env = wrapperEnv()
+  if (!env) return null
+  const db = openDatabase(databasePath())
+  try {
+    return currentSessionEntryId(db, env)
+  } finally {
+    db.close()
+  }
+}
+
+async function touchFiles(files: readonly string[]): Promise<void> {
+  if (files.length === 0) return
+  const preferred = preferredEntryId()
+  for (const file of files) await runTouched(file, { preferredEntryId: preferred })
+}
+
 async function runTouchedHook(argv: readonly string[]): Promise<void> {
   const flagIndex = argv.indexOf('--file')
   const flagged = flagIndex === -1 ? undefined : argv[flagIndex + 1]
-  const files = flagged ? [flagged] : touchedFilesFromHookInput(await readStdin())
-  for (const file of files) await runTouched(file)
+  await touchFiles(flagged ? [flagged] : touchedFilesFromHookInput(await readStdin()))
 }
 
 async function route(event: string, argv: readonly string[]): Promise<void> {
