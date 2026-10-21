@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import type { LocalContext } from '../src/cli/local-context.ts'
 import { findEntryById, listRunning } from '../src/db/entries.ts'
 import { findSessionByEntry } from '../src/db/sessions.ts'
+import { recordTouch } from '../src/db/touches.ts'
 import {
   childEnv,
   closeWrapper,
@@ -232,6 +233,33 @@ test('sweepOrphans closes rows whose wrapper died, at the transcript mtime, and 
     assert.equal(row?.endedAt, mtime.toISOString())
     assert.equal(findSessionByEntry(h.ctx.db, live)?.endedAt, null)
     assert.deepEqual(h.spawned, [orphan])
+  } finally {
+    h.ctx.db.close()
+  }
+})
+
+test('sweepOrphans without a transcript ends at the last touch, or at the sweep when there is none', async () => {
+  const h = await setup()
+  try {
+    const dead = deadPid()
+    const orphan = async (wrapperId: string): Promise<number> => {
+      const { entryId } = await startSessionEntry(h.ctx, { wrapperId, wrapperPid: dead, harness: 'claude', projectId: 7, cwd: '/tmp/app' })
+      const start = new Date(Date.now() - 3 * 3_600_000).toISOString()
+      h.ctx.db.prepare('UPDATE entry_sessions SET started_at = ? WHERE entry_id = ?').run(start, entryId)
+      h.ctx.db.prepare('UPDATE entries SET started_at = ? WHERE id = ?').run(start, entryId)
+      return entryId
+    }
+    const touched = await orphan('w-touched')
+    const touchAt = new Date(Date.now() - 3_600_000).toISOString()
+    recordTouch(h.ctx.db, touched, '/tmp/app/a.ts', new Date(Date.now() - 2 * 3_600_000).toISOString())
+    recordTouch(h.ctx.db, touched, '/tmp/app/b.ts', touchAt)
+    const bare = await orphan('w-bare')
+    const before = Date.now()
+
+    assert.deepEqual(await sweepOrphans(h.ctx, h.deps), [touched, bare])
+    assert.equal(findSessionByEntry(h.ctx.db, touched)?.endedAt, touchAt)
+    const bareEnd = Date.parse(findSessionByEntry(h.ctx.db, bare)?.endedAt ?? '')
+    assert.ok(bareEnd >= before - 1_000 && bareEnd <= Date.now(), String(bareEnd))
   } finally {
     h.ctx.db.close()
   }

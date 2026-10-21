@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { queryAll } from './query.ts'
+import { queryAll, queryOne } from './query.ts'
 
 export function recordTouch(db: DatabaseSync, entryId: number, path: string, now: string): void {
   db.prepare(
@@ -14,6 +14,14 @@ export function listTouches(db: DatabaseSync, entryId: number): string[] {
     db.prepare('SELECT path FROM entry_touches WHERE entry_id = ? ORDER BY first_seen_at, path'),
     entryId,
   ).map((row) => row.path)
+}
+
+export function lastTouchAt(db: DatabaseSync, entryId: number): string | null {
+  const row = queryOne<{ last: string | null }>(
+    db.prepare('SELECT MAX(first_seen_at) AS last FROM entry_touches WHERE entry_id = ?'),
+    entryId,
+  )
+  return row?.last ?? null
 }
 
 export function touchesByEntry(db: DatabaseSync, entryIds: number[]): Map<number, string[]> {

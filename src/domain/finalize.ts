@@ -197,7 +197,8 @@ export async function finalizeEntry(ctx: LocalContext, entryId: number, override
     const durationSeconds = Math.max(0, Math.round((Date.parse(ended) - Date.parse(entry.startedAt)) / 1000))
     const userTurns = turns.filter((turn) => turn.role === 'user').length
     const transcriptRead = adapter !== null && failure === null
-    if (transcriptRead && durationSeconds < CANCEL_UNDER_SECONDS && userTurns === 0 && entry.description.trim().length === 0 && entry.stoppedAt === null) {
+    const mayCancel = transcriptRead && row.endReason !== 'orphan'
+    if (mayCancel && durationSeconds < CANCEL_UNDER_SECONDS && userTurns === 0 && entry.description.trim().length === 0 && entry.stoppedAt === null) {
       const snapshot = enrichEntry(entry, ctx.timezone, now)
       deleteEntry(db, entryId)
       cancelled = true

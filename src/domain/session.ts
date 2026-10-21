@@ -19,6 +19,7 @@ import {
   listUnfinalizedEnded,
   markSessionEnded,
 } from '../db/sessions.ts'
+import { lastTouchAt } from '../db/touches.ts'
 import { emitHooks } from '../hooks/emit.ts'
 import { hooksLogPath, type HookPayload } from '../hooks/hooks.ts'
 import { binEntry } from '../kit/manifest.ts'
@@ -257,16 +258,13 @@ export function processAlive(pid: number): boolean {
   }
 }
 
-function orphanEnd(transcriptPath: string | null, startedAt: string): string {
-  if (transcriptPath) {
+function orphanEnd(db: DatabaseSync, row: { entryId: number; transcriptPath: string | null }, nowIso: string): string {
+  if (row.transcriptPath) {
     try {
-      const mtime = statSync(transcriptPath).mtime.toISOString()
-      if (mtime > startedAt) return mtime
-    } catch {
-      return startedAt
-    }
+      return statSync(row.transcriptPath).mtime.toISOString()
+    } catch {}
   }
-  return startedAt
+  return lastTouchAt(db, row.entryId) ?? nowIso
 }
 
 export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): Promise<number[]> {
@@ -274,7 +272,8 @@ export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): P
   const now = Date.now()
   const pending = immediate(ctx.db, () => {
     const orphans = listOpenSessions(ctx.db).filter((row) => !alive(row.wrapperPid))
-    for (const row of orphans) markSessionEnded(ctx.db, row.id, orphanEnd(row.transcriptPath, row.startedAt), 'orphan')
+    const nowIso = new Date(now).toISOString()
+    for (const row of orphans) markSessionEnded(ctx.db, row.id, orphanEnd(ctx.db, row, nowIso), 'orphan')
     const stale = listUnfinalizedEnded(
       ctx.db,
       new Date(now - ORPHAN_RETRY_MS).toISOString(),

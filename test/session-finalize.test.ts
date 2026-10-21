@@ -169,6 +169,23 @@ test('a session shorter than a minute with no prompts is cancelled', async () =>
   }
 })
 
+test('an orphan whose end is unknown is stopped with a fallback title, never cancelled', async () => {
+  const ctx = await context()
+  try {
+    const id = await sessionEntry(ctx, 180, null)
+    ctx.db.prepare("UPDATE entry_sessions SET session_id = NULL, ended_at = started_at, end_reason = 'orphan' WHERE entry_id = ?").run(id)
+    const rec = recorder([])
+    const report = await finalizeEntry(ctx, id, rec.deps)
+    assert.equal(report.status, 'fallback')
+    assert.ok(!rec.calls.includes('emit:cancel'))
+    const entry = findEntryById(ctx.db, id)
+    assert.notEqual(entry?.stoppedAt, null)
+    assert.match(entry?.description ?? '', /^Sesión Claude/)
+  } finally {
+    ctx.db.close()
+  }
+})
+
 test('a short session with a prompt is summarized, not cancelled', async () => {
   const ctx = await context()
   try {
