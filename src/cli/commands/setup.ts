@@ -18,6 +18,15 @@ import {
   manifest,
   retiredIntegration,
 } from '../../kit/integration.ts'
+import {
+  defaultRcFile,
+  detectShell,
+  installShellFunction,
+  parseShell,
+  rcHasClaudeAlias,
+  removeShellFunction,
+  type ShellName,
+} from '../shell-setup.ts'
 
 export { packageRoot }
 
@@ -35,6 +44,9 @@ const OPTIONS = {
   'no-settings': { type: 'boolean' as const, default: false },
   'no-register': { type: 'boolean' as const, default: false },
   mod: { type: 'boolean' as const, default: false },
+  shell: { type: 'string' as const },
+  'rc-file': { type: 'string' as const },
+  'remove-shell': { type: 'boolean' as const, default: false },
   'no-atlassian': { type: 'boolean' as const, default: false },
   'no-docs-git': { type: 'boolean' as const, default: false },
   'no-drawio': { type: 'boolean' as const, default: false },
@@ -109,13 +121,67 @@ export function codexHooksStale(codexHome: string, editMatcher: string): boolean
   } catch {
     return false
   }
-  const groups = (parsed as { hooks?: Record<string, unknown> } | null)?.hooks?.['PostToolUse']
-  if (!Array.isArray(groups)) return false
-  return groups.some((group) => {
-    const record = group as { matcher?: unknown; hooks?: Array<{ command?: unknown }> }
-    const ours = Array.isArray(record.hooks) && record.hooks.some((hook) => hook.command === 'bita hook codex')
-    return ours && record.matcher !== editMatcher
-  })
+  const hooks = (parsed as { hooks?: Record<string, unknown> } | null)?.hooks
+  const ours = (group: unknown): boolean => {
+    const record = group as { hooks?: Array<{ command?: unknown }> } | null
+    return Array.isArray(record?.hooks) && record.hooks.some((hook) => hook.command === 'bita hook codex')
+  }
+  const groups = (event: string): unknown[] => {
+    const value = hooks?.[event]
+    return Array.isArray(value) ? value : []
+  }
+  if (groups('UserPromptSubmit').some(ours)) return true
+  return groups('PostToolUse').some((group) => ours(group) && (group as { matcher?: unknown }).matcher !== editMatcher)
+}
+
+interface ShellStep {
+  shell: ShellName | null
+  rcFile: string
+  state: 'installed' | 'updated' | 'present' | 'removed' | 'absent'
+  aliasConflict: boolean
+}
+
+function shellRcFile(args: ParsedArgs, shell: ShellName | null): string {
+  const explicit = readString(args, 'rc-file')
+  if (explicit) return explicit
+  if (!shell) throw new UsageError('Pass --shell zsh|bash or --rc-file FILE: the shell could not be told from $SHELL.')
+  return defaultRcFile(shell)
+}
+
+async function removeShellStep(args: ParsedArgs): Promise<ShellStep> {
+  const raw = readString(args, 'shell')
+  const shell = raw === undefined ? detectShell() : parseShell(raw)
+  const rcFile = shellRcFile(args, shell)
+  return { shell, rcFile, state: await removeShellFunction(rcFile), aliasConflict: false }
+}
+
+async function installShellStep(rcFile: string, shell: ShellName): Promise<ShellStep> {
+  const state = await installShellFunction(rcFile, shell)
+  return { shell, rcFile, state, aliasConflict: await rcHasClaudeAlias(rcFile) }
+}
+
+function describeShellStep(step: ShellStep): string {
+  const what = 'the claude function that runs "bita session"'
+  switch (step.state) {
+    case 'installed':
+      return `added ${what} to ${step.rcFile}`
+    case 'updated':
+      return `updated ${what} in ${step.rcFile}`
+    case 'present':
+      return `${what} is already in ${step.rcFile}`
+    case 'removed':
+      return `removed ${what} from ${step.rcFile}`
+    case 'absent':
+      return `${what} is not in ${step.rcFile}`
+  }
+}
+
+const ALIAS_WARNING = 'an "alias claude=" in that file wins over the function; remove it so claude goes through bita session.'
+
+function writeShellStep(step: ShellStep): void {
+  writeOut(`- shell: ${describeShellStep(step)}`)
+  if (step.aliasConflict) writeErr(`Warning: ${ALIAS_WARNING}`)
+  if (step.state === 'installed' || step.state === 'updated') writeOut(`  Open a new terminal or run: source ${step.rcFile}`)
 }
 
 function pluginInPlace(steps: readonly Step[], plugin: string): boolean {
@@ -125,6 +191,18 @@ function pluginInPlace(steps: readonly Step[], plugin: string): boolean {
 export async function runSetup(argv: string[]): Promise<number> {
   const args = parseCommandArgs(argv, OPTIONS, BASE_OPTIONS)
   const json = readBoolean(args, 'json')
+
+  if (readBoolean(args, 'remove-shell')) {
+    const step = await removeShellStep(args)
+    if (json) writeJson(successEnvelope('setup', { shell: step }))
+    else writeShellStep(step)
+    return 0
+  }
+
+  const rawShell = readString(args, 'shell')
+  const shell = rawShell === undefined ? null : parseShell(rawShell)
+  if (shell === null && readString(args, 'rc-file') !== undefined) throw new UsageError('--rc-file goes with --shell or --remove-shell.')
+  const shellRc = shell === null ? null : shellRcFile(args, shell)
   const requested = readAgents(readString(args, 'agents') ?? readString(args, 'target') ?? process.env['BITA_TARGET'])
   const root = packageRoot()
 
@@ -185,8 +263,11 @@ export async function runSetup(argv: string[]): Promise<number> {
     steps.push(...(await kit.agents.installIntegration(wanted, { agents: others, ctx, homes, skipMcp: true, claudeCompat: 'auto' })))
   }
 
+  const shellStep = shell !== null && shellRc !== null ? await installShellStep(shellRc, shell) : null
+  if (shellStep?.aliasConflict) warnings.push(ALIAS_WARNING)
+
   if (json) {
-    writeJson(successEnvelope('setup', { root, agents, registered, steps, movedOut: MOVED_OUT, warnings }))
+    writeJson(successEnvelope('setup', { root, agents, registered, steps, shell: shellStep, movedOut: MOVED_OUT, warnings }))
     return 0
   }
 
@@ -194,6 +275,7 @@ export async function runSetup(argv: string[]): Promise<number> {
   for (const step of steps) {
     writeOut(`${step.state === 'failed' || step.state === 'unavailable' ? '!' : '-'} ${step.agent}: ${step.detail}`)
   }
+  if (shellStep) writeShellStep(shellStep)
   writeOut('')
   writeOut('bita only keeps the time. The rest is installed apart, if you want it:')
   for (const [name, install] of Object.entries(SIBLING_INSTALLS)) writeOut(`  ${name.padEnd(8)}${install}`)

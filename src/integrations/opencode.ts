@@ -4,50 +4,34 @@ interface OpenCodeContext {
   location: { directory: string }
   session: {
     hook(name: 'prompt', callback: (event: { sessionID: string }) => Promise<void>): Promise<unknown>
-    hook(name: 'context', callback: (event: { sessionID: string; system: Array<{ type: 'text'; text: string }> }) => Promise<void>): Promise<unknown>
+    get?(input: { sessionID: string }): Promise<{ parentID?: string | null } | null | undefined>
   }
   tool: {
     hook(name: 'execute.after', callback: (event: { tool: string; input: unknown; result?: unknown }) => Promise<void>): Promise<unknown>
   }
 }
 
-type HookOutput = {
-  hookSpecificOutput?: {
-    additionalContext?: string
-  }
+function flagSet(value: string | undefined): boolean {
+  return value !== undefined && value !== '' && value !== '0'
 }
 
-async function runBita(args: string[], input?: string): Promise<HookOutput | null> {
-  try {
-    const result = await runProcess(process.env['BITA_BIN'] ?? 'bita', args, input)
+function insideWrapper(env: NodeJS.ProcessEnv = process.env): boolean {
+  return flagSet(env['BITA_WRAPPER_ID']) && !flagSet(env['BITA_CHILD'])
+}
+
+function runBita(args: string[], input?: string): Promise<void> {
+  return new Promise((resolve) => {
     try {
-      return JSON.parse(result) as HookOutput
+      const child = spawn(process.env['BITA_BIN'] ?? 'bita', args, { stdio: ['pipe', 'ignore', 'ignore'] })
+      child.once('error', () => resolve())
+      child.once('close', () => resolve())
+      child.stdin.on('error', () => undefined)
+      if (input === undefined) child.stdin.end()
+      else child.stdin.end(input)
     } catch {
-      return null
+      resolve()
     }
-  } catch {
-    return null
-  }
-}
-
-function runProcess(command: string, args: string[], input?: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'ignore'] })
-    const output: Buffer[] = []
-    child.stdout.on('data', (chunk: Buffer) => output.push(chunk))
-    child.once('error', reject)
-    child.once('close', (code) => {
-      if (code === 0) resolve(Buffer.concat(output).toString('utf8'))
-      else reject(new Error(`bita exited with code ${code ?? 'unknown'}`))
-    })
-    if (input === undefined) child.stdin.end()
-    else child.stdin.end(input)
   })
-}
-
-function contextOf(output: HookOutput | null): string | undefined {
-  const context = output?.hookSpecificOutput?.additionalContext
-  return typeof context === 'string' && context.length > 0 ? context : undefined
 }
 
 function filePaths(input: unknown): string[] {
@@ -60,35 +44,19 @@ function filePaths(input: unknown): string[] {
 
 const EDIT_TOOLS = /^(edit|write|patch|multiedit)$/i
 
+async function isSubsession(ctx: OpenCodeContext, sessionID: string): Promise<boolean> {
+  if (typeof ctx.session.get !== 'function') return false
+  try {
+    const info = await ctx.session.get({ sessionID })
+    return typeof info?.parentID === 'string' && info.parentID.length > 0
+  } catch {
+    return false
+  }
+}
+
 export default {
   id: 'bita',
   async setup(ctx: OpenCodeContext) {
-    const started = new Set<string>()
-    const pending = new Map<string, string[]>()
-
-    await ctx.session.hook('prompt', async (event) => {
-      const output = await runBita(['hook', 'prompt-submit'])
-      const context = contextOf(output)
-      if (context) pending.set(event.sessionID, [context])
-    })
-
-    await ctx.session.hook('context', async (event) => {
-      const contexts = pending.get(event.sessionID) ?? []
-      pending.delete(event.sessionID)
-
-      if (!started.has(event.sessionID)) {
-        started.add(event.sessionID)
-        const output = await runBita(['hook', 'session-start'])
-        const context = contextOf(output)
-        if (context) contexts.unshift(context)
-      }
-
-      const checkpoint = contextOf(await runBita(['hook', 'checkpoint']))
-      if (checkpoint) contexts.push(checkpoint)
-
-      for (const text of contexts) event.system.push({ type: 'text', text })
-    })
-
     await ctx.tool.hook('execute.after', async (event) => {
       if (!EDIT_TOOLS.test(event.tool)) return
       for (const file of filePaths(event.input)) {
@@ -96,9 +64,34 @@ export default {
       }
     })
 
+    if (!insideWrapper()) return () => undefined
+
+    const seen = new Set<string>()
+    const children = new Set<string>()
+
+    await ctx.session.hook('prompt', async (event) => {
+      if (seen.has(event.sessionID) || children.has(event.sessionID)) return
+      if (await isSubsession(ctx, event.sessionID)) {
+        children.add(event.sessionID)
+        return
+      }
+      if (seen.has(event.sessionID)) return
+      const source = seen.size === 0 ? 'startup' : 'clear'
+      seen.add(event.sessionID)
+      await runBita(
+        ['hook', 'session-start', '--harness', 'opencode'],
+        JSON.stringify({
+          hook_event_name: 'SessionStart',
+          session_id: event.sessionID,
+          cwd: ctx.location.directory,
+          source,
+        }),
+      )
+    })
+
     return () => {
-      started.clear()
-      pending.clear()
+      seen.clear()
+      children.clear()
     }
   },
 }

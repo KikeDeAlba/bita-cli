@@ -1,4 +1,6 @@
 interface:
   display_name: "bita"
-  short_description: "Lleva el cronómetro del trabajo"
-  default_prompt: "Usa bita para medir el tiempo de este trabajo."
+  short_description: "Referencia del cronómetro de trabajo"
+  default_prompt: "Muéstrame qué cronómetros de bita corren y lo de hoy."
+policy:
+  allow_implicit_invocation: false

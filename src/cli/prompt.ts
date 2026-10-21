@@ -29,6 +29,25 @@ export async function promptConfirm(question: string): Promise<boolean> {
   })
 }
 
+export async function promptLine(question: string): Promise<string | null> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: string | null): void => {
+      if (settled) return
+      settled = true
+      rl.close()
+      resolve(value)
+    }
+    rl.on('SIGINT', () => {
+      process.stderr.write('\n')
+      finish(null)
+    })
+    rl.on('close', () => finish(null))
+    rl.question(question, (answer) => finish(answer.trim()))
+  })
+}
+
 export async function promptText(question: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
   return new Promise((resolve) => {
