@@ -8,6 +8,7 @@ import { test } from 'node:test'
 import type { HarnessAdapter, HarnessId } from '../src/harness/types.ts'
 import type { StartSessionInput } from '../src/domain/session.ts'
 import type { LocalContext } from '../src/cli/local-context.ts'
+import type { SelectOptions } from '../src/cli/select.ts'
 import { UsageError } from '../src/errors.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'bita-session-launch-'))
@@ -54,7 +55,7 @@ interface Spawned {
 interface Harness {
   dbPath: string
   projects: { alpha: number; beta: number }
-  questions: string[]
+  prompts: Prompt[]
   spawned: Spawned[]
   started: StartSessionInput[]
   closed: string[]
@@ -62,8 +63,16 @@ interface Harness {
   run(argv: string[], options?: Partial<RunOptions>): Promise<number>
 }
 
+interface Prompt {
+  title: string
+  labels: string[]
+  initial: number
+}
+
+type Pick = 'initial' | number | null
+
 interface RunOptions {
-  answers: Array<string | null>
+  picks: Pick[]
   adapters: readonly HarnessAdapter[]
   mapped: number | null
   exitCode: number
@@ -97,22 +106,24 @@ function harness(): Harness {
   const state: Harness = {
     dbPath,
     projects: { alpha, beta },
-    questions: [],
+    prompts: [],
     spawned: [],
     started: [],
     closed: [],
     swept: 0,
     async run(argv, options = {}) {
-      const answers = [...(options.answers ?? [])]
+      const picks = [...(options.picks ?? [])]
       return runSessionLaunch(['--db-path', dbPath, ...argv], {
         env: options.env ?? { PATH: '/usr/bin' },
         cwd: dir,
         stdinIsTTY: options.tty ?? true,
         stdoutIsTTY: options.tty ?? true,
         adapters: options.adapters ?? ALL,
-        ask: async (question) => {
-          state.questions.push(question)
-          return answers.length > 0 ? (answers.shift() ?? null) : null
+        select: async <T,>(select: SelectOptions<T>): Promise<T | null> => {
+          state.prompts.push({ title: select.title, labels: select.items.map((item) => item.label), initial: select.initialIndex })
+          const pick = picks.length > 0 ? picks.shift() : null
+          if (pick === null || pick === undefined) return null
+          return select.items[pick === 'initial' ? select.initialIndex : pick]?.value ?? null
         },
         spawnHarness: async (spawnBin, args, env) => {
           state.spawned.push({ bin: spawnBin, args, env })
@@ -147,10 +158,13 @@ test('splitLaunchArgv cuts at the first --', () => {
 
 test('Enter picks Claude and the project mapped to the cwd, and the child gets the session env', async () => {
   const h = harness()
-  const code = await h.run(['--', '-c', 'fix it'], { answers: ['', ''], mapped: h.projects.beta, exitCode: 5, env: { PATH: '/usr/bin', KEEP: 'yes' } })
+  const code = await h.run(['--', '-c', 'fix it'], { picks: ['initial', 'initial'], mapped: h.projects.beta, exitCode: 5, env: { PATH: '/usr/bin', KEEP: 'yes' } })
   assert.equal(code, 5)
   assert.equal(h.swept, 1)
-  assert.deepEqual(h.questions, ['Pick one [1]: ', 'Pick one [2]: '])
+  assert.deepEqual(h.prompts, [
+    { title: 'Harness', labels: ['Claude', 'OpenCode', 'Codex', 'Gemini'], initial: 0 },
+    { title: 'Project', labels: ['No timer', 'Alpha', 'Beta'], initial: 2 },
+  ])
   assert.equal(h.started.length, 1)
   const started = h.started[0]!
   assert.equal(started.harness, 'claude')
@@ -168,10 +182,11 @@ test('Enter picks Claude and the project mapped to the cwd, and the child gets t
   assert.deepEqual(h.closed, [started.wrapperId])
 })
 
-test('an unavailable harness is hidden from the list and the numbers follow what is shown', async () => {
+test('an unavailable harness is hidden from the list', async () => {
   const h = harness()
   const adapters = [fakeAdapter('claude', 'Claude'), fakeAdapter('opencode', 'OpenCode', false), fakeAdapter('codex', 'Codex')]
-  await h.run(['--', 'hola'], { answers: ['2', '1'], adapters })
+  await h.run(['--', 'hola'], { picks: [1, 1], adapters })
+  assert.deepEqual(h.prompts[0]?.labels, ['Claude', 'Codex'])
   assert.equal(h.started[0]?.harness, 'codex')
   assert.equal(h.spawned[0]?.bin, '/fake/codex')
   assert.deepEqual(h.spawned[0]?.args, ['--codex-default', 'hola'])
@@ -180,48 +195,100 @@ test('an unavailable harness is hidden from the list and the numbers follow what
 
 test('a single available harness is not asked for', async () => {
   const h = harness()
-  await h.run([], { answers: ['1'], adapters: [fakeAdapter('claude', 'Claude'), fakeAdapter('codex', 'Codex', false)] })
-  assert.deepEqual(h.questions, ['Pick one: '])
+  await h.run([], { picks: ['initial'], adapters: [fakeAdapter('claude', 'Claude'), fakeAdapter('codex', 'Codex', false)] })
+  assert.deepEqual(h.prompts.map((prompt) => prompt.title), ['Project'])
   assert.equal(h.started[0]?.projectId, h.projects.alpha)
 })
 
-test('the default harness is Claude even when it is not first', async () => {
+test('the cursor starts on Claude even when it is not first', async () => {
   const h = harness()
-  await h.run([], { answers: ['', '0'], adapters: [fakeAdapter('codex', 'Codex'), fakeAdapter('claude', 'Claude')] })
-  assert.equal(h.questions[0], 'Pick one [2]: ')
+  await h.run([], { picks: ['initial', 0], adapters: [fakeAdapter('codex', 'Codex'), fakeAdapter('claude', 'Claude')] })
+  assert.equal(h.prompts[0]?.initial, 1)
   assert.equal(h.spawned[0]?.bin, '/fake/claude')
 })
 
-test('0 launches without a timer and without BITA_* in the env', async () => {
+test('No timer launches without a timer and without BITA_* in the env', async () => {
   const h = harness()
-  const code = await h.run(['--', 'x'], { answers: ['', '0'], mapped: h.projects.alpha, exitCode: 2, env: { PATH: '/usr/bin' } })
+  const code = await h.run(['--', 'x'], { picks: ['initial', 0], mapped: h.projects.alpha, exitCode: 2, env: { PATH: '/usr/bin' } })
   assert.equal(code, 2)
+  assert.equal(h.prompts[1]?.labels[0], 'No timer')
   assert.equal(h.started.length, 0)
   assert.equal(h.closed.length, 0)
   const env = h.spawned[0]!.env
   assert.deepEqual(Object.keys(env).filter((key) => key.startsWith('BITA_')), [])
 })
 
-test('an invalid answer asks again, and without a mapping Enter asks again too', async () => {
+test('without a mapping the project cursor starts on the first project, not on No timer', async () => {
   const h = harness()
-  await h.run([], { answers: ['9', 'x', '3', '', '7', '2'] })
-  assert.deepEqual(h.questions, ['Pick one [1]: ', 'Pick one [1]: ', 'Pick one [1]: ', 'Pick one: ', 'Pick one: ', 'Pick one: '])
-  assert.equal(h.started[0]?.harness, 'codex')
-  assert.equal(h.started[0]?.projectId, h.projects.beta)
-})
-
-test('the archived projects are not offered', async () => {
-  const h = harness()
-  await h.run([], { answers: ['', '3', '1'] })
-  assert.equal(h.questions.length, 3)
+  await h.run([], { picks: ['initial', 'initial'] })
+  assert.equal(h.prompts[1]?.initial, 1)
   assert.equal(h.started[0]?.projectId, h.projects.alpha)
 })
 
-test('EOF or Ctrl+C in a picker exits with 130 and launches nothing', async () => {
+test('a mapping to a project that is not offered falls back to the first project', async () => {
+  const h = harness()
+  await h.run([], { picks: ['initial', 'initial'], mapped: 99_999 })
+  assert.equal(h.prompts[1]?.initial, 1)
+  assert.equal(h.started[0]?.projectId, h.projects.alpha)
+})
+
+test('the archived projects are not offered and the id is the hint', async () => {
+  const h = harness()
+  const seen: Array<string | undefined> = []
+  await runSessionLaunch(['--db-path', h.dbPath], {
+    env: { PATH: '/usr/bin' },
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    adapters: [fakeAdapter('claude', 'Claude')],
+    select: async <T,>(options: SelectOptions<T>): Promise<T | null> => {
+      for (const item of options.items) seen.push(`${item.label}:${item.hint ?? ''}`)
+      return null
+    },
+    spawnHarness: async () => 0,
+    sweepOrphans: async () => [],
+    projectForCwd: async () => null,
+  })
+  assert.deepEqual(seen, ['No timer:', `Alpha:${h.projects.alpha}`, `Beta:${h.projects.beta}`])
+})
+
+test('without projects the cursor stays on No timer and the hint to add one is shown', async () => {
+  const dir = mkdtempSync(join(root, 'empty-'))
+  const prompts: Prompt[] = []
+  const spawned: Spawned[] = []
+  const errors = captureStderr()
+  let code: number
+  try {
+    code = await runSessionLaunch(['--db-path', join(dir, 'bita.db')], {
+      env: { PATH: '/usr/bin' },
+      cwd: dir,
+      ...TTY,
+      adapters: [fakeAdapter('claude', 'Claude')],
+      select: async <T,>(options: SelectOptions<T>): Promise<T | null> => {
+        prompts.push({ title: options.title, labels: options.items.map((item) => item.label), initial: options.initialIndex })
+        return options.items[options.initialIndex]?.value ?? null
+      },
+      spawnHarness: async (spawnBin, args, env) => {
+        spawned.push({ bin: spawnBin, args, env })
+        return 0
+      },
+      sweepOrphans: async () => [],
+      projectForCwd: async () => null,
+    })
+  } finally {
+    errors.restore()
+  }
+  assert.equal(code, 0)
+  assert.deepEqual(prompts, [{ title: 'Project', labels: ['No timer'], initial: 0 }])
+  assert.equal(spawned[0]?.env['BITA_WRAPPER_ID'], undefined)
+  assert.match(errors.text(), /bita project add/)
+})
+
+test('cancelling a picker exits with 130 and launches nothing', async () => {
   const atHarness = harness()
-  assert.equal(await atHarness.run([], { answers: [null] }), 130)
+  assert.equal(await atHarness.run([], { picks: [null] }), 130)
   const atProject = harness()
-  assert.equal(await atProject.run([], { answers: [''] }), 130)
+  assert.equal(await atProject.run([], { picks: ['initial', null] }), 130)
+  assert.equal(atProject.prompts.length, 2)
   for (const h of [atHarness, atProject]) {
     assert.equal(h.spawned.length, 0)
     assert.equal(h.started.length, 0)
@@ -232,7 +299,7 @@ test('EOF or Ctrl+C in a picker exits with 130 and launches nothing', async () =
 test('--harness and --project skip the pickers, and --project 0 skips the timer', async () => {
   const h = harness()
   await h.run(['--harness', 'gemini', '--project', 'Beta'], {})
-  assert.equal(h.questions.length, 0)
+  assert.equal(h.prompts.length, 0)
   assert.equal(h.started[0]?.harness, 'gemini')
   assert.equal(h.started[0]?.projectId, h.projects.beta)
 
@@ -249,14 +316,14 @@ test('--harness and --project skip the pickers, and --project 0 skips the timer'
 
 test('closeWrapper runs even when the spawn fails', async () => {
   const h = harness()
-  await assert.rejects(h.run(['--project', 'Alpha'], { answers: [''], spawnError: new Error('boom') }), /boom/)
+  await assert.rejects(h.run(['--project', 'Alpha'], { picks: ['initial'], spawnError: new Error('boom') }), /boom/)
   assert.equal(h.started.length, 1)
   assert.deepEqual(h.closed, [h.started[0]!.wrapperId])
 })
 
 test('a failing orphan sweep does not stop the launch', async () => {
   const h = harness()
-  const code = await h.run(['--project', 'Alpha'], { answers: [''], sweepError: new Error('stub') })
+  const code = await h.run(['--project', 'Alpha'], { picks: ['initial'], sweepError: new Error('stub') })
   assert.equal(code, 0)
   assert.equal(h.started.length, 1)
 })
@@ -273,7 +340,7 @@ test('a database that cannot be opened still launches the harness, without the t
       stdinIsTTY: true,
       stdoutIsTTY: true,
       adapters: ALL,
-      ask: async () => null,
+      select: async () => null,
       spawnHarness: async (spawnBin, args, env) => {
         h.spawned.push({ bin: spawnBin, args, env })
         return 0
@@ -294,7 +361,7 @@ for (const args of [['--harness', 'gemini'], ['--project', 'Alpha'], []]) {
     const h = harness()
     const errors = captureStderr()
     try {
-      await assert.rejects(h.run(args, { tty: false, answers: ['1'] }), (error: unknown) => {
+      await assert.rejects(h.run(args, { tty: false, picks: [1] }), (error: unknown) => {
         assert.ok(error instanceof UsageError)
         assert.match(error.message, /needs a terminal; pass --harness and --project/)
         return true
@@ -302,7 +369,7 @@ for (const args of [['--harness', 'gemini'], ['--project', 'Alpha'], []]) {
     } finally {
       errors.restore()
     }
-    assert.equal(h.questions.length, 0)
+    assert.equal(h.prompts.length, 0)
     assert.equal(h.spawned.length, 0)
     assert.equal(h.started.length, 0)
     assert.doesNotMatch(errors.text(), /Harness:|Project:|No timer/)
@@ -313,15 +380,15 @@ test('without a terminal, --harness and --project still launch', async () => {
   const h = harness()
   const code = await h.run(['--harness', 'gemini', '--project', 'Alpha'], { tty: false })
   assert.equal(code, 0)
-  assert.equal(h.questions.length, 0)
+  assert.equal(h.prompts.length, 0)
   assert.equal(h.started.length, 1)
 })
 
 test('-- --version with a terminal still asks and passes the flag to the harness', async () => {
   const h = harness()
-  const code = await h.run(['--', '--version'], { answers: ['', '1'] })
+  const code = await h.run(['--', '--version'], { picks: ['initial', 1] })
   assert.equal(code, 0)
-  assert.equal(h.questions.length, 2)
+  assert.equal(h.prompts.length, 2)
   assert.equal(h.started.length, 1)
   assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--version'])
 })
@@ -338,7 +405,7 @@ for (const nested of [{ BITA_WRAPPER_ID: 'outer' }, { BITA_CHILD: '1' }]) {
       errors.restore()
     }
     assert.equal(code, 9)
-    assert.equal(h.questions.length, 0)
+    assert.equal(h.prompts.length, 0)
     assert.equal(h.swept, 0)
     assert.equal(h.started.length, 0)
     assert.equal(h.closed.length, 0)
