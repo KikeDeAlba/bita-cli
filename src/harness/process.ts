@@ -20,6 +20,7 @@ export interface RunResult {
 }
 
 const KILL_GRACE_MS = 2_000
+const EXIT_GRACE_MS = 2_000
 
 export function isExecutable(file: string): boolean {
   try {
@@ -68,16 +69,29 @@ export function runProcess(bin: string, args: readonly string[], options: RunOpt
     let timedOut = false
     let settled = false
     let killer: NodeJS.Timeout | undefined
+    let drain: NodeJS.Timeout | undefined
     const child = spawn(bin, [...args], {
       cwd: options.cwd,
       env: options.env,
       stdio: ['pipe', stdoutFd ?? 'pipe', 'pipe'],
+      detached: true,
     })
+    const killGroup = (signal: NodeJS.Signals) => {
+      if (child.pid === undefined) return
+      try {
+        process.kill(-child.pid, signal)
+      } catch {
+        try {
+          child.kill(signal)
+        } catch {}
+      }
+    }
     const finish = (code: number | null, extra?: string) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       clearTimeout(killer)
+      clearTimeout(drain)
       closeFd()
       let out = Buffer.concat(stdout).toString('utf8')
       if (options.stdoutPath) {
@@ -90,14 +104,22 @@ export function runProcess(bin: string, args: readonly string[], options: RunOpt
     }
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill('SIGTERM')
-      killer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS)
+      killGroup('SIGTERM')
+      killer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS)
       killer.unref()
     }, options.timeoutMs)
     child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk))
     child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk))
     child.once('error', (error) => finish(null, errorMessage(error)))
     child.once('close', (code) => finish(code))
+    child.once('exit', (code) => {
+      drain = setTimeout(() => {
+        killGroup('SIGKILL')
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        finish(code)
+      }, EXIT_GRACE_MS)
+    })
     child.stdin?.on('error', () => {})
     child.stdin?.end(options.input ?? '')
   })
