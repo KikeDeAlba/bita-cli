@@ -13,7 +13,7 @@ import { runReport } from './commands/report.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '1.3.1'
+export const VERSION = '1.4.0'
 
 export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
   jira: 'Jira lives in atl now. Use atl jira … (atl jira --help).',
