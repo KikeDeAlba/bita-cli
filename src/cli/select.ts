@@ -55,7 +55,10 @@ const ESC = '\x1b'
 const HIDE_CURSOR = `${ESC}[?25l`
 const SHOW_CURSOR = `${ESC}[?25h`
 const CLEAR_DOWN = `${ESC}[J`
+const PASTE_MODE_ON = `${ESC}[?2004h`
+const PASTE_MODE_OFF = `${ESC}[?2004l`
 const PASTE_START = '200~'
+const PASTE_OPEN = `${ESC}[${PASTE_START}`
 const PASTE_END = `${ESC}[201~`
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/
 const CONTROLS = /[\x00-\x1f\x7f-\x9f]/g
@@ -258,7 +261,8 @@ export function scanKeys(text: string, final: boolean): Scan {
         continue
       }
       const alt = codePointAt(text, index + 1)
-      if (CONTROL.test(alt)) push({ name: 'escape' }, index + 1)
+      if (alt === '\r') index += 2
+      else if (CONTROL.test(alt)) push({ name: 'escape' }, index + 1)
       else index += 1 + alt.length
       continue
     }
@@ -361,6 +365,7 @@ export function select<T>(options: SelectOptions<T>): Promise<T | null> {
   let state = createState(options.title, options.items, options.initialIndex, pageSizeFor(output.rows))
   let drawnLines = 0
   let pending = ''
+  let paste: string | undefined
   let timer: NodeJS.Timeout | undefined
 
   const erase = (): string => (drawnLines > 1 ? `${ESC}[${drawnLines - 1}A\r${CLEAR_DOWN}` : `\r${CLEAR_DOWN}`)
@@ -387,6 +392,7 @@ export function select<T>(options: SelectOptions<T>): Promise<T | null> {
         () => {
           if (typeof input.setRawMode === 'function') input.setRawMode(wasRaw)
         },
+        () => output.write(PASTE_MODE_OFF),
         () => output.write(SHOW_CURSOR),
         () => input.pause(),
       ]
@@ -437,14 +443,26 @@ export function select<T>(options: SelectOptions<T>): Promise<T | null> {
         }
         state = step
       }
-      pending = scan.rest
-      if (pending !== '') timer = setTimeout(onTimeout, ESCAPE_TIMEOUT_MS)
+      if (scan.rest.startsWith(PASTE_OPEN)) paste = scan.rest.slice(PASTE_OPEN.length)
+      else {
+        pending = scan.rest
+        if (pending !== '') timer = setTimeout(onTimeout, ESCAPE_TIMEOUT_MS)
+      }
       draw()
     }
     const onData = (chunk: Buffer | string): void => {
       try {
         stopTimer()
-        const text = pending + (typeof chunk === 'string' ? chunk : decoder.write(chunk))
+        const decoded = typeof chunk === 'string' ? chunk : decoder.write(chunk)
+        if (paste !== undefined) {
+          const from = Math.max(0, paste.length - PASTE_END.length + 1)
+          paste += decoded
+          if (paste.indexOf(PASTE_END, from) < 0) return
+          const text = PASTE_OPEN + paste
+          paste = undefined
+          return consume(text, false)
+        }
+        const text = pending + decoded
         pending = ''
         consume(text, false)
       } catch (error) {
@@ -470,7 +488,7 @@ export function select<T>(options: SelectOptions<T>): Promise<T | null> {
 
     try {
       if (typeof input.setRawMode === 'function') input.setRawMode(true)
-      output.write(HIDE_CURSOR)
+      output.write(HIDE_CURSOR + PASTE_MODE_ON)
       process.on('SIGTERM', onTerm)
       input.on('data', onData)
       input.on('end', onEnd)

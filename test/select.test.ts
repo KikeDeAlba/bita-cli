@@ -1,9 +1,10 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
 import { PassThrough } from 'node:stream'
-import { test } from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
+import { test, type TestContext } from 'node:test'
+import { setImmediate as flush } from 'node:timers/promises'
 import {
+  ESCAPE_TIMEOUT_MS,
   collapsed,
   createState,
   displayWidth,
@@ -235,6 +236,20 @@ function terminal(options: TerminalOptions = {}): FakeTerminal {
   }
 }
 
+function fakeTimers(t: TestContext): (ms: number) => void {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  return (ms) => t.mock.timers.tick(ms)
+}
+
+function settledFlag(promise: Promise<unknown>): () => boolean {
+  let settled = false
+  promise.then(
+    () => (settled = true),
+    () => (settled = true),
+  )
+  return () => settled
+}
+
 function assertRestored(fake: FakeTerminal): void {
   assert.deepEqual(fake.raw, [true, false])
   assert.equal(fake.stream.isPaused(), true)
@@ -243,8 +258,8 @@ function assertRestored(fake: FakeTerminal): void {
   assert.equal(fake.stream.listenerCount('end'), 0)
   assert.equal(process.listenerCount('SIGTERM'), baseSigterm)
   const output = fake.written()
-  assert.ok(output.startsWith('\x1b[?25l'))
-  assert.ok(output.endsWith('\x1b[?25h'))
+  assert.ok(output.startsWith('\x1b[?25l\x1b[?2004h'))
+  assert.ok(output.endsWith('\x1b[?2004l\x1b[?25h'))
 }
 
 test('select accepts with arrows and Enter, collapses to one line and restores the terminal', async () => {
@@ -254,8 +269,8 @@ test('select accepts with arrows and Enter, collapses to one line and restores t
   fake.send('\r')
   assert.equal(await picked, 'opencode')
   assertRestored(fake)
-  assert.doesNotMatch(fake.written().replace(/\x1b\[(\?25[lh]|\d*A|J)/g, ''), /\x1b/)
-  assert.match(fake.written(), /\x1b\[JHarness: OpenCode\n\x1b\[\?25h$/)
+  assert.doesNotMatch(fake.written().replace(/\x1b\[(\?25[lh]|\?2004[hl]|\d*A|J)/g, ''), /\x1b/)
+  assert.match(fake.written(), /\x1b\[JHarness: OpenCode\n\x1b\[\?2004l\x1b\[\?25h$/)
 })
 
 test('select filters as you type', async () => {
@@ -278,10 +293,13 @@ test('Ctrl+C cancels with null and restores the terminal', async () => {
   assert.doesNotMatch(fake.written(), /Harness: Claude\n/)
 })
 
-test('Esc without a search and EOF also cancel', async () => {
+test('Esc without a search and EOF also cancel', async (t) => {
+  const tick = fakeTimers(t)
   const esc = terminal()
   const viaEsc = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: esc.input, output: esc.output, env: {} })
   esc.send('\x1b')
+  await flush()
+  tick(ESCAPE_TIMEOUT_MS)
   assert.equal(await viaEsc, null)
   assertRestored(esc)
 
@@ -338,13 +356,15 @@ test('scanKeys keeps an incomplete escape sequence for the next chunk', () => {
   assert.deepEqual(parseKeys('\x1b\x03'), [{ name: 'escape' }, { name: 'interrupt' }])
 })
 
-test('an arrow split across chunks moves the cursor instead of cancelling or typing', async () => {
+test('an arrow split across chunks moves the cursor instead of cancelling or typing', async (t) => {
+  const tick = fakeTimers(t)
   const split = terminal()
   const first = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: split.input, output: split.output, env: {} })
   split.send('\x1b')
-  await delay(5)
+  await flush()
+  tick(ESCAPE_TIMEOUT_MS - 1)
   split.send('[B')
-  await delay(5)
+  await flush()
   split.send('\r')
   assert.equal(await first, 'opencode')
   assertRestored(split)
@@ -352,34 +372,47 @@ test('an arrow split across chunks moves the cursor instead of cancelling or typ
   const csi = terminal()
   const second = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: csi.input, output: csi.output, env: { NO_COLOR: '1' } })
   csi.send('\x1b[')
-  await delay(5)
+  await flush()
+  tick(ESCAPE_TIMEOUT_MS - 1)
   csi.send('B')
-  await delay(5)
+  await flush()
   csi.send('\r')
   assert.equal(await second, 'opencode')
   assert.doesNotMatch(csi.written(), /Harness: B▏/)
   assertRestored(csi)
 })
 
-test('Alt+key is ignored and does not cancel', async () => {
+test('Alt+key and Alt+Enter are ignored and do not cancel', async (t) => {
+  const tick = fakeTimers(t)
+  assert.deepEqual(parseKeys('\x1b\r'), [])
+  assert.deepEqual(parseKeys('\x1b\ra'), [{ name: 'char', char: 'a' }])
   const fake = terminal()
   const picked = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  const settled = settledFlag(picked)
   fake.send('\x1bx')
-  await delay(80)
-  fake.send('\r')
-  assert.equal(await picked, 'claude')
+  await flush()
+  fake.send('\x1b\r')
+  await flush()
+  tick(ESCAPE_TIMEOUT_MS * 2)
+  await flush()
+  assert.equal(settled(), false)
+  fake.send('\x1b[B\r')
+  assert.equal(await picked, 'opencode')
   assertRestored(fake)
 })
 
-test('a pending Esc timer is cleared when the picker ends', async () => {
+test('a pending Esc timer is cleared when the picker ends', async (t) => {
+  const tick = fakeTimers(t)
   const fake = terminal()
   const picked = select({ title: 'Harness', items: harnesses, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
-  fake.send('\x1b')
-  await delay(5)
+  fake.send('cod\x1b')
+  await flush()
   fake.stream.end()
   assert.equal(await picked, null)
   const before = fake.written()
-  await delay(80)
+  assert.match(before, /cod▏/)
+  tick(ESCAPE_TIMEOUT_MS * 10)
+  await flush()
   assert.equal(fake.written(), before)
   assert.ok(before.endsWith('\x1b[?25h'))
 })
@@ -427,7 +460,7 @@ test('the window fits the terminal height', async () => {
   const fake = terminal({ rows: 5 })
   const picked = select({ title: 'Project', items: projects, initialIndex: 0, input: fake.input, output: fake.output, env: { NO_COLOR: '1' } })
   fake.send('\x1b[B')
-  await delay(5)
+  await flush()
   fake.send('\r')
   assert.equal(await picked, 'apartados')
   assert.match(fake.written(), /1-2 of 4/)
@@ -488,19 +521,62 @@ test('select treats a multi-line paste as search text', async () => {
   const plain = terminal()
   const first = select({ title: 'Project', items: projects, initialIndex: 0, input: plain.input, output: plain.output, env: {} })
   plain.send('be\nta')
-  await delay(5)
+  await flush()
   plain.send('\r')
   assert.equal(await first, 'beta')
 
   const bracketed = terminal()
   const second = select({ title: 'Project', items: projects, initialIndex: 0, input: bracketed.input, output: bracketed.output, env: {} })
   bracketed.send('\x1b[200~apar')
-  await delay(5)
+  await flush()
   bracketed.send('\ntados\x1b[201~')
-  await delay(5)
+  await flush()
   bracketed.send('\r')
   assert.equal(await second, 'apartados')
   assert.match(bracketed.written(), /apartados▏/)
+})
+
+test('a paste split in three chunks with a line break inside filters and does not accept', async (t) => {
+  fakeTimers(t)
+  const fake = terminal()
+  const picked = select({ title: 'Project', items: projects, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  const settled = settledFlag(picked)
+  fake.send('\x1b[200~ap')
+  await flush()
+  fake.send('\nart')
+  await flush()
+  fake.send('ados\x1b[201~')
+  await flush()
+  assert.equal(settled(), false)
+  assert.match(fake.written(), /apartados▏/)
+  assert.doesNotMatch(fake.written(), /ap▏|apart▏/)
+  fake.send('\r')
+  assert.equal(await picked, 'apartados')
+  assertRestored(fake)
+})
+
+test('a paste still open after the Esc timeout is not flushed early', async (t) => {
+  const tick = fakeTimers(t)
+  const fake = terminal()
+  const picked = select({ title: 'Project', items: projects, initialIndex: 0, input: fake.input, output: fake.output, env: {} })
+  const settled = settledFlag(picked)
+  fake.send('\x1b[200~be')
+  await flush()
+  tick(ESCAPE_TIMEOUT_MS * 10)
+  await flush()
+  assert.equal(settled(), false)
+  assert.doesNotMatch(fake.written(), /be▏/)
+  fake.send('ta\x1b[20')
+  await flush()
+  tick(ESCAPE_TIMEOUT_MS * 10)
+  await flush()
+  assert.doesNotMatch(fake.written(), /be▏|beta▏/)
+  fake.send('1~')
+  await flush()
+  assert.match(fake.written(), /beta▏/)
+  fake.send('\r')
+  assert.equal(await picked, 'beta')
+  assertRestored(fake)
 })
 
 test('control characters are stripped from the title, labels and hints', () => {
