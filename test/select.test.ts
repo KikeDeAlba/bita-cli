@@ -281,3 +281,24 @@ test('two pickers in a row each get their keys', async () => {
   assert.equal(fake.stream.listenerCount('data'), 0)
   assert.equal(fake.stream.isPaused(), true)
 })
+
+test('SIGTERM during the picker restores the terminal, then re-raises the signal', async () => {
+  const fake = terminal()
+  const kills: Array<[number, string | number | undefined]> = []
+  const realKill = process.kill
+  process.kill = ((pid: number, signal?: string | number) => {
+    kills.push([pid, signal])
+    return true
+  }) as typeof process.kill
+  try {
+    const picked = select({ title: 'Project', items: projects, initialIndex: 1, input: fake.input, output: fake.output, env: {} })
+    assert.equal(process.listenerCount('SIGTERM'), baseSigterm + 1)
+    assert.deepEqual(fake.raw, [true])
+    process.emit('SIGTERM')
+    assert.equal(await picked, null)
+    assertRestored(fake)
+    assert.deepEqual(kills, [[process.pid, 'SIGTERM']])
+  } finally {
+    process.kill = realKill
+  }
+})
