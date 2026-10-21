@@ -245,8 +245,20 @@ interface Prepared {
   databasePath: string
 }
 
+async function prepareWithoutDatabase(args: ParsedArgs, deps: LaunchDeps, error: unknown): Promise<Prepared | null> {
+  writeErr(`bita: could not open the database, launching without the timer: ${errorMessage(error)}`)
+  const harness = await pickHarness(deps, readString(args, 'harness'))
+  if ('interrupted' in harness) return null
+  return { adapter: harness.value, project: null, entryId: null, databasePath: '' }
+}
+
 async function prepare(args: ParsedArgs, deps: LaunchDeps, wrapperId: string): Promise<Prepared | null> {
-  const ctx = createLocalContext(args)
+  let ctx: LocalContext
+  try {
+    ctx = createLocalContext(args)
+  } catch (error) {
+    return prepareWithoutDatabase(args, deps, error)
+  }
   try {
     try {
       await deps.sweepOrphans(ctx)
@@ -300,7 +312,9 @@ async function closeSession(args: ParsedArgs, deps: LaunchDeps, wrapperId: strin
 }
 
 export async function runSessionLaunch(argv: string[], overrides: Partial<LaunchDeps> = {}): Promise<number> {
-  const deps: LaunchDeps = { ...defaultDeps(), ...overrides }
+  const given: LaunchDeps = { ...defaultDeps(), ...overrides }
+  const interactive = given.stdinIsTTY && given.stdoutIsTTY
+  const deps: LaunchDeps = interactive ? given : { ...given, ask: async () => null }
   const { own, harnessArgs } = splitLaunchArgv(argv)
   const args = parseCommandArgs(own, LAUNCH_OPTIONS, BASE_OPTIONS)
   if (args.positionals.length > 0) {
@@ -314,7 +328,10 @@ export async function runSessionLaunch(argv: string[], overrides: Partial<Launch
 
   const wrapperId = randomUUID()
   const prepared = await prepare(args, deps, wrapperId)
-  if (!prepared) return EXIT_INTERRUPTED
+  if (!prepared) {
+    if (!interactive) writeErr('bita: picking a harness or project needs a terminal; pass --harness and --project, or run the harness directly.')
+    return EXIT_INTERRUPTED
+  }
 
   const { adapter, project, entryId, databasePath } = prepared
   const plan = adapter.launchArgs(harnessArgs)

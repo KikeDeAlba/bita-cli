@@ -72,6 +72,16 @@ interface RunOptions {
   tty: boolean
 }
 
+function captureStderr(): { text(): string; restore(): void } {
+  const chunks: string[] = []
+  const original = process.stderr.write.bind(process.stderr)
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    chunks.push(String(chunk))
+    return true
+  }) as typeof process.stderr.write
+  return { text: () => chunks.join(''), restore: () => void (process.stderr.write = original) }
+}
+
 function harness(): Harness {
   const dir = mkdtempSync(join(root, 'case-'))
   const dbPath = join(dir, 'bita.db')
@@ -278,6 +288,49 @@ test('a failing orphan sweep does not stop the launch', async () => {
   const code = await h.run(['--project', 'Alpha'], { answers: [''], sweepError: new Error('stub') })
   assert.equal(code, 0)
   assert.equal(h.started.length, 1)
+})
+
+test('a database that cannot be opened still launches the harness, without the timer', async () => {
+  const h = harness()
+  const broken = mkdtempSync(join(root, 'broken-db-'))
+  const errors = captureStderr()
+  let code: number
+  try {
+    code = await runSessionLaunch(['--db-path', broken, '--harness', 'codex', '--', 'hola'], {
+      env: { PATH: '/usr/bin' },
+      cwd: broken,
+      stdinIsTTY: true,
+      stdoutIsTTY: true,
+      adapters: ALL,
+      ask: async () => null,
+      spawnHarness: async (spawnBin, args, env) => {
+        h.spawned.push({ bin: spawnBin, args, env })
+        return 0
+      },
+    })
+  } finally {
+    errors.restore()
+  }
+  assert.equal(code, 0)
+  assert.equal(h.spawned[0]?.bin, '/fake/codex')
+  assert.deepEqual(h.spawned[0]?.args, ['--codex-default', 'hola'])
+  assert.equal(h.spawned[0]?.env['BITA_WRAPPER_ID'], undefined)
+  assert.match(errors.text(), /could not open the database, launching without the timer/)
+})
+
+test('a picker without a terminal does not read stdin and says why it stopped', async () => {
+  const h = harness()
+  const errors = captureStderr()
+  let code: number
+  try {
+    code = await h.run(['--harness', 'gemini'], { tty: false, answers: ['1'] })
+  } finally {
+    errors.restore()
+  }
+  assert.equal(code, 130)
+  assert.equal(h.questions.length, 0)
+  assert.equal(h.spawned.length, 0)
+  assert.match(errors.text(), /needs a terminal; pass --harness and --project/)
 })
 
 test('passthrough runs claude with the args and env as they came, without the DB', async () => {
