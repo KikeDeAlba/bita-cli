@@ -1,4 +1,4 @@
-export type EntrySource = 'timer' | 'manual' | 'import'
+export type EntrySource = 'timer' | 'manual' | 'import' | 'session'
 
 export interface ProjectRow {
   id: number

@@ -1,5 +1,2 @@
 
 export const SCHEMA_VERSION = 3
-
-export const CHECKPOINT_STALE_MINUTES = 45
-export const CHECKPOINT_TOUCH_THRESHOLD = 3

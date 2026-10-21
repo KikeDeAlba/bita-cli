@@ -12,7 +12,7 @@ import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { renderTable } from '../table.ts'
 import { enrichEntry } from '../../domain/enrich.ts'
 import { formatDuration } from '../../domain/duration.ts'
-import { parseClockTime, parseDurationSeconds } from '../../domain/duration-input.ts'
+import { parseClockTime, parseDurationSeconds, parseInstant } from '../../domain/duration-input.ts'
 import type { EnrichedTimeEntry } from '../../domain/types.ts'
 import {
   countRunning,
@@ -147,7 +147,7 @@ export async function runStart(argv: string[]): Promise<number> {
     const projectId = await resolveProjectId(ctx, args, json)
     const isDraft = title.length === 0
     const at = readString(args, 'at')
-    const startedAt = at === undefined ? ctx.now.toISOString() : parseClockTime(at, ctx.now, '--at').toISOString()
+    const startedAt = at === undefined ? ctx.now.toISOString() : parseInstant(at, ctx.now, '--at').toISOString()
 
     const alreadyRunning = listRunning(ctx.db)
     const created = insertEntry(ctx.db, {
@@ -218,7 +218,8 @@ export async function runStop(argv: string[]): Promise<number> {
 
     const targets = await chooseTargets(ctx, args, running, json)
     const at = readString(args, 'at')
-    const stoppedAt = at === undefined ? ctx.now.toISOString() : parseClockTime(at, ctx.now, '--at').toISOString()
+    const stoppedAt = at === undefined ? ctx.now.toISOString() : parseInstant(at, ctx.now, '--at').toISOString()
+    if (at !== undefined) assertStopInstant(stoppedAt, targets, ctx.now)
     const stopped: EnrichedTimeEntry[] = []
     const payloads: HookPayload[] = []
     let hooksFired = 0
@@ -255,6 +256,17 @@ export async function runStop(argv: string[]): Promise<number> {
   } finally {
     ctx.db.close()
   }
+}
+
+const STOP_FUTURE_TOLERANCE_MS = 60_000
+
+function assertStopInstant(stoppedAt: string, targets: readonly EntryWithProjectRow[], now: Date): void {
+  const stopMs = Date.parse(stoppedAt)
+  if (stopMs > now.getTime() + STOP_FUTURE_TOLERANCE_MS) {
+    throw new UsageError(`--at ${stoppedAt} is in the future.`)
+  }
+  const early = targets.find((target) => stopMs < Date.parse(target.startedAt))
+  if (early) throw new UsageError(`--at ${stoppedAt} is before #${early.id} started (${early.startedAt}).`)
 }
 
 async function unmappedRepoSuggestions(
