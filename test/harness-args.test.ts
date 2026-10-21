@@ -90,6 +90,31 @@ test('unknown flags are dropped with one warning each and consume their values',
   }
 })
 
+test('every claude flag that takes a value consumes it instead of becoming the prompt', () => {
+  const valued = [
+    ['--effort', 'high'],
+    ['--name', 'my session'],
+    ['-n', 'other'],
+    ['--plugin-dir', '/tmp/plugin'],
+    ['--permission-prompts', 'self'],
+    ['--setting-sources', 'user'],
+    ['--json-schema', '{}'],
+    ['--max-budget-usd', '5'],
+    ['--tools', 'Bash'],
+    ['--disallowed-tools', 'Edit'],
+    ['--system-prompt-snapshot', 'off'],
+    ['--debug-file', '/tmp/d.log'],
+  ]
+  for (const id of ['codex', 'gemini', 'opencode'] as const) {
+    const result = plan(id, [...valued.flat(), 'real prompt'])
+    for (const [flag, value] of valued) {
+      assert.ok(!result.args.some((arg) => arg.includes(value as string)), `${id} kept the value of ${flag}`)
+    }
+    assert.ok(result.args.some((arg) => arg.includes('real prompt')), id)
+    assert.equal(result.warnings.length, valued.length, id)
+  }
+})
+
 test('tokens after a literal -- are positional', () => {
   assert.deepEqual(plan('codex', ['--', '-c', 'texto']).args, ['--dangerously-bypass-approvals-and-sandbox', '-c texto'])
 })
