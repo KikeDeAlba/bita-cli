@@ -172,7 +172,7 @@ function describeShellStep(step: ShellStep): string {
     case 'removed':
       return `removed ${what} from ${step.rcFile}`
     case 'absent':
-      return `${step.rcFile} has no ${what}`
+      return `${what} is not in ${step.rcFile}`
   }
 }
 
