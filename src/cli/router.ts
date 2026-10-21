@@ -169,7 +169,8 @@ Setup options:
   --no-settings              Skip Claude settings changes
   --no-register              Skip registering bita for the other tools
   --mod                      Also install the bita-timer plugin for Claude Code (the timer band)
-                             setup also removes the claude shell function of bita 1.4.0 from ~/.zshrc and ~/.bashrc
+
+  setup also removes the claude shell function of bita 1.4.0 from ~/.zshrc, $ZDOTDIR/.zshrc and ~/.bashrc
 `
 
 function assertNoMovedFlags(command: string, rest: readonly string[]): void {

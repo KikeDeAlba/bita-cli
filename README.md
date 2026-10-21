@@ -317,8 +317,9 @@ secas no abren selectores ni arrancan cronómetro.
 > **Si vienes de 1.4.0.** Esa versión instalaba con `bita setup --shell` una
 > función `claude` en `~/.zshrc` o `~/.bashrc`. Ya no existe: `bita setup`
 > borra ese bloque (`# >>> bita session >>>` … `# <<< bita session <<<`) de
-> `$ZDOTDIR/.zshrc` (o `~/.zshrc`) y de `~/.bashrc`, y lo dice solo si borró
-> algo. Abre una terminal nueva para que `claude` vuelva a ser el binario.
+> `~/.zshrc`, de `$ZDOTDIR/.zshrc` si está definido y de `~/.bashrc`, y lo dice
+> solo si borró algo. Si un archivo no se puede escribir, avisa y sigue con los
+> demás. Abre una terminal nueva para que `claude` vuelva a ser el binario.
 
 ### El flujo
 
@@ -344,8 +345,8 @@ sin cronómetro.
 
 ### Flags por agente
 
-Los argumentos tras `--` son los de Claude. Con otro
-agente, bita los traduce; lo que no tiene equivalente se descarta con un aviso
+Los argumentos tras `--` son los de Claude. Con otro agente, bita los traduce;
+lo que no tiene equivalente se descarta con un aviso
 (`bita: <Agente> has no equivalent for <flag>; dropped.`).
 
 | Agente | Flag por defecto | `-c` / `--continue` | `-r` / `--resume [id]` | Prompt |
