@@ -2,7 +2,7 @@
 name: bita
 description: >-
   Referencia de bita, el cronómetro de trabajo: qué corre, bloques olvidados,
-  correcciones y consultas. Las sesiones las cronometra `bita session`, no el
+  correcciones y consultas. Las sesiones las cronometra `bita work`, no el
   agente.
 disable-model-invocation: true
 ---
@@ -18,9 +18,8 @@ Jira, atl habla con Jira y Confluence, recap graba reuniones. Si falta una,
 
 ## Las sesiones se cronometran solas
 
-El agente no arranca, parte ni para cronómetros. Lo hace `bita session`, que
-envuelve al harness (la función de shell `claude` que instala
-`bita setup --shell zsh`):
+El agente no arranca, parte ni para cronómetros. Lo hace `bita work` (alias
+`bita session`), que envuelve al harness; `claude` a secas no cronometra:
 
 1. Pregunta el harness y el proyecto, y arranca una entrada en blanco.
 2. Lanza la sesión. Con `/clear` o `/resume` cierra la entrada y abre otra del

@@ -27,5 +27,5 @@ preguntarme: remapear cambia a dónde van las horas.
 El tablero de Jira lo mapea tally (`tally map set <projectId> <JIRAKEY>`): si
 está instalado y el proyecto no tiene tablero, ofrécelo.
 
-Cierra en una línea: desde la próxima `bita session` en ese repo, el selector
+Cierra en una línea: desde la próxima `bita work` en ese repo, el selector
 propone ese proyecto.
