@@ -43,7 +43,13 @@ function snapshots(db: DatabaseSync, now: Date): RunningSnapshot[] {
   }))
 }
 
-export async function runTouched(file: string, dbPath = databasePath()): Promise<TouchedResult> {
+export interface TouchedOptions {
+  dbPath?: string
+  preferredEntryId?: number | null
+}
+
+export async function runTouched(file: string, options: TouchedOptions = {}): Promise<TouchedResult> {
+  const dbPath = options.dbPath ?? databasePath()
   const absolute = resolve(file)
   const projectId = await projectForFile(absolute)
   const now = new Date()
