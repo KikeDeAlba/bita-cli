@@ -109,13 +109,17 @@ export function codexHooksStale(codexHome: string, editMatcher: string): boolean
   } catch {
     return false
   }
-  const groups = (parsed as { hooks?: Record<string, unknown> } | null)?.hooks?.['PostToolUse']
-  if (!Array.isArray(groups)) return false
-  return groups.some((group) => {
-    const record = group as { matcher?: unknown; hooks?: Array<{ command?: unknown }> }
-    const ours = Array.isArray(record.hooks) && record.hooks.some((hook) => hook.command === 'bita hook codex')
-    return ours && record.matcher !== editMatcher
-  })
+  const hooks = (parsed as { hooks?: Record<string, unknown> } | null)?.hooks
+  const ours = (group: unknown): boolean => {
+    const record = group as { hooks?: Array<{ command?: unknown }> } | null
+    return Array.isArray(record?.hooks) && record.hooks.some((hook) => hook.command === 'bita hook codex')
+  }
+  const groups = (event: string): unknown[] => {
+    const value = hooks?.[event]
+    return Array.isArray(value) ? value : []
+  }
+  if (groups('UserPromptSubmit').some(ours)) return true
+  return groups('PostToolUse').some((group) => ours(group) && (group as { matcher?: unknown }).matcher !== editMatcher)
 }
 
 function pluginInPlace(steps: readonly Step[], plugin: string): boolean {

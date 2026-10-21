@@ -1,9 +1,10 @@
 ---
 name: bita
 description: >-
-  Cronómetro de trabajo con bita: arrancar, parar, ver qué corre, registrar
-  bloques olvidados y corregir entradas. Frases: "arranca el tiempo", "para el
-  cronómetro", "cuánto llevo", "qué trabajé hoy".
+  Referencia de bita, el cronómetro de trabajo: qué corre, bloques olvidados,
+  correcciones y consultas. Las sesiones las cronometra `bita session`, no el
+  agente.
+disable-model-invocation: true
 ---
 
 # bita
@@ -11,23 +12,24 @@ description: >-
 bita es el cronómetro y nada más; su registro local es la fuente de la verdad de
 las horas (nunca las estimes desde commits). Todo es local: consultar no cuesta.
 
-Quién hace qué: inkwell documenta (notas y páginas), tally vuelca las horas a Jira, atl habla con Jira y Confluence, recap graba reuniones.
+Quién hace qué: inkwell documenta (notas y páginas), tally vuelca las horas a
+Jira, atl habla con Jira y Confluence, recap graba reuniones. Si falta una,
+`bita doctor` dice cuáles están y cómo instalarlas.
 
-Si falta una de esas herramientas, no improvises su trabajo con bita: `bita doctor`
-dice cuáles están y cómo instalarlas.
+## Las sesiones se cronometran solas
 
-## El contador nace en blanco
+El agente no arranca, parte ni para cronómetros. Lo hace `bita session`, que
+envuelve al harness (la función de shell `claude` que instala
+`bita setup --shell zsh`):
 
-Lo normal es arrancar con `/bita-start` antes del encargo: planear también es
-trabajo. El contador queda sin título ni proyecto, y rellenarlo es tarea tuya
-**en cuanto un mensaje diga en qué se trabaja, antes de explorar o planear**:
+1. Pregunta el harness y el proyecto, y arranca una entrada en blanco.
+2. Lanza la sesión. Con `/clear` o `/resume` cierra la entrada y abre otra del
+   mismo proyecto.
+3. Al cerrar la sesión, el mismo harness rellena el título, el tipo y la nota de
+   inkwell a partir del transcript, y la entrada se para con la hora exacta.
 
-```
-bita amend --draft --title "<titulo corto>" --project <nombre o id>
-```
-
-El hook de bita lo recuerda en cada prompt mientras siga sin título. El título
-identifica la entrada y tally lo usa para agrupar: corto y reconocible.
+Los archivos que se editan durante la sesión quedan ligados a su entrada. Nunca
+crean, parten ni paran entradas.
 
 ## Un repo no es un proyecto
 
@@ -40,18 +42,12 @@ bita scope list | set <prefijo|.> <id> | unset <prefijo|.>
 bita repo init [ruta] [--name "…"]   crear el proyecto de un repo y mapearlo
 ```
 
-Enseña el prefijo antes de guardarlo: uno ancho (`vivaaerobus`) se traga toda la
-organización. A qué tablero de Jira van las horas es `tally map`, no bita.
+Un prefijo ancho (`vivaaerobus`) se traga toda la organización. A qué tablero de
+Jira van las horas es `tally map`, no bita.
 
-## Cuándo proponerlo
+## Cronómetros a mano
 
-Por la forma del resultado: propón cronómetro si la sesión va a dejar un
-artefacto (commit, archivo, despliegue, migración, MR, causa raíz). No para
-explicar, leer, buscar o comparar. Si el trabajo entra en un worktree, propónlo.
-Hazlo justo antes de la primera edición, una vez por tema y en una línea. Si
-dice que no, no insistas. **Nunca arranques sin un sí explícito.**
-
-## Arrancar y parar
+Para lo que no pasa por una sesión (reuniones, trabajo fuera del agente):
 
 ```
 bita start ["<título>"] [--at 09:30] [--project X]
@@ -61,22 +57,9 @@ bita cancel <id>                     descarta uno que no debió arrancar
 ```
 
 El proyecto sale del repo mapeado; si no lo está, el CLI falla con
-`REPO_NOT_MAPPED` y dice cómo arreglarlo. Pueden correr varios a la vez:
-
-1. Cambia el proyecto → otro cronómetro (equivocarse manda horas a otro tablero).
-2. Mismo proyecto, tema distinto de ≥20 min → otro.
-3. Mismo tema, o interrupción de menos de ~10 min → déjalo correr.
-
-Solo cuenta el tiempo atendido. Con más de uno corriendo, pasa siempre el id a
-`stop` (sin id falla con `AMBIGUOUS_TIMER`).
-
-**Antes de parar** (si no es reunión):
-
-1. Deja la nota de la entrada al día con inkwell. Cómo se escribe:
-   `inkwell guide entry-notes`.
-2. `bita project repo suggest <id> --json` y, por cada raíz sin mapear que de
-   verdad sea del proyecto, `bita project repo add <path> --project <X> --source stop`.
-   Lo que se tocó de paso no se mapea. Ante la duda, fuera.
+`REPO_NOT_MAPPED` y dice cómo arreglarlo. Con más de uno corriendo, `stop` pide
+el id (sin id falla con `AMBIGUOUS_TIMER`). `/bita-start` y `/bita-stop` envuelven
+estos comandos.
 
 ## Reuniones
 
@@ -86,10 +69,9 @@ bita start "<título>" --kind in-person-meeting   # presencial
 bita amend <id> --kind remote-meeting|in-person-meeting|none
 ```
 
-Si no se sabe si es remota o presencial, pregunta solo eso. Los eventos de bita
-hacen que recap grabe; si `meta.hooksFired` es 0, nadie graba: dilo. Al parar
-una reunión no documentes: `bita stop <id> --json` y luego
-`recap wait --bita-entry <id> --json`; lo demás es de recap y su skill.
+Los eventos de bita hacen que recap grabe; si `meta.hooksFired` es 0, nadie
+graba. Al parar una reunión, `recap wait --bita-entry <id> --json` espera la
+minuta.
 
 ## Bloques que ya pasaron
 
@@ -98,9 +80,8 @@ bita log "<título>" --from HH:MM --to HH:MM
 bita log "<título>" --from HH:MM --for 1h30m
 ```
 
-Si falta la hora de inicio o la duración, pregunta: acaba como worklog con hora
-real en Jira. Enseña en una línea lo que vas a registrar y espera un sí. Si pisa
-horas registradas, dilo.
+El bloque acaba como worklog con hora real en Jira: la hora de inicio y la
+duración tienen que ser las reales. `/bita-log` lo registra.
 
 ## Corregir, unir y borrar
 
@@ -112,9 +93,9 @@ bita delete <ids...> --dry-run       luego --yes
 
 - `amend` dispara el evento que inkwell usa para renombrar o mover la nota.
 - `merge` une entradas paradas que eran un mismo trabajo en una sola, con cada
-  bloque como segmento. Enseña el `--dry-run` y pide confirmación.
-- `delete` no se deshace: enseña el `--dry-run` y espera un sí. Si ya se volcó a
-  Jira, el worklog sigue allá (eso lo sabe tally).
+  bloque como segmento.
+- `delete` no se deshace. Si ya se volcó a Jira, el worklog sigue allá (eso lo
+  sabe tally).
 
 ## Consultar
 
@@ -126,5 +107,5 @@ bita entries get <id> --json         una entrada con sus bloques
 bita report week --json              horas por proyecto, día y semana [--project X] [--entries]
 ```
 
-Usa siempre `--brief` (id, título, proyecto, inicio, fin, segundos). Volcar a
-Jira no es de bita: es la skill de tally.
+`--brief` deja solo id, título, proyecto, inicio, fin y segundos. Volcar a Jira
+no es de bita: es de tally.
