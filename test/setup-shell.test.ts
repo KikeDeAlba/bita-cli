@@ -1,7 +1,7 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
@@ -45,6 +45,8 @@ test('the rc files follow ZDOTDIR for zsh and HOME for bash', () => {
   assert.equal(defaultRcFile('zsh', { HOME: '/h', ZDOTDIR: '/z' }), '/z/.zshrc')
   assert.equal(defaultRcFile('bash', { HOME: '/h', ZDOTDIR: '/z' }), '/h/.bashrc')
   assert.deepEqual(legacyRcFiles({ HOME: '/h' }), ['/h/.zshrc', '/h/.bashrc'])
+  assert.deepEqual(legacyRcFiles({ HOME: '/h', ZDOTDIR: '/z' }), ['/z/.zshrc', '/h/.zshrc', '/h/.bashrc'])
+  assert.deepEqual(legacyRcFiles({ HOME: '/h', ZDOTDIR: '/h' }), ['/h/.zshrc', '/h/.bashrc'])
   assert.equal(displayPath('/h/.zshrc', { HOME: '/h' }), '~/.zshrc')
   assert.equal(displayPath('/z/.zshrc', { HOME: '/h' }), '/z/.zshrc')
 })
@@ -53,6 +55,64 @@ test('remove drops only the block and keeps the rest of the rc', async () => {
   const path = rc(`export A=1\n${LEGACY_BLOCK}export B=2\n`)
   assert.equal(await removeShellFunction(path), 'removed')
   assert.equal(readFileSync(path, 'utf8'), 'export A=1\nexport B=2\n')
+})
+
+test('every block in the rc is removed and reported once', async () => {
+  const path = rc(`export A=1\n${LEGACY_BLOCK}export B=2\n${LEGACY_BLOCK}export C=3\n`)
+  assert.equal(await removeShellFunction(path), 'removed')
+  assert.equal(readFileSync(path, 'utf8'), 'export A=1\nexport B=2\nexport C=3\n')
+  const again = rc(`${LEGACY_BLOCK}${LEGACY_BLOCK}`)
+  const cleanup = await removeLegacyShellFunctions([again])
+  assert.deepEqual(cleanup.removed, [again])
+  assert.equal(readFileSync(again, 'utf8'), '')
+})
+
+test('markers count only on a line of their own', async () => {
+  const foreign = [
+    'echo "# >>> bita session >>> note"',
+    'export KEEP=1',
+    '  # <<< bita session <<< indented',
+    '',
+  ].join('\n')
+  const path = rc(`${foreign}${LEGACY_BLOCK}export B=2\n`)
+  assert.equal(await removeShellFunction(path), 'removed')
+  assert.equal(readFileSync(path, 'utf8'), `${foreign}export B=2\n`)
+
+  const onlyForeign = rc(foreign)
+  assert.equal(await removeShellFunction(onlyForeign), 'absent')
+  assert.equal(readFileSync(onlyForeign, 'utf8'), foreign)
+
+  const trailing = rc(`${SHELL_BLOCK_START}  \nfunction claude { old; }\n${SHELL_BLOCK_END}\t\nexport B=2\n`)
+  assert.equal(await removeShellFunction(trailing), 'removed')
+  assert.equal(readFileSync(trailing, 'utf8'), 'export B=2\n')
+})
+
+test('an unterminated block after a valid one leaves the whole rc untouched', async () => {
+  const content = `${LEGACY_BLOCK}export A=1\n${SHELL_BLOCK_START}\nfunction claude { old; }\n`
+  const path = rc(content)
+  await assert.rejects(removeShellFunction(path), /left untouched/)
+  assert.equal(readFileSync(path, 'utf8'), content)
+})
+
+test('an rc that cannot be read or written is reported and the next one is still cleaned', async () => {
+  const dir = mkdtempSync(join(root, 'unwritable-'))
+  const asDirectory = join(dir, 'dir-rc')
+  mkdirSync(asDirectory)
+  const readOnly = join(dir, 'ro-rc')
+  writeFileSync(readOnly, LEGACY_BLOCK, 'utf8')
+  chmodSync(readOnly, 0o444)
+  const fine = rc(`${LEGACY_BLOCK}export B=2\n`)
+  try {
+    const cleanup = await removeLegacyShellFunctions([asDirectory, readOnly, fine])
+    assert.deepEqual(cleanup.removed, [fine])
+    assert.equal(cleanup.errors.length, 2)
+    assert.match(cleanup.errors[0]!, new RegExp(`${asDirectory}: .*EISDIR`))
+    assert.match(cleanup.errors[1]!, new RegExp(`${readOnly}: .*EACCES`))
+    assert.equal(readFileSync(fine, 'utf8'), 'export B=2\n')
+    assert.equal(readFileSync(readOnly, 'utf8'), LEGACY_BLOCK)
+  } finally {
+    chmodSync(readOnly, 0o644)
+  }
 })
 
 test('without a block nothing is touched', async () => {
@@ -94,10 +154,12 @@ function sandboxEnv(dir: string): NodeJS.ProcessEnv {
   }
 }
 
-function setup(dir: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const run = spawnSync(process.execPath, [bin, 'setup', '--target', 'claude', '--no-settings', '--no-register', ...args], {
+function setup(dir: string, ...args: Array<string | NodeJS.ProcessEnv>): { status: number | null; stdout: string; stderr: string } {
+  const flags = args.filter((arg): arg is string => typeof arg === 'string')
+  const extraEnv = args.find((arg): arg is NodeJS.ProcessEnv => typeof arg !== 'string') ?? {}
+  const run = spawnSync(process.execPath, [bin, 'setup', '--target', 'claude', '--no-settings', '--no-register', ...flags], {
     cwd: dir,
-    env: sandboxEnv(dir),
+    env: { ...sandboxEnv(dir), ...extraEnv },
     encoding: 'utf8',
   })
   return { status: run.status, stdout: run.stdout, stderr: run.stderr }
@@ -149,6 +211,31 @@ test('setup warns about an unterminated block and leaves it alone', () => {
   assert.equal(run.status, 0, run.stderr)
   assert.match(run.stderr, /without "# <<< bita session <<<"; it was left untouched/)
   assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), content)
+})
+
+test('setup cleans both $ZDOTDIR/.zshrc and ~/.zshrc', () => {
+  const dir = mkdtempSync(join(root, 'setup-zdotdir-'))
+  const home = homeWith(dir, { '.zshrc': `${LEGACY_BLOCK}export H=1\n` })
+  const zdotdir = join(dir, 'zdot')
+  mkdirSync(zdotdir)
+  writeFileSync(join(zdotdir, '.zshrc'), `${LEGACY_BLOCK}export Z=1\n`, 'utf8')
+  const run = setup(dir, '--json', { ZDOTDIR: zdotdir })
+  assert.equal(run.status, 0, run.stderr)
+  assert.deepEqual(jsonData(run.stdout)['shell'], { removed: [join(zdotdir, '.zshrc'), join(home, '.zshrc')] })
+  assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), 'export H=1\n')
+  assert.equal(readFileSync(join(zdotdir, '.zshrc'), 'utf8'), 'export Z=1\n')
+})
+
+test('setup warns about an rc it cannot write, cleans the rest and finishes', () => {
+  const dir = mkdtempSync(join(root, 'setup-unwritable-'))
+  const home = homeWith(dir, { '.bashrc': `${LEGACY_BLOCK}export B=2\n` })
+  mkdirSync(join(home, '.zshrc'))
+  const run = setup(dir)
+  assert.equal(run.status, 0, run.stderr)
+  assert.match(run.stderr, /Warning: could not remove the claude shell function from .*\.zshrc: .*EISDIR/)
+  assert.match(run.stdout, /- shell: removed the claude wrapper from ~\/\.bashrc/)
+  assert.match(run.stdout, /Next:/)
+  assert.equal(readFileSync(join(home, '.bashrc'), 'utf8'), 'export B=2\n')
 })
 
 test('setup no longer takes --shell, --rc-file or --remove-shell', () => {

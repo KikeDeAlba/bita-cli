@@ -18,7 +18,7 @@ export function defaultRcFile(shell: ShellName, env: NodeJS.ProcessEnv = process
 }
 
 export function legacyRcFiles(env: NodeJS.ProcessEnv = process.env): string[] {
-  return [...new Set([defaultRcFile('zsh', env), defaultRcFile('bash', env)])]
+  return [...new Set([defaultRcFile('zsh', env), join(home(env), '.zshrc'), defaultRcFile('bash', env)])]
 }
 
 export function displayPath(path: string, env: NodeJS.ProcessEnv = process.env): string {
@@ -35,32 +35,35 @@ async function readRc(rc: string): Promise<string> {
   }
 }
 
-interface BlockRange {
-  start: number
-  end: number
-}
+const BLOCK_START = /^# >>> bita session >>>[ \t]*$/m
+const BLOCK_END = /^# <<< bita session <<<[ \t]*$/m
 
-function findBlock(rc: string, content: string): BlockRange | null {
-  const start = content.indexOf(SHELL_BLOCK_START)
-  if (start === -1) return null
-  const endMarker = content.indexOf(SHELL_BLOCK_END, start)
-  if (endMarker === -1) {
-    throw new ConflictError(
-      `${rc} has "${SHELL_BLOCK_START}" without "${SHELL_BLOCK_END}"; it was left untouched.`,
-      'SHELL_BLOCK_UNTERMINATED',
-      `Remove the claude function of bita 1.4.0 from ${rc} by hand, or add "${SHELL_BLOCK_END}" after it and run setup again.`,
-    )
+function stripBlocks(rc: string, content: string): string | null {
+  let remaining = content
+  let changed = false
+  for (;;) {
+    const start = BLOCK_START.exec(remaining)
+    if (!start) return changed ? remaining : null
+    const afterStart = start.index + start[0].length
+    const end = BLOCK_END.exec(remaining.slice(afterStart))
+    if (!end) {
+      throw new ConflictError(
+        `${rc} has "${SHELL_BLOCK_START}" without "${SHELL_BLOCK_END}"; it was left untouched.`,
+        'SHELL_BLOCK_UNTERMINATED',
+        `Remove the claude function of bita 1.4.0 from ${rc} by hand, or add "${SHELL_BLOCK_END}" after it and run setup again.`,
+      )
+    }
+    let cut = afterStart + end.index + end[0].length
+    if (remaining[cut] === '\n') cut += 1
+    remaining = `${remaining.slice(0, start.index)}${remaining.slice(cut)}`
+    changed = true
   }
-  let end = endMarker + SHELL_BLOCK_END.length
-  if (content[end] === '\n') end += 1
-  return { start, end }
 }
 
 export async function removeShellFunction(rc: string): Promise<'removed' | 'absent'> {
-  const content = await readRc(rc)
-  const range = findBlock(rc, content)
-  if (!range) return 'absent'
-  await writeFile(rc, `${content.slice(0, range.start)}${content.slice(range.end)}`, 'utf8')
+  const stripped = stripBlocks(rc, await readRc(rc))
+  if (stripped === null) return 'absent'
+  await writeFile(rc, stripped, 'utf8')
   return 'removed'
 }
 
@@ -75,8 +78,8 @@ export async function removeLegacyShellFunctions(rcFiles: readonly string[] = le
     try {
       if ((await removeShellFunction(rc)) === 'removed') result.removed.push(rc)
     } catch (error) {
-      if (!(error instanceof ConflictError)) throw error
-      result.errors.push(error.hint ? `${error.message} ${error.hint}` : error.message)
+      if (error instanceof ConflictError) result.errors.push(error.hint ? `${error.message} ${error.hint}` : error.message)
+      else result.errors.push(`could not remove the claude shell function from ${rc}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   return result
