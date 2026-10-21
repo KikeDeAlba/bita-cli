@@ -1,47 +1,36 @@
 export interface RunningSnapshot {
   id: number
   projectId: number | null
-  isDraft: boolean
-  elapsedSeconds: number
 }
 
 export type AttachDecision =
   | { kind: 'record'; entryId: number }
-  | { kind: 'assign'; entryId: number; projectId: number }
-  | { kind: 'split'; stopEntryId: number; projectId: number }
-  | { kind: 'ignore'; reason: 'no-timer' | 'unknown-project' | 'too-short' }
+  | { kind: 'ignore'; reason: 'no-timer' | 'unknown-project' }
 
 export interface AttachInput {
   running: readonly RunningSnapshot[]
   projectId: number | null
-  wrote: boolean
-  minSplitSeconds: number
+  preferredEntryId: number | null
 }
 
 export function decideAttachment(input: AttachInput): AttachDecision {
-  const { running, projectId, wrote, minSplitSeconds } = input
+  const { running, projectId, preferredEntryId } = input
+
+  if (preferredEntryId !== null) {
+    const preferred = running.find((entry) => entry.id === preferredEntryId)
+    if (preferred) return { kind: 'record', entryId: preferred.id }
+  }
 
   const oldest = running[0]
   if (!oldest) return { kind: 'ignore', reason: 'no-timer' }
 
-  if (projectId === null) {
-    return wrote ? { kind: 'record', entryId: oldest.id } : { kind: 'ignore', reason: 'unknown-project' }
-  }
+  if (projectId === null) return { kind: 'record', entryId: oldest.id }
 
   const sameProject = running.find((entry) => entry.projectId === projectId)
   if (sameProject) return { kind: 'record', entryId: sameProject.id }
 
   const unassigned = running.find((entry) => entry.projectId === null)
-  if (unassigned) return { kind: 'assign', entryId: unassigned.id, projectId }
+  if (unassigned) return { kind: 'record', entryId: unassigned.id }
 
-  if (!wrote) return { kind: 'ignore', reason: 'unknown-project' }
-
-  const current = running[running.length - 1]
-  if (!current) return { kind: 'ignore', reason: 'no-timer' }
-
-  if (current.elapsedSeconds < minSplitSeconds) {
-    return { kind: 'record', entryId: current.id }
-  }
-
-  return { kind: 'split', stopEntryId: current.id, projectId }
+  return { kind: 'ignore', reason: 'unknown-project' }
 }
