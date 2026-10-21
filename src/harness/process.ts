@@ -43,7 +43,7 @@ export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): 
 
 export function resolveHarnessBin(envVar: string, name: string, env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env[envVar]
-  if (override && isExecutable(override)) return override
+  if (override) return isExecutable(override) ? override : null
   return findOnPath(name, env)
 }
 
