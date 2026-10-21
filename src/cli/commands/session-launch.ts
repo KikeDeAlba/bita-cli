@@ -5,9 +5,9 @@ import { UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readString, type ParsedArgs } from '../args.ts'
 import { createLocalContext, type LocalContext } from '../local-context.ts'
 import { writeErr } from '../output.ts'
-import { promptLine } from '../prompt.ts'
 import { resolveProjectArg } from '../project-arg.ts'
 import { resolveMappedProject } from '../resolve-project.ts'
+import { select } from '../select.ts'
 import { currentRepoIdentity } from './repo.ts'
 import { listProjects } from '../../db/projects.ts'
 import { findCheckoutProject } from '../../db/project-repos.ts'
@@ -40,7 +40,7 @@ export interface LaunchDeps {
   stdinIsTTY: boolean
   stdoutIsTTY: boolean
   adapters: readonly HarnessAdapter[]
-  ask(question: string): Promise<string | null>
+  select: typeof select
   spawnHarness(bin: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number>
   startEntry: typeof startSessionEntry
   closeWrapper: typeof closeWrapper
@@ -110,7 +110,7 @@ function defaultDeps(): LaunchDeps {
     stdinIsTTY: process.stdin.isTTY === true,
     stdoutIsTTY: process.stdout.isTTY === true,
     adapters: listAdapters(),
-    ask: promptLine,
+    select,
     spawnHarness,
     startEntry: startSessionEntry,
     closeWrapper,
@@ -143,19 +143,13 @@ async function pickHarness(deps: LaunchDeps, requested: string | undefined): Pro
   if (available.length === 1) return { value: only }
 
   const fallback = available.find((adapter) => adapter.id === 'claude') ?? only
-  const defaultIndex = available.indexOf(fallback) + 1
   requireTerminal(deps)
-  writeErr('Harness:')
-  for (const [index, adapter] of available.entries()) writeErr(`  ${index + 1}. ${adapter.label}`)
-  for (;;) {
-    const answer = await deps.ask(`Pick one [${defaultIndex}]: `)
-    if (answer === null) return { interrupted: true }
-    if (answer === '') return { value: fallback }
-    const picked = Number(answer)
-    const adapter = Number.isInteger(picked) && picked >= 1 ? available[picked - 1] : undefined
-    if (adapter) return { value: adapter }
-    writeErr(`Pick a number from 1 to ${available.length}.`)
-  }
+  const picked = await deps.select({
+    title: 'Harness',
+    items: available.map((adapter) => ({ label: adapter.label, value: adapter })),
+    initialIndex: available.indexOf(fallback),
+  })
+  return picked === null ? { interrupted: true } : { value: picked }
 }
 
 async function pickProject(
@@ -177,22 +171,18 @@ async function pickProject(
     mapped = null
   }
   const mappedIndex = mapped === null ? -1 : projects.findIndex((project) => project.id === mapped)
-  const defaultChoice = mappedIndex >= 0 ? mappedIndex + 1 : projects.length === 0 ? 0 : null
+  const initialIndex = mappedIndex >= 0 ? mappedIndex + 1 : projects.length > 0 ? 1 : 0
 
-  writeErr('Project:')
-  writeErr('  0. No timer')
-  for (const [index, project] of projects.entries()) writeErr(`  ${index + 1}. ${project.name} (${project.id})`)
   if (projects.length === 0) writeErr('No projects yet; create one with: bita project add "<name>"')
-  const question = defaultChoice === null ? 'Pick one: ' : `Pick one [${defaultChoice}]: `
-  for (;;) {
-    const answer = await deps.ask(question)
-    if (answer === null) return { interrupted: true }
-    const picked = answer === '' ? defaultChoice : Number(answer)
-    if (picked === 0) return { value: null }
-    const project = picked !== null && Number.isInteger(picked) && picked >= 1 ? projects[picked - 1] : undefined
-    if (project) return { value: project }
-    writeErr(`Pick a number from 0 to ${projects.length}.`)
-  }
+  const picked = await deps.select<{ project: ProjectRow | null }>({
+    title: 'Project',
+    items: [
+      { label: 'No timer', value: { project: null } },
+      ...projects.map((project) => ({ label: project.name, hint: String(project.id), value: { project } })),
+    ],
+    initialIndex,
+  })
+  return picked === null ? { interrupted: true } : { value: picked.project }
 }
 
 interface Prepared {
