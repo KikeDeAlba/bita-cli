@@ -215,9 +215,7 @@ bita scope set . <projectId>
 ```
 
 Con el repositorio mapeado, `bita session` preselecciona su proyecto en el
-selector (ver [Sesiones](#sesiones)) y el hook `touched` asigna proyecto a los
-borradores según el primer archivo que se cambia. bita ya no le pide nada al
-agente.
+selector (ver [Sesiones](#sesiones)). bita ya no le pide nada al agente.
 
 ## Uso
 
@@ -250,7 +248,7 @@ Eso crea un borrador, que se rellena después:
 | Qué | Quién lo pone |
 |---|---|
 | Título | Tú, con `bita amend --draft` (o `/bita-amend`) |
-| Proyecto | Tú, o el hook `touched` por el primer archivo que se cambia en un repo mapeado |
+| Proyecto | Tú, con `bita amend --draft --project` |
 | Archivos tocados | El hook `touched`, en cada edición |
 
 ```sh
