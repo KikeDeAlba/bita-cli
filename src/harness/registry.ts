@@ -1,11 +1,17 @@
+import { claudeAdapter } from './claude.ts'
+import { codexAdapter } from './codex.ts'
+import { geminiAdapter } from './gemini.ts'
+import { opencodeAdapter } from './opencode.ts'
 import { HARNESS_IDS, type HarnessAdapter, type HarnessId } from './types.ts'
 
 export function listAdapters(): readonly HarnessAdapter[] {
-  return []
+  return [claudeAdapter, opencodeAdapter, codexAdapter, geminiAdapter]
 }
 
 export function getAdapter(id: HarnessId): HarnessAdapter {
-  throw new Error(`not implemented: ${id}`)
+  const adapter = listAdapters().find((candidate) => candidate.id === id)
+  if (!adapter) throw new Error(`unknown harness: ${id}`)
+  return adapter
 }
 
 export function isHarnessId(value: unknown): value is HarnessId {
