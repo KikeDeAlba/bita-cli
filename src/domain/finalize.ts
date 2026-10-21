@@ -40,11 +40,14 @@ export interface FinalizeDeps {
   writeNote: NoteWriter
   emit: (ctx: LocalContext, payloads: readonly HookPayload[]) => Promise<number>
   log: (line: string) => Promise<void>
+  summaryTimeoutMs: number
+  summaryGraceMs: number
 }
 
 const LEASE_MS = 10 * 60_000
 const CANCEL_UNDER_SECONDS = 60
 const SUMMARY_TIMEOUT_MS = 180_000
+const SUMMARY_GRACE_MS = 15_000
 
 const HARNESS_LABELS: Readonly<Record<HarnessId, string>> = {
   claude: 'Claude',
@@ -57,6 +60,14 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} did not finish within ${ms} ms`)), ms)
+  })
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer))
+}
+
 function report(entryId: number, status: FinalizeStatus, extra: Partial<FinalizeReport> = {}): FinalizeReport {
   return { entryId, status, title: null, kind: null, notesWritten: 0, error: null, ...extra }
 }
@@ -67,6 +78,8 @@ function defaultDeps(ctx: LocalContext): FinalizeDeps {
     writeNote: writeEntryNote,
     emit: emitHooks,
     log: async (line) => appendHookLog(ctx.databasePath, line),
+    summaryTimeoutMs: SUMMARY_TIMEOUT_MS,
+    summaryGraceMs: SUMMARY_GRACE_MS,
   }
 }
 
@@ -213,7 +226,8 @@ export async function finalizeEntry(ctx: LocalContext, entryId: number, override
 
     if (adapter && turns.length > 0) {
       try {
-        const result = await adapter.summarize({
+        const hardLimitMs = deps.summaryTimeoutMs + deps.summaryGraceMs
+        const result = await withDeadline(adapter.summarize({
           turns,
           meta: {
             harness: row.harness,
@@ -226,8 +240,8 @@ export async function finalizeEntry(ctx: LocalContext, entryId: number, override
           },
           kinds: knownKinds(ctx, config),
           model: summaryModel(config, row.harness),
-          timeoutMs: SUMMARY_TIMEOUT_MS,
-        })
+          timeoutMs: deps.summaryTimeoutMs,
+        }), hardLimitMs, 'summary')
         if (result.ok) summary = result.summary
         else failure = result.error
       } catch (error) {

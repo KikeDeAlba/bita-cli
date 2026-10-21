@@ -186,6 +186,26 @@ test('an orphan whose end is unknown is stopped with a fallback title, never can
   }
 })
 
+test('a summary that never settles hits the hard deadline and falls back', async () => {
+  const ctx = await context()
+  try {
+    const id = await sessionEntry(ctx, 30, 5)
+    const rec = recorder()
+    const base = rec.deps.getAdapter
+    rec.deps.getAdapter = (harness) => ({ ...base!(harness), summarize: () => new Promise<SummaryResult>(() => undefined) })
+    rec.deps.summaryTimeoutMs = 20
+    rec.deps.summaryGraceMs = 30
+    const started = Date.now()
+    const report = await finalizeEntry(ctx, id, rec.deps)
+    assert.ok(Date.now() - started < 2_000)
+    assert.equal(report.status, 'fallback')
+    assert.match(report.error ?? '', /summary did not finish within 50 ms/)
+    assert.notEqual(findEntryById(ctx.db, id)?.stoppedAt, null)
+  } finally {
+    ctx.db.close()
+  }
+})
+
 test('a short session with a prompt is summarized, not cancelled', async () => {
   const ctx = await context()
   try {
