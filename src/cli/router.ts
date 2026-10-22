@@ -13,7 +13,7 @@ import { runReport } from './commands/report.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
 
-export const VERSION = '1.6.0'
+export const VERSION = '1.7.0'
 
 export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
   jira: 'Jira lives in atl now. Use atl jira … (atl jira --help).',
@@ -86,6 +86,9 @@ Sessions:
   work [--harness ID] [--project ID|NAME|0] [-- ARGS...]
                              Pick a harness and a project, start a timer and launch the agent;
                              the timer stops and gets its title when the session ends
+  work --resume [ENTRY_ID] [--harness ID] [--project ID|NAME|0] [-- ARGS...]
+                             Pick a finished session of this directory (or the one of ENTRY_ID)
+                             and reopen it in its harness, with a new entry on its project
   session [-- ARGS...]       Alias of work
   session finalize <id>      Fill and stop the entry of a finished session (run by the hooks)
 
