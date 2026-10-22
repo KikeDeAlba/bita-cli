@@ -203,3 +203,77 @@ export function completeFinalize(
       .run(toUtcIso(nowIso), outcome, error, entryId).changes > 0
   )
 }
+
+export interface ResumableSession {
+  rowId: number
+  entryId: number
+  harness: HarnessId
+  sessionId: string
+  cwd: string
+  startedAt: string
+  endedAt: string
+  description: string
+  projectId: number | null
+  projectName: string | null
+}
+
+interface RawResumableSession {
+  id: number
+  entry_id: number
+  harness: string
+  session_id: string
+  cwd: string
+  started_at: string
+  ended_at: string
+  description: string
+  project_id: number | null
+  project_name: string | null
+}
+
+function toResumable(raw: RawResumableSession): ResumableSession {
+  return {
+    rowId: raw.id,
+    entryId: raw.entry_id,
+    harness: raw.harness as HarnessId,
+    sessionId: raw.session_id,
+    cwd: raw.cwd,
+    startedAt: raw.started_at,
+    endedAt: raw.ended_at,
+    description: raw.description,
+    projectId: raw.project_id,
+    projectName: raw.project_name,
+  }
+}
+
+const RESUMABLE_SELECT = `SELECT s.id, s.entry_id, s.harness, s.session_id, s.cwd, s.started_at, s.ended_at,
+         e.description, e.project_id, p.name AS project_name
+       FROM entry_sessions s
+       JOIN entries e ON e.id = s.entry_id
+       LEFT JOIN projects p ON p.id = e.project_id`
+
+export function listResumableSessions(db: DatabaseSync, cwd: string, limit = 50): ResumableSession[] {
+  return queryAll<RawResumableSession>(
+    db.prepare(
+      `${RESUMABLE_SELECT}
+       WHERE s.cwd = ? AND s.session_id IS NOT NULL AND s.ended_at IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM entry_sessions later
+           WHERE later.harness = s.harness AND later.session_id = s.session_id
+             AND later.ended_at IS NOT NULL
+             AND (later.started_at > s.started_at OR (later.started_at = s.started_at AND later.id > s.id))
+         )
+       ORDER BY s.started_at DESC, s.id DESC
+       LIMIT ?`,
+    ),
+    cwd,
+    limit,
+  ).map(toResumable)
+}
+
+export function findResumableByEntry(db: DatabaseSync, entryId: number): ResumableSession | undefined {
+  const raw = queryOne<RawResumableSession>(
+    db.prepare(`${RESUMABLE_SELECT} WHERE s.entry_id = ? AND s.session_id IS NOT NULL AND s.ended_at IS NOT NULL`),
+    entryId,
+  )
+  return raw ? toResumable(raw) : undefined
+}

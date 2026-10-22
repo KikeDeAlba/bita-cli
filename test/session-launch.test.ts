@@ -24,6 +24,8 @@ const { openDatabase } = await import('../src/db/open.ts')
 const { insertProject, setProjectActive } = await import('../src/db/projects.ts')
 const { upsertProjectRepo } = await import('../src/db/project-repos.ts')
 const { createLocalContext } = await import('../src/cli/local-context.ts')
+const { insertEntry } = await import('../src/db/entries.ts')
+const { insertEntrySession, linkSession, markSessionEnded } = await import('../src/db/sessions.ts')
 
 const bin = join(import.meta.dirname, '..', 'src', 'bin', 'bita.ts')
 const TTY = { stdinIsTTY: true, stdoutIsTTY: true }
@@ -50,9 +52,11 @@ interface Spawned {
   bin: string
   args: readonly string[]
   env: NodeJS.ProcessEnv
+  cwd?: string | undefined
 }
 
 interface Harness {
+  dir: string
   dbPath: string
   projects: { alpha: number; beta: number }
   prompts: Prompt[]
@@ -104,6 +108,7 @@ function harness(): Harness {
   db.close()
 
   const state: Harness = {
+    dir,
     dbPath,
     projects: { alpha, beta },
     prompts: [],
@@ -125,8 +130,8 @@ function harness(): Harness {
           if (pick === null || pick === undefined) return null
           return select.items[pick === 'initial' ? select.initialIndex : pick]?.value ?? null
         },
-        spawnHarness: async (spawnBin, args, env) => {
-          state.spawned.push({ bin: spawnBin, args, env })
+        spawnHarness: async (spawnBin, args, env, spawnCwd) => {
+          state.spawned.push(spawnCwd === undefined ? { bin: spawnBin, args, env } : { bin: spawnBin, args, env, cwd: spawnCwd })
           if (options.spawnError) throw options.spawnError
           return options.exitCode ?? 0
         },
@@ -515,4 +520,310 @@ test('the wrapper forwards SIGTERM to the agent and exits with its code', async 
   assert.ok(existsSync(ready), 'the fake claude never started')
   child.kill('SIGTERM')
   assert.equal(await exited, 42)
+})
+
+interface SeedOptions {
+  harness?: HarnessId
+  sessionId?: string | null
+  cwd: string
+  projectId?: number | null
+  description?: string
+  startedAt?: string
+  ended?: boolean
+}
+
+let seedCounter = 0
+
+function seed(dbPath: string, options: SeedOptions): { entryId: number; rowId: number } {
+  const db = openDatabase(dbPath)
+  try {
+    seedCounter += 1
+    const startedAt = options.startedAt ?? '2026-09-16T16:00:00Z'
+    const entry = insertEntry(db, {
+      description: options.description ?? `work ${seedCounter}`,
+      projectId: options.projectId === undefined ? null : options.projectId,
+      startedAt,
+      stoppedAt: startedAt,
+      source: 'session',
+      now: startedAt,
+    })
+    const row = insertEntrySession(db, {
+      entryId: entry.id,
+      wrapperId: `wrapper-${seedCounter}`,
+      wrapperPid: 1,
+      harness: options.harness ?? 'claude',
+      cwd: options.cwd,
+      startedAt,
+    })
+    const sessionId = options.sessionId === undefined ? `sess-${seedCounter}` : options.sessionId
+    if (sessionId !== null) linkSession(db, row.id, sessionId, null)
+    if (options.ended !== false) markSessionEnded(db, row.id, startedAt, 'exit')
+    return { entryId: entry.id, rowId: row.id }
+  } finally {
+    db.close()
+  }
+}
+
+test('--resume lists the sessions of the cwd, newest first, with title and hint', async () => {
+  const h = harness()
+  seed(h.dbPath, { cwd: h.dir, sessionId: 'old', description: 'older task', projectId: h.projects.alpha, startedAt: '2026-09-15T16:00:00Z' })
+  const newer = seed(h.dbPath, { cwd: h.dir, sessionId: 'new', description: '', projectId: null, startedAt: '2026-09-16T16:00:00Z' })
+  seed(h.dbPath, { cwd: join(h.dir, 'elsewhere'), sessionId: 'other', description: 'other dir' })
+  const hints: string[] = []
+  const code = await runSessionLaunch(['--db-path', h.dbPath, '--resume'], {
+    env: { PATH: '/usr/bin' },
+    cwd: h.dir,
+    ...TTY,
+    adapters: ALL,
+    select: async <T,>(options: SelectOptions<T>): Promise<T | null> => {
+      h.prompts.push({ title: options.title, labels: options.items.map((item) => item.label), initial: options.initialIndex })
+      for (const item of options.items) hints.push(item.hint ?? '')
+      return null
+    },
+    spawnHarness: async () => 0,
+    sweepOrphans: async () => [],
+  })
+  assert.equal(code, 130)
+  assert.deepEqual(h.prompts, [{ title: 'Resume session', labels: ['(untitled)', 'older task'], initial: 0 }])
+  assert.equal(hints[0], `#${newer.entryId} · No project · Claude · 2026-09-16`)
+  assert.match(hints[1] ?? '', /^#\d+ · Alpha · Claude · 2026-09-15$/)
+})
+
+test('--resume picks a session and relaunches its harness in its cwd with a new entry on its project', async () => {
+  const h = harness()
+  seed(h.dbPath, { cwd: h.dir, harness: 'codex', sessionId: 'abc-123', projectId: h.projects.beta, description: 'ship it' })
+  const code = await h.run(['--resume', '--', 'keep going'], { picks: [0], exitCode: 4 })
+  assert.equal(code, 4)
+  assert.deepEqual(h.prompts.map((prompt) => prompt.title), ['Resume session'])
+  assert.equal(h.spawned.length, 1)
+  assert.equal(h.spawned[0]?.bin, '/fake/codex')
+  assert.deepEqual(h.spawned[0]?.args, ['--codex-default', '--resume', 'abc-123', 'keep going'])
+  assert.equal(h.spawned[0]?.cwd, h.dir)
+  assert.equal(h.started.length, 1)
+  assert.equal(h.started[0]?.harness, 'codex')
+  assert.equal(h.started[0]?.projectId, h.projects.beta)
+  assert.equal(h.started[0]?.cwd, h.dir)
+  assert.equal(h.spawned[0]?.env['BITA_SESSION_PROJECT'], String(h.projects.beta))
+  assert.deepEqual(h.closed, [h.started[0]!.wrapperId])
+})
+
+test('--resume ENTRY_ID resumes without a terminal and runs in the stored cwd even from another directory', async () => {
+  const h = harness()
+  const stored = mkdtempSync(join(root, 'stored-'))
+  const picked = seed(h.dbPath, { cwd: stored, harness: 'claude', sessionId: 'sid-1', projectId: h.projects.alpha })
+  const code = await h.run(['--resume', String(picked.entryId)], { tty: false })
+  assert.equal(code, 0)
+  assert.equal(h.prompts.length, 0)
+  assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--resume', 'sid-1'])
+  assert.equal(h.spawned[0]?.cwd, stored)
+  assert.equal(h.started[0]?.projectId, h.projects.alpha)
+  assert.equal(h.started[0]?.cwd, stored)
+})
+
+test('--resume accepts the entry id before the flag too', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-2', projectId: h.projects.alpha })
+  await h.run([String(picked.entryId), '--resume'], { tty: false })
+  assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--resume', 'sid-2'])
+})
+
+test('--resume with --project overrides the project and --project 0 skips the timer', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-3', projectId: h.projects.alpha })
+  await h.run(['--resume', String(picked.entryId), '--project', 'Beta'], { tty: false })
+  assert.equal(h.started[0]?.projectId, h.projects.beta)
+  assert.equal(h.prompts.length, 0)
+
+  const none = harness()
+  const other = seed(none.dbPath, { cwd: none.dir, sessionId: 'sid-4', projectId: none.projects.alpha })
+  const code = await none.run(['--resume', String(other.entryId), '--project', '0'], { tty: false, exitCode: 6 })
+  assert.equal(code, 6)
+  assert.equal(none.started.length, 0)
+  assert.equal(none.closed.length, 0)
+  assert.deepEqual(none.spawned[0]?.args, ['--claude-default', '--resume', 'sid-4'])
+  assert.equal(none.spawned[0]?.cwd, none.dir)
+  assert.deepEqual(Object.keys(none.spawned[0]!.env).filter((key) => key.startsWith('BITA_')), [])
+})
+
+test('--resume of an entry without project asks for the project', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-5', projectId: null })
+  const code = await h.run(['--resume', String(picked.entryId)], { picks: ['initial'] })
+  assert.equal(code, 0)
+  assert.deepEqual(h.prompts.map((prompt) => prompt.title), ['Project'])
+})
+
+test('--resume with a different --harness is a usage error, the same one is fine', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: h.dir, harness: 'claude', sessionId: 'sid-6', projectId: h.projects.alpha })
+  await assert.rejects(h.run(['--resume', String(picked.entryId), '--harness', 'codex'], { tty: false }), (error: unknown) => {
+    assert.ok(error instanceof UsageError)
+    assert.match(error.message, /is a claude session/)
+    return true
+  })
+  assert.equal(h.spawned.length, 0)
+  assert.equal(h.started.length, 0)
+  await h.run(['--resume', String(picked.entryId), '--harness', 'claude'], { tty: false })
+  assert.equal(h.spawned.length, 1)
+})
+
+test('--resume fails when the harness of the session is not installed', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: h.dir, harness: 'codex', sessionId: 'sid-7', projectId: h.projects.alpha })
+  const adapters = [fakeAdapter('claude', 'Claude'), fakeAdapter('codex', 'Codex', false)]
+  await assert.rejects(h.run(['--resume', String(picked.entryId)], { tty: false, adapters }), /codex harness is not installed/)
+  assert.equal(h.spawned.length, 0)
+})
+
+for (const flags of [['-r', 'x'], ['--resume', 'x'], ['-c'], ['--continue']]) {
+  test(`--resume rejects the resume flag ${flags.join(' ')} after --`, async () => {
+    const h = harness()
+    const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-8', projectId: h.projects.alpha })
+    await assert.rejects(h.run(['--resume', String(picked.entryId), '--', ...flags], { tty: false }), (error: unknown) => {
+      assert.ok(error instanceof UsageError)
+      assert.match(error.message, /already picks the session/)
+      return true
+    })
+    assert.equal(h.spawned.length, 0)
+    assert.equal(h.started.length, 0)
+  })
+}
+
+test('--resume without a terminal and without an id is a usage error', async () => {
+  const h = harness()
+  seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-9', projectId: h.projects.alpha })
+  await assert.rejects(h.run(['--resume'], { tty: false }), (error: unknown) => {
+    assert.ok(error instanceof UsageError)
+    assert.match(error.message, /bita work --resume ENTRY_ID/)
+    return true
+  })
+  assert.equal(h.prompts.length, 0)
+  assert.equal(h.spawned.length, 0)
+})
+
+test('--resume without sessions in the cwd is a usage error', async () => {
+  const h = harness()
+  seed(h.dbPath, { cwd: join(h.dir, 'elsewhere'), sessionId: 'sid-10', projectId: h.projects.alpha })
+  await assert.rejects(h.run(['--resume'], {}), (error: unknown) => {
+    assert.ok(error instanceof UsageError)
+    assert.match(error.message, /No sessions to resume/)
+    return true
+  })
+  assert.equal(h.prompts.length, 0)
+  assert.equal(h.spawned.length, 0)
+})
+
+test('--resume ENTRY_ID that is unknown, open or without session id is a usage error', async () => {
+  const h = harness()
+  const open = seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-11', ended: false })
+  const unlinked = seed(h.dbPath, { cwd: h.dir, sessionId: null })
+  for (const id of [open.entryId, unlinked.entryId, 99_999]) {
+    await assert.rejects(h.run(['--resume', String(id)], { tty: false }), (error: unknown) => {
+      assert.ok(error instanceof UsageError)
+      assert.match(error.message, /no finished harness session to resume/)
+      return true
+    })
+  }
+  assert.equal(h.spawned.length, 0)
+})
+
+for (const bad of ['abc', '0', '-3', '1.5', '12x']) {
+  test(`--resume rejects the invalid id ${bad}`, async () => {
+    const h = harness()
+    await assert.rejects(h.run(['--resume', bad], { tty: false }), UsageError)
+    assert.equal(h.spawned.length, 0)
+  })
+}
+
+test('--resume takes at most one id', async () => {
+  const h = harness()
+  await assert.rejects(h.run(['--resume', '1', '2'], { tty: false }), /at most one ENTRY_ID/)
+})
+
+for (const nested of [{ BITA_WRAPPER_ID: 'outer' }, { BITA_CHILD: '1' }]) {
+  test(`--resume inside a session (${Object.keys(nested)[0]}) is a usage error`, async () => {
+    const h = harness()
+    const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-12', projectId: h.projects.alpha })
+    await assert.rejects(h.run(['--resume', String(picked.entryId)], { tty: false, env: { PATH: '/usr/bin', ...nested } }), (error: unknown) => {
+      assert.ok(error instanceof UsageError)
+      assert.match(error.message, /Already inside a bita session/)
+      return true
+    })
+    assert.equal(h.spawned.length, 0)
+    assert.equal(h.started.length, 0)
+  })
+}
+
+test('--resume fails when the stored directory no longer exists', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: join(h.dir, 'gone'), sessionId: 'sid-13', projectId: h.projects.alpha })
+  await assert.rejects(h.run(['--resume', String(picked.entryId)], { tty: false }), (error: unknown) => {
+    assert.ok(error instanceof UsageError)
+    assert.match(error.message, /no longer exists/)
+    return true
+  })
+  assert.equal(h.spawned.length, 0)
+  assert.equal(h.started.length, 0)
+})
+
+test('cancelling the --resume picker exits with 130 and launches nothing', async () => {
+  const h = harness()
+  seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-14', projectId: h.projects.alpha })
+  assert.equal(await h.run(['--resume'], { picks: [null] }), 130)
+  assert.equal(h.spawned.length, 0)
+  assert.equal(h.started.length, 0)
+  assert.equal(h.closed.length, 0)
+})
+
+test('a failing timer start still resumes the session without the timer', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-15', projectId: h.projects.alpha })
+  const errors = captureStderr()
+  let code: number
+  try {
+    code = await runSessionLaunch(['--db-path', h.dbPath, '--resume', String(picked.entryId)], {
+      env: { PATH: '/usr/bin' },
+      cwd: h.dir,
+      stdinIsTTY: false,
+      stdoutIsTTY: false,
+      adapters: ALL,
+      select: async () => null,
+      spawnHarness: async (spawnBin, args, env, spawnCwd) => {
+        h.spawned.push({ bin: spawnBin, args, env, cwd: spawnCwd })
+        return 0
+      },
+      startEntry: async () => {
+        throw new Error('nope')
+      },
+      sweepOrphans: async () => [],
+    })
+  } finally {
+    errors.restore()
+  }
+  assert.equal(code, 0)
+  assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--resume', 'sid-15'])
+  assert.match(errors.text(), /could not start the timer/)
+})
+
+test('a positional without --resume is still rejected, and --resume with an unreadable database fails', async () => {
+  const h = harness()
+  await assert.rejects(h.run(['12'], { tty: false }), /after --/)
+  const broken = mkdtempSync(join(root, 'broken-resume-'))
+  const errors = captureStderr()
+  try {
+    await assert.rejects(
+      runSessionLaunch(['--db-path', broken, '--resume', '1'], {
+        env: { PATH: '/usr/bin' },
+        cwd: broken,
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+        adapters: ALL,
+        select: async () => null,
+        spawnHarness: async () => 0,
+      }),
+      /no session to resume/,
+    )
+  } finally {
+    errors.restore()
+  }
 })
