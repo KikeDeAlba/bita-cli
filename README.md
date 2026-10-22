@@ -327,6 +327,8 @@ secas no abren selectores ni arrancan cronómetro.
 bita work                            # selector de agente, selector de proyecto, y a trabajar
 bita work -- "arregla el pipeline"   # lo que va tras -- es para el agente
 bita work --harness codex --project Apartados -- "arregla el pipeline"
+bita work --resume                   # selector de sesiones terminadas en este directorio
+bita work --resume 123 -- "sigue con los tests"   # reanuda la sesión de la entrada #123
 ```
 
 1. **Agente.** Si hay más de uno instalado (Claude, OpenCode, Codex, Gemini),
@@ -342,6 +344,25 @@ bita work --harness codex --project Apartados -- "arregla el pipeline"
 
 Si la base no se abre o el cronómetro no arranca, bita avisa y lanza el agente
 sin cronómetro.
+
+### Reanudar una sesión
+
+`bita work --resume [ENTRY_ID]` (también `bita session --resume`) reanuda una
+sesión terminada. Sin id abre un selector con las sesiones lanzadas en el
+directorio actual, las más recientes primero y una por sesión del agente. Con
+`--resume 123` reanuda directamente la sesión de la entrada #123; es lo que hay
+que usar sin terminal.
+
+- El agente sale de la sesión; un `--harness` distinto al de la sesión es un
+  error.
+- El proyecto es el de la entrada original; `--project` lo cambia
+  (`--project 0` reanuda sin cronómetro).
+- Siempre crea una entrada **nueva**: la original, aunque ya esté subida a
+  Jira, no se toca. Al salir se resume como cualquier sesión.
+- El agente se lanza en el directorio original de la sesión, porque Claude y
+  Gemini solo encuentran sus sesiones ahí.
+- Lo que va tras `--` es para el agente (por ejemplo, un prompt). Pasar tú
+  `--resume` o `--continue` ahí es un error.
 
 ### Flags por agente
 
