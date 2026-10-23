@@ -40,10 +40,15 @@ const SCRUBBED_ENV = [
   'CODEX_SANDBOX_NETWORK_DISABLED',
 ]
 
+const SCRUBBED_ENV_PREFIXES = ['ANTIGRAVITY_']
+
 const ORPHAN_RETRY_MS = 15 * 60_000
 const STALE_CLAIM_MS = 10 * 60_000
 const PROCESS_START_SLACK_MS = 1_000
 const PS_TIMEOUT_MS = 2_000
+const UNVERIFIABLE_WRAPPER_MS = 24 * 60 * 60_000
+export const HEADLESS_ENV = 'KIT_HEADLESS'
+export const ANTIGRAVITY_CONVERSATION_ENV = 'ANTIGRAVITY_CONVERSATION_ID'
 
 export interface WrapperEnv {
   wrapperId: string
@@ -88,6 +93,11 @@ export interface SessionEndInput {
   reason: string
 }
 
+export function isHeadless(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env[HEADLESS_ENV]
+  return value !== undefined && value !== '' && value !== '0'
+}
+
 export function isChild(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env[CHILD_ENV]
   return value !== undefined && value !== '' && value !== '0'
@@ -107,6 +117,7 @@ export function wrapperEnv(env: NodeJS.ProcessEnv = process.env): WrapperEnv | n
 export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const next: NodeJS.ProcessEnv = { ...env }
   for (const key of SCRUBBED_ENV) delete next[key]
+  for (const key of Object.keys(next)) if (SCRUBBED_ENV_PREFIXES.some((prefix) => key.toUpperCase().startsWith(prefix))) delete next[key]
   next[CHILD_ENV] = '1'
   return next
 }
@@ -251,6 +262,30 @@ export async function closeWrapper(ctx: LocalContext, wrapperId: string, deps: S
   return pending.map((row) => row.entryId)
 }
 
+export function attachExitSession(ctx: LocalContext, wrapperId: string, session: { sessionId: string; transcriptPath: string | null }): boolean {
+  return immediate(ctx.db, () => {
+    const unlinked = findOpenByWrapper(ctx.db, wrapperId).filter((row) => row.sessionId === null).at(-1)
+    return unlinked ? linkSession(ctx.db, unlinked.id, session.sessionId, session.transcriptPath) : false
+  })
+}
+
+export function bindHarnessConversation(
+  env: NodeJS.ProcessEnv,
+  open: () => LocalContext,
+  transcriptPath: (conversationId: string) => string | null,
+): boolean {
+  const conversationId = env[ANTIGRAVITY_CONVERSATION_ENV]
+  if (!conversationId) return false
+  const wrapper = wrapperEnv(env)
+  if (!wrapper || wrapper.harness !== 'antigravity') return false
+  const ctx = open()
+  try {
+    return attachExitSession(ctx, wrapper.wrapperId, { sessionId: conversationId, transcriptPath: transcriptPath(conversationId) })
+  } finally {
+    ctx.db.close()
+  }
+}
+
 export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -260,7 +295,8 @@ export function processAlive(pid: number): boolean {
   }
 }
 
-export function processStartedAt(pid: number): number | null {
+export function processStartedAt(pid: number, platform: NodeJS.Platform = process.platform): number | null {
+  if (platform === 'win32') return null
   try {
     const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
@@ -275,10 +311,16 @@ export function processStartedAt(pid: number): number | null {
   }
 }
 
-export function wrapperAlive(pid: number, sinceIso: string): boolean {
-  if (!processAlive(pid)) return false
-  const started = processStartedAt(pid)
-  return started === null || started <= Date.parse(sinceIso) + PROCESS_START_SLACK_MS
+export function wrapperAlive(
+  pid: number,
+  sinceIso: string,
+  probe: { alive?: (pid: number) => boolean; startedAt?: (pid: number) => number | null; now?: number } = {},
+): boolean {
+  if (!(probe.alive ?? processAlive)(pid)) return false
+  const started = (probe.startedAt ?? processStartedAt)(pid)
+  const since = Date.parse(sinceIso)
+  if (started === null) return (probe.now ?? Date.now()) - since <= UNVERIFIABLE_WRAPPER_MS
+  return started <= since + PROCESS_START_SLACK_MS
 }
 
 function orphanEnd(db: DatabaseSync, row: { entryId: number; transcriptPath: string | null }, nowIso: string): string {
@@ -291,7 +333,7 @@ function orphanEnd(db: DatabaseSync, row: { entryId: number; transcriptPath: str
 }
 
 export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): Promise<number[]> {
-  const alive = deps.isAlive ?? wrapperAlive
+  const alive = deps.isAlive ?? ((pid: number, sinceIso: string) => wrapperAlive(pid, sinceIso))
   const now = Date.now()
   const pending = immediate(ctx.db, () => {
     const orphans = listOpenSessions(ctx.db).filter((row) => !alive(row.wrapperPid, row.startedAt))
@@ -328,6 +370,7 @@ export function spawnFinalize(entryId: number, options: { cwd: string; databaseP
     fd = openSync(logPath, 'a')
     const child = spawn(process.execPath, [binEntry(), 'session', 'finalize', String(entryId)], {
       detached: true,
+      windowsHide: true,
       stdio: ['ignore', fd, fd],
       cwd: existsSync(options.cwd) ? options.cwd : os.tmpdir(),
       env: { ...childEnv(), BITA_DB_PATH: options.databasePath },

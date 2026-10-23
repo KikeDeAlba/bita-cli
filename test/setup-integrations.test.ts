@@ -148,7 +148,11 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     const log = fakeClaude(box)
     const result = setup(box, '--target', 'all')
     const data = result['data'] as { agents: string[] }
-    assert.deepEqual(data.agents, ['claude', 'opencode', 'codex', 'gemini'])
+    assert.deepEqual(data.agents, ['claude', 'opencode', 'codex', 'gemini', 'antigravity', 'claude-desktop'])
+    const rules = readFileSync(join(box.root, 'data', 'kikedealba', 'agents', 'antigravity', 'bita', 'rules', 'bita.md'), 'utf8')
+    assert.match(rules, /^---\ntrigger: always_on\n---\n/)
+    assert.ok(rules.split('\n').filter((line) => line.trim().length > 0).length <= 6)
+    assert.match(rules, /skill `bita`/)
 
     const calls = claudeCalls(log)
     assert.ok(calls.includes('plugin marketplace add KikeDeAlba/bita-cli'), calls.join(' | '))

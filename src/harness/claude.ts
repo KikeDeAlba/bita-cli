@@ -82,7 +82,7 @@ export const claudeAdapter: HarnessAdapter = {
   bin: 'claude',
   defaultSummaryModel: 'haiku',
   resolveBin(env: NodeJS.ProcessEnv = process.env): string | null {
-    return resolveHarnessBin(harnessBinEnvVar('claude'), 'claude', env)
+    return resolveHarnessBin(harnessBinEnvVar('claude'), 'claude', env, 'claude')
   },
   available(env: NodeJS.ProcessEnv = process.env): boolean {
     return claudeAdapter.resolveBin(env) !== null

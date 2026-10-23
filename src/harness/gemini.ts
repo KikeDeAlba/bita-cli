@@ -226,7 +226,7 @@ export const geminiAdapter: HarnessAdapter = {
   bin: 'gemini',
   defaultSummaryModel: 'flash-lite',
   resolveBin(env: NodeJS.ProcessEnv = process.env): string | null {
-    return resolveHarnessBin(harnessBinEnvVar('gemini'), 'gemini', env)
+    return resolveHarnessBin(harnessBinEnvVar('gemini'), 'gemini', env, 'gemini')
   },
   available(env: NodeJS.ProcessEnv = process.env): boolean {
     return geminiAdapter.resolveBin(env) !== null

@@ -22,8 +22,7 @@ import { displayPath, removeLegacyShellFunctions } from '../legacy-shell.ts'
 
 export { packageRoot }
 
-const AGENT_NAMES = ['claude', 'opencode', 'codex', 'gemini'] as const
-type AgentName = (typeof AGENT_NAMES)[number]
+type AgentName = import('@kikedealba/kit/agents').AgentName
 
 const OPTIONS = {
   target: { type: 'string' as const },
@@ -33,6 +32,7 @@ const OPTIONS = {
   'codex-home': { type: 'string' as const },
   'agents-home': { type: 'string' as const },
   'gemini-home': { type: 'string' as const },
+  'antigravity-home': { type: 'string' as const },
   'no-settings': { type: 'boolean' as const, default: false },
   'no-register': { type: 'boolean' as const, default: false },
   mod: { type: 'boolean' as const, default: false },
@@ -62,13 +62,13 @@ async function loadKit(): Promise<KitModule> {
   }
 }
 
-function readAgents(value: string | undefined): AgentName[] | 'detected' {
+export function readAgents(value: string | undefined, known: readonly AgentName[]): AgentName[] | 'detected' {
   if (value === undefined || value === 'detected') return 'detected'
   const names = value.split(',').map((part) => part.trim()).filter((part) => part.length > 0)
-  if (names.includes('all')) return [...AGENT_NAMES]
-  const invalid = names.filter((name) => !(AGENT_NAMES as readonly string[]).includes(name))
+  if (names.includes('all')) return [...known]
+  const invalid = names.filter((name) => !(known as readonly string[]).includes(name))
   if (names.length === 0 || invalid.length > 0) {
-    throw new UsageError(`Invalid setup target "${value}". Valid targets: ${[...AGENT_NAMES, 'all'].join(', ')}, or a comma list.`)
+    throw new UsageError(`Invalid setup target "${value}". Valid targets: ${[...known, 'all'].join(', ')}, or a comma list.`)
   }
   return [...new Set(names)] as AgentName[]
 }
@@ -80,11 +80,13 @@ function homeOverrides(args: ParsedArgs): Record<string, string> {
   const codex = readString(args, 'codex-home')
   const agentsHome = readString(args, 'agents-home') ?? process.env['BITA_AGENTS_HOME']
   const gemini = readString(args, 'gemini-home')
+  const antigravity = readString(args, 'antigravity-home')
   if (claude) homes['claude'] = claude
   if (opencode) homes['opencode'] = opencode
   if (codex) homes['codex'] = codex
   if (agentsHome) homes['agentsSkills'] = join(agentsHome, 'skills')
   if (gemini) homes['gemini'] = join(gemini, '.gemini')
+  if (antigravity) homes['antigravity'] = antigravity
   return homes
 }
 
@@ -131,7 +133,8 @@ export async function runSetup(argv: string[]): Promise<number> {
   const args = parseCommandArgs(argv, OPTIONS, BASE_OPTIONS)
   const json = readBoolean(args, 'json')
 
-  const requested = readAgents(readString(args, 'agents') ?? readString(args, 'target') ?? process.env['BITA_TARGET'])
+  const kit = await loadKit()
+  const requested = readAgents(readString(args, 'agents') ?? readString(args, 'target') ?? process.env['BITA_TARGET'], kit.agents.AGENTS)
   const root = packageRoot()
 
   if (!existsSync(join(root, 'skills', TOOL_NAME, 'SKILL.md')) || !existsSync(join(root, '.claude-plugin', 'plugin.json'))) {
@@ -143,7 +146,6 @@ export async function runSetup(argv: string[]): Promise<number> {
   const warnings = IGNORED_FLAGS.filter(([flag]) => readBoolean(args, flag)).map(([flag, reason]) => `--${flag} is ignored: ${reason}`)
   for (const warning of warnings) writeErr(`Warning: ${warning}`)
 
-  const kit = await loadKit()
   const ctx = kit.platformContext()
   const homes = kit.agents.agentHomes(ctx, homeOverrides(args))
   let agents: AgentName[] = requested === 'detected' ? await kit.agents.detectAgents(ctx, homes) : requested
@@ -173,7 +175,7 @@ export async function runSetup(argv: string[]): Promise<number> {
   const others = agents.filter((agent) => agent !== 'claude')
   if (others.length > 0) {
     const wanted = integration(root, { codexEditMatcher, geminiEditMatcher: matchers?.gemini ?? GEMINI_EDIT_MATCHER })
-    const cleanup = others.filter((agent) => agent !== 'gemini')
+    const cleanup = others.filter((agent) => agent === 'opencode' || agent === 'codex')
     if (cleanup.length > 0 && retiredCommandsPresent(homes)) {
       steps.push(
         ...(await kit.agents.uninstallIntegration(retiredIntegration(root), { agents: cleanup, ctx, homes })).filter(

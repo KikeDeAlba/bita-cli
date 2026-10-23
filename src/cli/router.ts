@@ -93,7 +93,7 @@ Sessions:
   session finalize <id>      Fill and stop the entry of a finished session (run by the hooks)
 
 Integration:
-  setup                      Register bita and install the integration for Claude Code, OpenCode, Codex and Gemini CLI
+  setup                      Register bita and install the integration for Claude Code, OpenCode, Codex, Gemini CLI and Antigravity
   capabilities               What this bita offers to the other tools (--json)
   doctor                     Which sibling tools (inkwell, tally, atl, recap) kit found
   hooks [list]               Commands run on start, stop, cancel, amend, delete and merge, plus the installed tools subscribed to them
@@ -157,18 +157,19 @@ Hooks options:
   -- COMMAND ARGS            With "hooks add", the command; it gets the event as JSON on stdin
 
 Work options:
-  --harness ID               claude, opencode, codex or gemini, instead of asking
+  --harness ID               claude, opencode, codex, gemini or antigravity, instead of asking
   --project ID|NAME|0        Project of the timer, instead of asking; 0 launches without a timer
   -- ARGS                    Arguments for the agent; Claude flags are translated for the others
 
 Setup options:
-  --target TARGETS           claude, opencode, codex, gemini, all, or a comma list (default: the agents found)
+  --target TARGETS           claude, opencode, codex, gemini, antigravity, claude-desktop, all, or a comma list (default: the agents found)
   --agents TARGETS           Alias of --target
   --claude-dir DIR           Claude configuration directory
   --opencode-dir DIR         OpenCode configuration directory
   --codex-home DIR           Codex home directory
   --agents-home DIR          Codex skills directory parent
   --gemini-home DIR          Directory that holds .gemini
+  --antigravity-home DIR     Antigravity configuration directory (default ~/.gemini/config)
   --no-settings              Skip Claude settings changes
   --no-register              Skip registering bita for the other tools
   --mod                      Also install the bita-timer plugin for Claude Code (the timer band)
@@ -183,6 +184,20 @@ function assertNoMovedFlags(command: string, rest: readonly string[]): void {
     const flag = token.split('=')[0] ?? token
     const hint = Object.hasOwn(MOVED_TIMER_FLAGS, flag) ? MOVED_TIMER_FLAGS[flag] : undefined
     if (hint) throw new UsageError(`bita ${command} no longer takes ${flag}. ${hint}`)
+  }
+}
+
+async function bindConversation(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  if (!env['ANTIGRAVITY_CONVERSATION_ID'] || !env['BITA_WRAPPER_ID']) return
+  try {
+    const [{ bindHarnessConversation }, { createLocalContext }, { antigravityConversationPath }] = await Promise.all([
+      import('../domain/session.ts'),
+      import('./local-context.ts'),
+      import('../harness/antigravity.ts'),
+    ])
+    bindHarnessConversation(env, () => createLocalContext({ values: {}, positionals: [] }), (id) => antigravityConversationPath(id, env))
+  } catch {
+    return
   }
 }
 
@@ -209,6 +224,7 @@ export async function route(argv: string[]): Promise<number> {
   }
 
   assertNoMovedFlags(command, rest)
+  await bindConversation()
 
   switch (command) {
     case 'doctor':

@@ -1,6 +1,6 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -11,8 +11,8 @@ import { createFakeBin } from './helpers/fake-bin.ts'
 const plan = (id: HarnessId, args: string[]): LaunchPlan => getAdapter(id).launchArgs(args)
 
 test('registry lists the adapters in the fixed order', () => {
-  assert.deepEqual(listAdapters().map((adapter) => adapter.id), ['claude', 'opencode', 'codex', 'gemini'])
-  assert.deepEqual(listAdapters().map((adapter) => adapter.bin), ['claude', 'opencode', 'codex', 'gemini'])
+  assert.deepEqual(listAdapters().map((adapter) => adapter.id), ['claude', 'opencode', 'codex', 'gemini', 'antigravity'])
+  assert.deepEqual(listAdapters().map((adapter) => adapter.bin), ['claude', 'opencode', 'codex', 'gemini', 'agy'])
   assert.equal(getAdapter('codex').label, 'Codex')
 })
 
@@ -24,9 +24,9 @@ test('resolveBin prefers an executable override and falls back to PATH', () => {
     const adapter = getAdapter('gemini')
     assert.equal(adapter.resolveBin({ PATH: '', [harnessBinEnvVar('gemini')]: fake }), fake)
     assert.equal(adapter.resolveBin({ PATH: '', [harnessBinEnvVar('gemini')]: join(dir, 'missing') }), null)
-    assert.equal(adapter.available({ PATH: '' }), false)
-    assert.equal(getAdapter('opencode').resolveBin({ PATH: `/nonexistent:${dir}` }), onPath)
-    assert.equal(getAdapter('opencode').available({ PATH: dir }), true)
+    assert.equal(adapter.available({ PATH: '', HOME: dir }), false)
+    assert.equal(getAdapter('opencode').resolveBin({ PATH: `/nonexistent:${dir}`, HOME: dir }), onPath)
+    assert.equal(getAdapter('opencode').available({ PATH: dir, HOME: dir }), true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -117,4 +117,36 @@ test('every claude flag that takes a value consumes it instead of becoming the p
 
 test('tokens after a literal -- are positional', () => {
   assert.deepEqual(plan('codex', ['--', '-c', 'texto']).args, ['--dangerously-bypass-approvals-and-sandbox', '-c texto'])
+})
+
+test('resolveBin finds an agent installed with nvm when PATH does not have it', () => {
+  const home = mkdtempSync(join(tmpdir(), 'bita-harness-nvm-'))
+  try {
+    const nvmBin = join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin')
+    mkdirSync(nvmBin, { recursive: true })
+    const gemini = createFakeBin(nvmBin, 'gemini')
+    const claude = createFakeBin(nvmBin, 'claude')
+    const env = { PATH: '/usr/bin:/bin', HOME: home }
+    assert.equal(getAdapter('gemini').resolveBin(env), gemini)
+    assert.equal(getAdapter('claude').available(env), true)
+    const override = createFakeBin(home, 'gemini-pinned')
+    assert.equal(getAdapter('gemini').resolveBin({ ...env, [harnessBinEnvVar('gemini')]: override }), override)
+    assert.equal(getAdapter('gemini').resolveBin({ ...env, [harnessBinEnvVar('gemini')]: join(home, 'nope') }), null)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('antigravity always skips permissions once and maps resume, continue and the prompt', () => {
+  const skip = '--dangerously-skip-permissions'
+  assert.deepEqual(plan('antigravity', []), { args: [skip], warnings: [] })
+  assert.deepEqual(plan('antigravity', [skip]).args, [skip])
+  assert.deepEqual(plan('antigravity', ['--allow-dangerously-skip-permissions', skip, 'x']).args, [skip, '-i', 'x'])
+  assert.deepEqual(plan('antigravity', ['-c']).args, [skip, '-c'])
+  assert.deepEqual(plan('antigravity', ['--continue', 'sigue']).args, [skip, '-c', '-i', 'sigue'])
+  assert.deepEqual(plan('antigravity', ['--resume', 'abc']).args, [skip, '--conversation', 'abc'])
+  assert.deepEqual(plan('antigravity', ['-r']).args, [skip, '-c'])
+  assert.deepEqual(plan('antigravity', ['arregla', 'el', 'bug']).args, [skip, '-i', 'arregla el bug'])
+  assert.deepEqual(plan('antigravity', ['--model', 'gemini-3.8-flash-high', '--mode=plan', 'x']).args, [skip, '--model=gemini-3.8-flash-high', '--mode=plan', '-i', 'x'])
+  assert.deepEqual(plan('antigravity', ['--permission-mode', 'plan']).warnings, ['bita: Antigravity has no equivalent for --permission-mode; dropped.'])
 })

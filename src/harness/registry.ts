@@ -1,3 +1,4 @@
+import { antigravityAdapter } from './antigravity.ts'
 import { claudeAdapter } from './claude.ts'
 import { codexAdapter } from './codex.ts'
 import { geminiAdapter } from './gemini.ts'
@@ -5,7 +6,7 @@ import { opencodeAdapter } from './opencode.ts'
 import { HARNESS_IDS, type HarnessAdapter, type HarnessId } from './types.ts'
 
 export function listAdapters(): readonly HarnessAdapter[] {
-  return [claudeAdapter, opencodeAdapter, codexAdapter, geminiAdapter]
+  return [claudeAdapter, opencodeAdapter, codexAdapter, geminiAdapter, antigravityAdapter]
 }
 
 export function getAdapter(id: HarnessId): HarnessAdapter {

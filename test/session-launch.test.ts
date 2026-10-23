@@ -414,7 +414,7 @@ for (const nested of [{ BITA_WRAPPER_ID: 'outer' }, { BITA_CHILD: '1' }]) {
     assert.equal(h.swept, 0)
     assert.equal(h.started.length, 0)
     assert.equal(h.closed.length, 0)
-    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env }])
+    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env: { ...env, PATH: `/fake${delimiter}/usr/bin` } }])
     assert.match(errors.text(), /already inside a bita session; launching the harness without a new timer/)
   })
 }
