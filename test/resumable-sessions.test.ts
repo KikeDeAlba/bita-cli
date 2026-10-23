@@ -13,7 +13,7 @@ const { insertEntry } = await import('../src/db/entries.ts')
 const { findResumableByEntry, insertEntrySession, linkSession, listResumableSessions, markSessionEnded } = await import('../src/db/sessions.ts')
 
 const root = mkdtempSync(join(tmpdir(), 'bita-resumable-'))
-test.after(() => rmSync(root, { recursive: true, force: true }))
+test.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 interface Seed {
   harness?: HarnessId

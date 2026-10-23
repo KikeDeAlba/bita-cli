@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { POSIX_ONLY } from './helpers/fake-bin.ts'
 import { getAdapter, harnessBinEnvVar, listAdapters } from '../src/harness/registry.ts'
 import type { HarnessId, LaunchPlan } from '../src/harness/types.ts'
 import { createFakeBin } from './helpers/fake-bin.ts'
@@ -28,7 +29,7 @@ test('resolveBin prefers an executable override and falls back to PATH', () => {
     assert.equal(getAdapter('opencode').resolveBin({ PATH: `/nonexistent:${dir}`, HOME: dir }), onPath)
     assert.equal(getAdapter('opencode').available({ PATH: dir, HOME: dir }), true)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -119,7 +120,7 @@ test('tokens after a literal -- are positional', () => {
   assert.deepEqual(plan('codex', ['--', '-c', 'texto']).args, ['--dangerously-bypass-approvals-and-sandbox', '-c texto'])
 })
 
-test('resolveBin finds an agent installed with nvm when PATH does not have it', () => {
+test('resolveBin finds an agent installed with nvm when PATH does not have it', { skip: POSIX_ONLY }, () => {
   const home = mkdtempSync(join(tmpdir(), 'bita-harness-nvm-'))
   try {
     const nvmBin = join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin')
@@ -133,7 +134,7 @@ test('resolveBin finds an agent installed with nvm when PATH does not have it', 
     assert.equal(getAdapter('gemini').resolveBin({ ...env, [harnessBinEnvVar('gemini')]: override }), override)
     assert.equal(getAdapter('gemini').resolveBin({ ...env, [harnessBinEnvVar('gemini')]: join(home, 'nope') }), null)
   } finally {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 

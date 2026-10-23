@@ -3,8 +3,9 @@ import { strict as assert } from 'node:assert'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { basename, delimiter, join } from 'node:path'
 import { test } from 'node:test'
+import { nodeScriptBin, POSIX_ONLY } from './helpers/fake-bin.ts'
 import type { HarnessAdapter, HarnessId } from '../src/harness/types.ts'
 import type { StartSessionInput } from '../src/domain/session.ts'
 import type { LocalContext } from '../src/cli/local-context.ts'
@@ -30,7 +31,7 @@ const { insertEntrySession, linkSession, markSessionEnded } = await import('../s
 const bin = join(import.meta.dirname, '..', 'src', 'bin', 'bita.ts')
 const TTY = { stdinIsTTY: true, stdoutIsTTY: true }
 
-test.after(() => rmSync(root, { recursive: true, force: true }))
+test.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 function fakeAdapter(id: HarnessId, label: string, available = true): HarnessAdapter {
   return {
@@ -434,7 +435,7 @@ test('inside a session --harness picks which harness to launch', async () => {
 test('mappedProjectId resolves the cwd through the mapped checkouts', async () => {
   const repo = realpathSync(mkdtempSync(join(root, 'repo-')))
   execFileSync('git', ['init', '-q', repo])
-  const dbPath = join(repo, '..', `${repo.split('/').at(-1)}.db`)
+  const dbPath = join(repo, '..', `${basename(repo)}.db`)
   const db = openDatabase(dbPath)
   const project = insertProject(db, { name: 'Mapped', clientName: null, createdAt: new Date().toISOString() })
   upsertProjectRepo(db, { projectId: project.id, path: repo, slug: null, source: 'manual', now: new Date().toISOString() })
@@ -451,10 +452,7 @@ test('mappedProjectId resolves the cwd through the mapped checkouts', async () =
 })
 
 function script(dir: string, name: string, body: string): string {
-  const path = join(dir, name)
-  writeFileSync(path, `#!${process.execPath}\n${body}\n`, 'utf8')
-  chmodSync(path, 0o755)
-  return path
+  return nodeScriptBin(dir, name, `${body}\n`)
 }
 
 test('spawnHarness returns the exit code, 128 + signal, and 127 when the binary is missing', async () => {
@@ -463,7 +461,7 @@ test('spawnHarness returns the exit code, 128 + signal, and 127 when the binary 
   const killed = script(dir, 'killed', "process.kill(process.pid, 'SIGTERM'); setTimeout(() => {}, 5000)")
   const env = { ...process.env }
   assert.equal(await spawnHarness(exits, [], env), 4)
-  assert.equal(await spawnHarness(killed, [], env), 143)
+  if (process.platform !== 'win32') assert.equal(await spawnHarness(killed, [], env), 143)
   assert.equal(await spawnHarness(join(dir, 'missing'), [], env), 127)
 })
 
@@ -503,7 +501,7 @@ test('bita work --help prints the bita help', () => {
   assert.match(run.stdout, /work \[--harness ID\]/)
 })
 
-test('the wrapper forwards SIGTERM to the agent and exits with its code', async () => {
+test('the wrapper forwards SIGTERM to the agent and exits with its code', { skip: POSIX_ONLY }, async () => {
   const dir = mkdtempSync(join(root, 'e2e-signal-'))
   const binDir = join(dir, 'bin')
   mkdirSync(binDir)

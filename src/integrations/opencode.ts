@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { dirname, join, win32 } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 interface OpenCodeContext {
   location: { directory: string }
@@ -19,10 +22,46 @@ function insideWrapper(env: NodeJS.ProcessEnv = process.env): boolean {
   return flagSet(env['BITA_WRAPPER_ID']) && !flagSet(env['BITA_CHILD'])
 }
 
+interface BitaCommand {
+  command: string
+  args: string[]
+  windowsVerbatimArguments: boolean
+}
+
+function siblingEntry(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url))
+  for (const candidate of [join(here, '..', 'bin', 'bita.ts'), join(here, '..', 'bin', 'bita.js')]) if (existsSync(candidate)) return candidate
+  return null
+}
+
+function quoteForCmd(arg: string): string | null {
+  if (/["%\r\n]/.test(arg)) return null
+  return `"${arg}"`
+}
+
+export function bitaCommand(args: readonly string[], env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): BitaCommand | null {
+  const bin = env['BITA_BIN']
+  if (platform !== 'win32') return { command: bin ?? 'bita', args: [...args], windowsVerbatimArguments: false }
+  if (!bin) {
+    const entry = siblingEntry()
+    return entry ? { command: 'node', args: [entry, ...args], windowsVerbatimArguments: false } : { command: 'bita.cmd', args: [...args], windowsVerbatimArguments: false }
+  }
+  if (!/\.(cmd|bat)$/i.test(bin)) return { command: bin, args: [...args], windowsVerbatimArguments: false }
+  const quoted = [bin, ...args].map(quoteForCmd)
+  if (quoted.some((part) => part === null)) return null
+  const root = env['SystemRoot'] ?? env['SYSTEMROOT'] ?? 'C:\\Windows'
+  return { command: win32.join(root, 'System32', 'cmd.exe'), args: ['/d', '/s', '/c', `"${quoted.join(' ')}"`], windowsVerbatimArguments: true }
+}
+
 function runBita(args: string[], input?: string): Promise<void> {
   return new Promise((resolve) => {
     try {
-      const child = spawn(process.env['BITA_BIN'] ?? 'bita', args, { stdio: ['pipe', 'ignore', 'ignore'] })
+      const spec = bitaCommand(args)
+      if (!spec) {
+        resolve()
+        return
+      }
+      const child = spawn(spec.command, spec.args, { stdio: ['pipe', 'ignore', 'ignore'], windowsVerbatimArguments: spec.windowsVerbatimArguments, windowsHide: true })
       child.once('error', () => resolve())
       child.once('close', () => resolve())
       child.stdin.on('error', () => undefined)

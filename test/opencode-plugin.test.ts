@@ -8,7 +8,7 @@ import plugin from '../src/integrations/opencode.ts'
 import { createFakeBin, readFakeBinCalls } from './helpers/fake-bin.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'bita-opencode-plugin-'))
-after(() => rmSync(root, { recursive: true, force: true }))
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 const ENV_KEYS = ['BITA_BIN', 'FAKE_BIN_LOG', 'BITA_WRAPPER_ID', 'BITA_CHILD']
 afterEach(() => {

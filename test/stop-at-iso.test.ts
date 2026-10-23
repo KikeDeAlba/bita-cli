@@ -60,7 +60,7 @@ test('stop --at stops at the exact ISO instant and refuses one before the start 
     assert.equal(findEntryById(after, entry.id)?.stoppedAt, at)
     after.close()
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -73,6 +73,6 @@ test('start --at accepts an ISO instant too', () => {
     const envelope = JSON.parse(out.stdout) as { data: { start: string } }
     assert.equal(envelope.data.start, at)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })

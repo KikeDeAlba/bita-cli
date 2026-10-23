@@ -43,7 +43,7 @@ test('the old prompt, prompt-submit and checkpoint hooks are silent no-ops', () 
       assert.equal(out.stdout, '')
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -65,7 +65,7 @@ test('hook touched reads the file path from the PostToolUse JSON on stdin', () =
     assert.deepEqual(listTouches(after, entry.id).sort(), [file, join(dir, 'other.txt')].sort())
     after.close()
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -91,7 +91,7 @@ test('statusline prints the running timers in one line, or nothing', () => {
     assert.ok(ids.every((id) => (lines[0] ?? '').includes(`#${id}`)))
     assert.ok(elapsedMs < 2_000, `statusline took ${elapsedMs} ms`)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -118,6 +118,6 @@ test('entries --brief keeps only id, title, project, start, stop and seconds', (
     const text = run(dir, ['entries', 'today', '--brief'])
     assert.match(text.stdout, /^\d+\tBrief work\tKit\t/)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })

@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
+import { POSIX_ONLY } from './helpers/fake-bin.ts'
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'bita-project-repos-')))
 const config = join(dir, 'config.json')
@@ -23,7 +24,7 @@ const db = join(dir, 'bita.db')
 const docs = join(dir, 'docs')
 const common = ['--db-path', db, '--docs-dir', docs, '--json']
 
-after(() => rmSync(dir, { recursive: true, force: true }))
+after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', ...args], {
@@ -89,7 +90,7 @@ test('migration creates project_repos and cascades when the project goes', () =>
   memory.close()
 })
 
-test('add resolves the toplevel and slug, re-adding refreshes last_seen_at, ls and rm follow', async () => {
+test('add resolves the toplevel and slug, re-adding refreshes last_seen_at, ls and rm follow', { skip: POSIX_ONLY }, async () => {
   await capture(() => runProject(['add', 'CoDi', ...common]))
 
   const first = await capture(() => runProject(['repo', 'add', join(codi, 'src', 'deep'), '--project', 'CoDi', ...common]))
@@ -115,7 +116,7 @@ test('add resolves the toplevel and slug, re-adding refreshes last_seen_at, ls a
 
   const gone = makeRepo('gone')
   await capture(() => runProject(['repo', 'add', gone, '--project', 'CoDi', ...common]))
-  rmSync(gone, { recursive: true, force: true })
+  rmSync(gone, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   const listed = await capture(() => runProject(['repo', 'ls', '--project', 'CoDi', ...common]))
   assert.deepEqual(
     listed.json.data.repos.map((repo: { path: string; exists: boolean }) => [repo.path, repo.exists]),
@@ -133,7 +134,7 @@ test('add resolves the toplevel and slug, re-adding refreshes last_seen_at, ls a
   assert.equal(all.json.data.repos.length, 1)
 })
 
-test('suggest groups touches by repository, stop reports the unmapped ones, history spans the project', async () => {
+test('suggest groups touches by repository, stop reports the unmapped ones, history spans the project', { skip: POSIX_ONLY }, async () => {
   const started = await capture(() => runStart(['Conciliar pagos', '--project', 'CoDi', ...common]))
   const id = started.json.data.id as number
 
@@ -170,7 +171,7 @@ test('suggest groups touches by repository, stop reports the unmapped ones, hist
   await assert.rejects(() => capture(() => runProject(['repo', 'suggest', '--project', 'CoDi', ...common])), /Usage/)
 })
 
-test('stopping several timers keys the suggestions by entry id', async () => {
+test('stopping several timers keys the suggestions by entry id', { skip: POSIX_ONLY }, async () => {
   const one = await capture(() => runStart(['Uno', '--project', 'CoDi', ...common]))
   const two = await capture(() => runStart(['Dos', '--project', 'CoDi', ...common]))
   const handle = openDatabase(db)

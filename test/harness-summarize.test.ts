@@ -7,12 +7,12 @@ import { after, afterEach, beforeEach, test } from 'node:test'
 import { getAdapter, harnessBinEnvVar } from '../src/harness/registry.ts'
 import { SESSION_SUMMARY_SCHEMA } from '../src/harness/summary.ts'
 import type { HarnessId, SummaryInput } from '../src/harness/types.ts'
-import { createFakeBin, readFakeBinCalls, type FakeBinCall } from './helpers/fake-bin.ts'
+import { createFakeBin, readFakeBinCalls, type FakeBinCall, nodeScriptBin } from './helpers/fake-bin.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'bita-summarize-'))
 process.env['HOME'] = root
 process.env['KIT_NO_EVENTS'] = '1'
-after(() => rmSync(root, { recursive: true, force: true }))
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 const summary = {
   title: 'Agregar export CSV',
@@ -229,9 +229,7 @@ test('gemini runs each summary in its own workspace and removes what it register
   mkdirSync(join(home, 'tmp', 'mine'), { recursive: true })
   writeFileSync(join(home, 'tmp', 'mine', '.project_root'), '/work/mine')
   writeFileSync(join(home, 'projects.json'), JSON.stringify({ projects: { '/work/mine': 'mine' } }))
-  const fake = join(dir, 'gemini')
-  writeFileSync(fake, REGISTERING_GEMINI)
-  chmodSync(fake, 0o755)
+  const fake = nodeScriptBin(dir, 'gemini', REGISTERING_GEMINI)
   process.env[harnessBinEnvVar('gemini')] = fake
   process.env['GEMINI_CLI_HOME'] = geminiHome
   process.env['FAKE_BIN_REPLY'] = JSON.stringify({ response: JSON.stringify(summary) })

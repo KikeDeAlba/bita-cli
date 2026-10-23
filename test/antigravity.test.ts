@@ -2,18 +2,20 @@ import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { after, test } from 'node:test'
 
 const root = mkdtempSync(join(tmpdir(), 'bita-antigravity-'))
 process.env['HOME'] = root
+process.env['USERPROFILE'] = root
 process.env['KIT_NO_EVENTS'] = '1'
-after(() => rmSync(root, { recursive: true, force: true }))
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 const { antigravityAdapter, antigravityConversationPath, findExitConversation, readAntigravityConversation, readHistoryTail } = await import('../src/harness/antigravity.ts')
 const { isConversationId } = await import('../src/harness/antigravity-ids.ts')
 const { executableNames, findOnPath, resolveHarnessBin } = await import('../src/harness/process.ts')
+const { nodeScriptBin, IS_WINDOWS } = await import('./helpers/fake-bin.ts')
 const { harnessBinEnvVar } = await import('../src/harness/registry.ts')
 const { taskkillPath, withBinOnPath } = await import('../src/harness/process.ts')
 const { childEnv, processStartedAt, wrapperAlive, attachExitSession } = await import('../src/domain/session.ts')
@@ -82,7 +84,7 @@ test('afterExit picks the last conversation of the workspace since the session s
   const home = mkdtempSync(join(root, 'home-'))
   const real = realpathSync(mkdtempSync(join(root, 'repo-')))
   const link = join(home, 'repo-link')
-  symlinkSync(real, link)
+  symlinkSync(real, link, 'junction')
   const history = join(home, '.gemini', 'antigravity-cli')
   mkdirSync(history, { recursive: true })
   const started = Date.parse('2026-10-22T10:00:00.000Z')
@@ -98,14 +100,14 @@ test('afterExit picks the last conversation of the workspace since the session s
       line('later-elsewhere', '/x', started + 20_000),
     ].join('\n'),
   )
-  const env = { HOME: home }
+  const env = { HOME: home, USERPROFILE: home }
   const ref = { cwd: link, startedAt: new Date(started).toISOString(), endedAt: new Date(started + 60_000).toISOString() }
   assert.deepEqual(await antigravityAdapter.afterExit?.(ref, env), {
     sessionId: 'second',
     transcriptPath: join(history, 'conversations', 'second.db'),
   })
   assert.equal(await findExitConversation({ ...ref, startedAt: new Date(started + 30_000).toISOString() }, env), null)
-  assert.equal(await findExitConversation(ref, { HOME: join(root, 'nobody') }), null)
+  assert.equal(await findExitConversation(ref, { HOME: join(root, 'nobody'), USERPROFILE: join(root, 'nobody') }), null)
 })
 
 test('attachExitSession links only the open unlinked session of the wrapper', () => {
@@ -129,9 +131,7 @@ test('summarize asks agy headless in read mode and validates the answer', async 
     response: JSON.stringify({ title: 'Arreglar el bug', kind: 'dev', note: { context: 'c', done: 'd', decisions: null, findings: null, verification: null, pending: null } }),
     conversation_id: 'c1',
   })
-  const fake = join(dir, 'agy')
-  writeFileSync(fake, `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), headless: process.env.KIT_HEADLESS ?? null, wrapper: process.env.BITA_WRAPPER_ID ?? null }))\nprocess.stdout.write(${JSON.stringify(reply)})\n`)
-  chmodSync(fake, 0o755)
+  const fake = nodeScriptBin(dir, 'agy', `require('node:fs').writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), headless: process.env.KIT_HEADLESS ?? null, wrapper: process.env.BITA_WRAPPER_ID ?? null }))\nprocess.stdout.write(${JSON.stringify(reply)})\n`)
   process.env[harnessBinEnvVar('antigravity')] = fake
   process.env['BITA_WRAPPER_ID'] = 'w-1'
   try {
@@ -212,10 +212,10 @@ test('bita-timer looks for bita in the kit registry and the usual install dirs',
 test('conversation ids are validated and stay inside conversations/', async () => {
   for (const id of ['../etc/passwd', '-x', '', 'a/b', 'a\\b', '.hidden', 'x'.repeat(129), 'a b']) {
     assert.equal(isConversationId(id), false, id)
-    assert.equal(antigravityConversationPath(id, { HOME: '/h' }), null, id)
+    assert.equal(antigravityConversationPath(id, { HOME: '/h', USERPROFILE: '/h' }), null, id)
   }
   assert.equal(isConversationId('09b9fe5f-b94d-4c30-875e-b51afd912917'), true)
-  assert.equal(antigravityConversationPath('abc_1', { HOME: '/h' }), join('/h', '.gemini', 'antigravity-cli', 'conversations', 'abc_1.db'))
+  assert.equal(antigravityConversationPath('abc_1', { HOME: '/h', USERPROFILE: '/h' }), resolve('/h', '.gemini', 'antigravity-cli', 'conversations', 'abc_1.db'))
   const home = mkdtempSync(join(root, 'ids-'))
   mkdirSync(join(home, '.gemini', 'antigravity-cli'), { recursive: true })
   const at = Date.parse('2026-10-22T10:00:00.000Z')
@@ -223,7 +223,7 @@ test('conversation ids are validated and stay inside conversations/', async () =
     join(home, '.gemini', 'antigravity-cli', 'history.jsonl'),
     [JSON.stringify({ timestamp: at, workspace: home, conversationId: 'good' }), JSON.stringify({ timestamp: at + 1, workspace: home, conversationId: '../../evil' }), JSON.stringify({ timestamp: at + 2, workspace: home, conversationId: '-x' })].join('\n'),
   )
-  const found = await findExitConversation({ cwd: home, startedAt: new Date(at).toISOString(), endedAt: new Date(at + 5).toISOString() }, { HOME: home })
+  const found = await findExitConversation({ cwd: home, startedAt: new Date(at).toISOString(), endedAt: new Date(at + 5).toISOString() }, { HOME: home, USERPROFILE: home })
   assert.equal(found?.sessionId, 'good')
 })
 
@@ -249,4 +249,5 @@ test('overrides must be absolute and PATHEXT names are tried on Windows', () => 
   assert.deepEqual(executableNames('agy.cmd', { PATHEXT: '.EXE;.CMD' }, 'win32'), ['agy.cmd'])
   assert.deepEqual(executableNames('agy', {}, 'linux'), ['agy'])
   assert.equal(findOnPath('gemini', { Path: dir }), fake)
+  assert.ok(IS_WINDOWS || executableNames('gemini', {}).length === 1)
 })

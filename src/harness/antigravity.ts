@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { mkdtemp, open, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -95,12 +96,19 @@ function launchArgs(userArgs: readonly string[]): LaunchPlan {
   }
 }
 
-async function canonical(path: string): Promise<string> {
+async function workspaceKeys(cwd: string, platform: NodeJS.Platform = process.platform): Promise<Set<string>> {
+  const keys = new Set([cwd])
   try {
-    return await realpath(path)
-  } catch {
-    return path
-  }
+    keys.add(await realpath(cwd))
+  } catch {}
+  try {
+    keys.add(realpathSync.native(cwd))
+  } catch {}
+  return platform === 'win32' ? new Set([...keys].map((key) => key.replace(/\//g, '\\').toLowerCase())) : keys
+}
+
+function workspaceKey(workspace: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? workspace.replace(/\//g, '\\').toLowerCase() : workspace
 }
 
 export async function findExitConversation(ref: ExitRef, env: NodeJS.ProcessEnv = process.env): Promise<ExitSession | null> {
@@ -108,14 +116,14 @@ export async function findExitConversation(ref: ExitRef, env: NodeJS.ProcessEnv 
   if (text === null) return null
   const from = Date.parse(ref.startedAt) - HISTORY_SLACK_MS
   if (Number.isNaN(from)) return null
-  const workspaces = new Set([ref.cwd, await canonical(ref.cwd)])
+  const workspaces = await workspaceKeys(ref.cwd)
   let latest: { id: string; at: number } | null = null
   for (const record of parseJsonLines(text)) {
     const id = record['conversationId']
     const at = record['timestamp']
     const workspace = record['workspace']
     if (!isConversationId(id) || typeof at !== 'number' || typeof workspace !== 'string') continue
-    if (at < from || !workspaces.has(workspace)) continue
+    if (at < from || !workspaces.has(workspaceKey(workspace))) continue
     if (!latest || at >= latest.at) latest = { id, at }
   }
   if (!latest) return null

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export interface FakeBinCall {
@@ -47,11 +47,29 @@ process.stdin.on('end', () => {
 })
 `
 
-export function createFakeBin(dir: string, name: string): string {
-  const file = join(dir, name)
-  writeFileSync(file, SCRIPT)
-  chmodSync(file, 0o755)
+export const IS_WINDOWS = process.platform === 'win32'
+export const POSIX_ONLY: string | false = IS_WINDOWS ? 'needs a posix shell, signals or posix paths' : false
+
+export function nodeScriptBin(dir: string, name: string, source: string): string {
+  if (!IS_WINDOWS) {
+    const file = join(dir, name)
+    writeFileSync(file, source.startsWith('#!') ? source : `#!${process.execPath}\n${source}`)
+    chmodSync(file, 0o755)
+    return file
+  }
+  const script = join(dir, `${name}.cjs`)
+  writeFileSync(script, source.startsWith('#!') ? source.slice(source.indexOf('\n') + 1) : source)
+  const file = join(dir, `${name}.cmd`)
+  writeFileSync(file, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`)
   return file
+}
+
+export function createFakeBin(dir: string, name: string): string {
+  return nodeScriptBin(dir, name, SCRIPT)
+}
+
+export function removeDir(dir: string): void {
+  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
 }
 
 export function readFakeBinCalls(logFile: string): FakeBinCall[] {

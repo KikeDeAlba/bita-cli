@@ -31,7 +31,7 @@ test('refuses a database written by a newer build', () => {
   db.close()
 
   assert.throws(() => openDatabase(path), /newer version/)
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
 })
 
 test('enforces foreign keys so a link cannot outlive its entry', () => {
@@ -102,7 +102,8 @@ test('the JSON envelope version is not the schema version', () => {
 
 test('reads the database location from the environment', () => {
   assert.equal(databasePath({ [DB_PATH_ENV_VAR]: '/tmp/custom.db' }), '/tmp/custom.db')
-  assert.equal(databasePath({ XDG_DATA_HOME: '/data' }), '/data/bita/bita.db')
+  if (process.platform !== 'win32') assert.equal(databasePath({ XDG_DATA_HOME: '/data' }), '/data/bita/bita.db')
+  else assert.equal(databasePath({ LOCALAPPDATA: 'C:\\Data' }), 'C:\\Data\\bita\\bita.db')
 })
 
 test('version 9 adds a nullable kind to every entry, existing ones included', () => {

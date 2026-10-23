@@ -35,6 +35,6 @@ test('the core commands run from the sources without installed dependencies', ()
       assert.equal(run.status, 0, `bita ${args.join(' ')} failed: ${run.stderr}`)
     }
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })

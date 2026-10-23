@@ -37,6 +37,7 @@ function baseEnv(b: Box): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: b.dir,
+    USERPROFILE: b.dir,
     PATH: join(b.dir, 'empty-path'),
     BITA_DB_PATH: b.db,
     BITA_CONFIG_PATH: join(b.dir, 'config.json'),
@@ -90,7 +91,7 @@ test('every hook exits 0 and prints nothing, with garbage, empty stdin or no wra
     silent(hook(b, ['session-start', '--harness', 'cursor'], '{"session_id":"s","source":"startup"}', wrapped(b, 'claude')))
     assert.equal(session(b)?.sessionId, null)
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -100,7 +101,7 @@ test('inside a child nothing links, even with the wrapper variables', () => {
     silent(hook(b, ['session-start'], JSON.stringify({ session_id: 's1', source: 'startup', cwd: b.dir }), { ...wrapped(b, 'claude'), BITA_CHILD: '1' }))
     assert.equal(session(b)?.sessionId, null)
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -117,7 +118,7 @@ test('Claude session-start links and session-end marks the row and launches fina
     assert.notEqual(session(b)?.endedAt, null)
     assert.match(readFileSync(join(b.dir, 'hooks.log'), 'utf8'), new RegExp(`session finalize #${b.entryId} launched`))
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -136,7 +137,7 @@ test('codex routes SessionStart, SessionEnd and PostToolUse', () => {
     silent(hook(b, ['codex'], JSON.stringify({ hook_event_name: 'SessionEnd', session_id: 'c1', reason: 'other' }), wrapped(b, 'codex')))
     assert.equal(session(b)?.endReason, 'other')
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -150,7 +151,7 @@ test('gemini routes SessionStart and SessionEnd, and ignores BeforeAgent', () =>
     silent(hook(b, ['gemini'], JSON.stringify({ hook_event_name: 'SessionEnd', session_id: 'g1', reason: 'exit' }), wrapped(b, 'gemini')))
     assert.equal(session(b)?.endReason, 'exit')
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -162,7 +163,7 @@ test('opencode goes through session-start --harness opencode, and a Claude hook 
     silent(hook(b, ['session-start', '--harness', 'opencode'], JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'ses_1', cwd: b.dir, source: 'startup' }), wrapped(b, 'opencode')))
     assert.equal(session(b)?.sessionId, 'ses_1')
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -175,7 +176,7 @@ function finalizeRoutes(): boolean {
     })
     return result.status === 0
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 }
 
@@ -203,7 +204,7 @@ test(
       assert.match(title, /^Sesión Claude · /)
       assert.equal(session(b)?.outcome, 'fallback')
     } finally {
-      rmSync(b.dir, { recursive: true, force: true })
+      rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
     }
   },
 )
@@ -218,7 +219,7 @@ test('hooks of a headless run (KIT_HEADLESS=1) record nothing', () => {
     silent(hook(b, ['gemini'], JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'g1', cwd: b.dir, source: 'startup' }), { ...env, KIT_HEADLESS: '0' }))
     assert.equal(session(b)?.sessionId, 'g1')
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -233,7 +234,7 @@ test('any bita run inside agy links the antigravity conversation of the wrapper'
     spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env: { ...env, ANTIGRAVITY_CONVERSATION_ID: 'conv-2' } })
     assert.equal(session(b)?.sessionId, 'conv-1')
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -245,7 +246,7 @@ test('an invalid conversation id in the environment is never linked', () => {
       assert.equal(session(b)?.sessionId, null)
     }
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -256,6 +257,6 @@ test('the conversation id is ignored outside an antigravity wrapper', () => {
     spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env })
     assert.equal(session(b)?.sessionId, null)
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
