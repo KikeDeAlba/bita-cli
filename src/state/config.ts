@@ -3,8 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { UsageError } from '../errors.ts'
 import { parseHooks, type HookConfig } from '../hooks/hooks.ts'
+import { bitaDirs } from './dirs.ts'
 
-export const CONFIG_DIR = path.join(os.homedir(), '.config', 'bita')
+export const CONFIG_DIR = bitaDirs().config
 export const CONFIG_PATH_ENV_VAR = 'BITA_CONFIG_PATH'
 export const CONFIG_PATH = process.env[CONFIG_PATH_ENV_VAR] ?? path.join(CONFIG_DIR, 'config.json')
 
