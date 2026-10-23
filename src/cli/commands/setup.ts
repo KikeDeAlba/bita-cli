@@ -1,9 +1,13 @@
-import { existsSync, lstatSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { databasePath } from '../../db/paths.ts'
+import { hooksLogPath } from '../../hooks/hooks.ts'
+import { LAUNCHER_FILE } from '../../integrations/opencode.ts'
+import { bitaDirs } from '../../state/dirs.ts'
 import { UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readString, type ParsedArgs } from '../args.ts'
 import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
-import { MOVED_OUT, SIBLING_INSTALLS, TOOL_NAME, binCommand, packageRoot } from '../../kit/manifest.ts'
+import { MOVED_OUT, SIBLING_INSTALLS, TOOL_NAME, binCommand, binEntry, packageRoot } from '../../kit/manifest.ts'
 import { VERSION } from '../router.ts'
 import {
   CLAUDE_MARKETPLACE,
@@ -129,6 +133,28 @@ function pluginInPlace(steps: readonly Step[], plugin: string): boolean {
   return steps.some((step) => step.item === `plugin ${plugin}@${CLAUDE_MARKETPLACE.marketplaceName}` && (step.state === 'installed' || step.state === 'present'))
 }
 
+export interface OpenCodeLauncher {
+  command: string
+  args: string[]
+  cwd: string
+  log: string
+}
+
+export function openCodeLauncher(root: string): OpenCodeLauncher {
+  const data = bitaDirs().data
+  return { command: process.execPath, args: [binEntry(root)], cwd: data, log: hooksLogPath(databasePath()) }
+}
+
+export function writeOpenCodeLauncher(opencodeHome: string, launcher: OpenCodeLauncher): string {
+  const file = join(opencodeHome, LAUNCHER_FILE)
+  mkdirSync(dirname(file), { recursive: true })
+  mkdirSync(launcher.cwd, { recursive: true })
+  const temp = `${file}.${process.pid}.tmp`
+  writeFileSync(temp, `${JSON.stringify(launcher, null, 2)}\n`)
+  renameSync(temp, file)
+  return file
+}
+
 export async function runSetup(argv: string[]): Promise<number> {
   const args = parseCommandArgs(argv, OPTIONS, BASE_OPTIONS)
   const json = readBoolean(args, 'json')
@@ -191,6 +217,14 @@ export async function runSetup(argv: string[]): Promise<number> {
       )
     }
     steps.push(...(await kit.agents.installIntegration(wanted, { agents: others, ctx, homes, skipMcp: true, claudeCompat: 'auto' })))
+    if (others.includes('opencode')) {
+      try {
+        const file = writeOpenCodeLauncher(homes.opencode, openCodeLauncher(root))
+        steps.push({ agent: 'opencode', item: 'launcher', state: 'installed', detail: `bita launcher for the opencode plugin in ${file}`, path: file })
+      } catch (error) {
+        steps.push({ agent: 'opencode', item: 'launcher', state: 'failed', detail: `could not write the bita launcher: ${error instanceof Error ? error.message : String(error)}` })
+      }
+    }
   }
 
   const legacyShell = await removeLegacyShellFunctions()

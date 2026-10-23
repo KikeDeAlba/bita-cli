@@ -415,7 +415,7 @@ for (const nested of [{ BITA_WRAPPER_ID: 'outer' }, { BITA_CHILD: '1' }]) {
     assert.equal(h.swept, 0)
     assert.equal(h.started.length, 0)
     assert.equal(h.closed.length, 0)
-    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env: { ...env, PATH: `/usr/bin${delimiter}/fake` } }])
+    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env: { ...env, PATH: `/fake${delimiter}/usr/bin` } }])
     assert.match(errors.text(), /already inside a bita session; launching the harness without a new timer/)
   })
 }
@@ -845,7 +845,7 @@ test('after the harness exits, afterExit runs before the wrapper closes', async 
   assert.ok(Date.parse(calls[0]?.startedAt ?? '') >= before - 1)
   assert.ok(Date.parse(calls[0]?.endedAt ?? '') >= Date.parse(calls[0]?.startedAt ?? ''))
   assert.equal(h.closed.length, 1)
-  assert.equal(h.spawned[0]?.env['PATH'], `/usr/bin${delimiter}/fake`)
+  assert.equal(h.spawned[0]?.env['PATH'], `/fake${delimiter}/usr/bin`)
 })
 
 test('bita work does not hand the harness the session markers of another agent', async () => {
@@ -860,12 +860,19 @@ test('bita work does not hand the harness the session markers of another agent',
     CLAUDECODE: '1',
     CLAUDE_CODE_ENTRYPOINT: 'cli',
     CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_SSE_PORT: '4242',
+    CLAUDE_CODE_IDE_HOST_OVERRIDE: 'h',
+    VSCODE_PID: '1',
+    TERM_PROGRAM: 'vscode',
+    ANTIGRAVITY_USER_SETTING: 'keep',
+    ANTIGRAVITY_TRAJECTORY_ID: 'drop',
     KEEP: 'yes',
   }
   await h.run(['--harness', 'antigravity', '--project', 'Alpha'], { env, adapters: [fakeAdapter('antigravity', 'Antigravity')] })
   await h.run(['--', 'x'], { env: { ...env, BITA_WRAPPER_ID: 'outer' }, adapters: [fakeAdapter('claude', 'Claude')] })
   for (const spawned of h.spawned) {
-    for (const key of ['ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_AGENT', 'CODEX_THREAD_ID', 'GEMINI_SESSION_ID', 'GEMINI_PROJECT_DIR', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT']) {
+    for (const key of ['CLAUDE_CODE_SSE_PORT', 'CLAUDE_CODE_IDE_HOST_OVERRIDE', 'VSCODE_PID', 'TERM_PROGRAM', 'ANTIGRAVITY_USER_SETTING']) assert.ok(spawned.env[key], key)
+    for (const key of ['ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_TRAJECTORY_ID', 'ANTIGRAVITY_AGENT', 'CODEX_THREAD_ID', 'GEMINI_SESSION_ID', 'GEMINI_PROJECT_DIR', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT']) {
       assert.equal(spawned.env[key], undefined, key)
     }
     assert.equal(spawned.env['KEEP'], 'yes')

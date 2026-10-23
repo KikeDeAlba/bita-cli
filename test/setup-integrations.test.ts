@@ -172,6 +172,12 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     assert.match(openCodeSkill, /^name: bita$/m)
     assert.ok(existsSync(join(box.opencode, 'commands', 'bita-stop.md')))
     assert.equal(existsSync(join(box.opencode, 'plugins', 'bita.ts')), true)
+    const launcher = readJson(join(box.opencode, 'bita-launcher.json')) as { command: string; args: string[]; cwd: string; log: string }
+    assert.equal(launcher.command, process.execPath)
+    assert.equal(launcher.args.length, 1)
+    assert.ok(existsSync(launcher.args[0] as string))
+    assert.ok(existsSync(launcher.cwd))
+    assert.match(launcher.log, /hooks\.log$/)
     assert.equal(existsSync(join(box.opencode, 'opencode.json')), false)
 
     assert.ok(existsSync(join(box.agentsSkills, 'bita', 'SKILL.md')))

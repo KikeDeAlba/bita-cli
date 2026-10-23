@@ -1,6 +1,6 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -75,8 +75,15 @@ test('reads user and assistant turns from an antigravity conversation database',
   const broken = join(root, 'broken.db')
   writeFileSync(broken, 'not a database')
   await assert.rejects(readAntigravityConversation(broken), /antigravity conversation|steps/)
-  const ref = { harness: 'antigravity' as const, sessionId: null, transcriptPath: file, cwd: root, startedAt: '', endedAt: '' }
+  const conversations = join(root, '.gemini', 'antigravity-cli', 'conversations')
+  mkdirSync(conversations, { recursive: true })
+  copyFileSync(file, join(conversations, 'conv-ok.db'))
+  const ref = { harness: 'antigravity' as const, sessionId: null, transcriptPath: join(conversations, 'conv-ok.db'), cwd: root, startedAt: '', endedAt: '' }
   assert.equal((await antigravityAdapter.extractTranscript(ref)).length, 2)
+  assert.equal((await antigravityAdapter.extractTranscript({ ...ref, sessionId: '../bad' })).length, 2)
+  assert.equal((await antigravityAdapter.extractTranscript({ ...ref, sessionId: 'conv-ok', transcriptPath: null })).length, 2)
+  assert.deepEqual(await antigravityAdapter.extractTranscript({ ...ref, transcriptPath: file }), [])
+  assert.deepEqual(await antigravityAdapter.extractTranscript({ ...ref, transcriptPath: join(conversations, '..', 'conv-ok.db') }), [])
   assert.deepEqual(await antigravityAdapter.extractTranscript({ ...ref, transcriptPath: null }), [])
 })
 
@@ -156,11 +163,13 @@ test('summarize asks agy headless in read mode and validates the answer', { skip
 })
 
 test('children lose the ANTIGRAVITY_ variables and get the binary dir first on PATH', () => {
-  const env = childEnv({ PATH: '/usr/bin', ANTIGRAVITY_CONVERSATION_ID: 'c', ANTIGRAVITY_AGENT: '1', HOME: '/h' })
+  const env = childEnv({ PATH: '/usr/bin', ANTIGRAVITY_CONVERSATION_ID: 'c', ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_USER_SETTING: 'x', CLAUDE_CODE_SSE_PORT: '1', HOME: '/h' })
   assert.equal(env['ANTIGRAVITY_CONVERSATION_ID'], undefined)
   assert.equal(env['ANTIGRAVITY_AGENT'], undefined)
+  assert.equal(env['ANTIGRAVITY_USER_SETTING'], 'x')
+  assert.equal(env['CLAUDE_CODE_SSE_PORT'], '1')
   assert.equal(env['HOME'], '/h')
-  assert.equal(withBinOnPath({ PATH: '/usr/bin' }, '/opt/nvm/bin/gemini')['PATH'], `/usr/bin${delimiter}/opt/nvm/bin`)
+  assert.equal(withBinOnPath({ PATH: '/usr/bin' }, '/opt/nvm/bin/gemini')['PATH'], `/opt/nvm/bin${delimiter}/usr/bin`)
   assert.equal(withBinOnPath({ PATH: `/usr/bin${delimiter}/opt/nvm/bin${delimiter}/bin` }, '/opt/nvm/bin/gemini')['PATH'], `/usr/bin${delimiter}/opt/nvm/bin${delimiter}/bin`)
   assert.equal(withBinOnPath({}, '/opt/nvm/bin/gemini')['PATH'], '/opt/nvm/bin')
   assert.deepEqual(withBinOnPath({ PATH: '/usr/bin' }, 'gemini'), { PATH: '/usr/bin' })
@@ -244,7 +253,18 @@ test('overrides must be absolute and PATHEXT names are tried on Windows', () => 
   writeFileSync(fake, '#!/bin/sh\n')
   chmodSync(fake, 0o755)
   assert.equal(resolveHarnessBin('BITA_X', 'gemini', { BITA_X: fake }), fake)
-  assert.equal(resolveHarnessBin('BITA_X', 'gemini', { BITA_X: 'gemini' }), null)
+  const original = process.stderr.write.bind(process.stderr)
+  let warned = ''
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    warned += String(chunk)
+    return true
+  }) as typeof process.stderr.write
+  try {
+    assert.equal(resolveHarnessBin('BITA_X', 'gemini', { BITA_X: 'gemini' }), null)
+  } finally {
+    process.stderr.write = original
+  }
+  assert.match(warned, /BITA_X must be an absolute path/)
   assert.deepEqual(executableNames('agy', { PATHEXT: '.EXE;.CMD' }, 'win32'), ['agy.exe', 'agy.cmd', 'agy'])
   assert.deepEqual(executableNames('agy.cmd', { PATHEXT: '.EXE;.CMD' }, 'win32'), ['agy.cmd'])
   assert.deepEqual(executableNames('agy', {}, 'linux'), ['agy'])

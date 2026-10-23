@@ -59,7 +59,13 @@ export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env, p
 
 export function resolveHarnessBin(envVar: string, name: string, env: NodeJS.ProcessEnv = process.env, agent?: AgentName): string | null {
   const override = env[envVar]
-  if (override) return isAbsolute(override) && isExecutable(override) ? override : null
+  if (override) {
+    if (!isAbsolute(override)) {
+      process.stderr.write(`bita: ${envVar} must be an absolute path; ignoring "${override}".\n`)
+      return null
+    }
+    return isExecutable(override) ? override : null
+  }
   const agents = kitAgents()
   const ctx = kitContext(env)
   if (agent && agents && ctx) return agents.findAgentBinarySync(agent, { ctx })
@@ -77,7 +83,7 @@ export function withBinOnPath(env: NodeJS.ProcessEnv, bin: string): NodeJS.Proce
   const current = env[key] ?? ''
   const parts = current.split(delimiter)
   if (parts.includes(dir)) return env
-  return { ...env, [key]: current ? `${current}${delimiter}${dir}` : dir }
+  return { ...env, [key]: current ? `${dir}${delimiter}${current}` : dir }
 }
 
 export interface SpawnCommand {

@@ -6,7 +6,7 @@ import { childEnv } from '../domain/session.ts'
 import { homeOf, kitAgents, kitContext } from '../kit/runtime.ts'
 import { CLAUDE_SKIP_PERMISSION_FLAGS, droppedWarning, parseClaudeArgs } from './args.ts'
 import { errorMessage, remainingMs, resolveHarnessBin } from './process.ts'
-import { conversationFile, isConversationId } from './antigravity-ids.ts'
+import { confinedTranscript, conversationFile, isConversationId } from './antigravity-ids.ts'
 import { protoString } from './protobuf.ts'
 import { harnessBinEnvVar } from './registry.ts'
 import { parseJsonLoose, retryInstructions, summaryContext, summaryInstructions, validateSessionSummary } from './summary.ts'
@@ -230,7 +230,8 @@ export const antigravityAdapter: HarnessAdapter = {
   },
   launchArgs,
   async extractTranscript(ref: TranscriptRef): Promise<Turn[]> {
-    const file = ref.sessionId ? antigravityConversationPath(ref.sessionId) : ref.transcriptPath
+    const fromId = ref.sessionId ? antigravityConversationPath(ref.sessionId) : null
+    const file = fromId ?? (ref.transcriptPath ? confinedTranscript(antigravityHome(), ref.transcriptPath) : null)
     if (!file) return []
     return readAntigravityConversation(file)
   },
