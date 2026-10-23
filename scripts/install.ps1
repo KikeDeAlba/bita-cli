@@ -53,9 +53,15 @@ function Install-Dependencies {
 }
 
 function Install-Shim([string]$BinDir) {
-    $entry = Join-Path $RepoRoot 'src/bin/bita.ts'
+    $entry = (Join-Path $RepoRoot 'src/bin/bita.ts').Replace('%', '%%')
+    $node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+    if (-not $node) {
+        Write-Warn 'node is not on PATH; cannot write the shim'
+        exit 1
+    }
+    $node = $node.Replace('%', '%%')
     $shim = Join-Path $BinDir 'bita.cmd'
-    $content = "@echo off`r`nnode `"$entry`" %*`r`n"
+    $content = "@echo off`r`n`"$node`" `"$entry`" %*`r`n"
     if ((Test-Path $shim) -and ((Get-Content -Raw $shim) -eq $content)) {
         Write-Info "already linked: $shim"
         return
