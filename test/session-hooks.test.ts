@@ -237,6 +237,18 @@ test('any bita run inside agy links the antigravity conversation of the wrapper'
   }
 })
 
+test('an invalid conversation id in the environment is never linked', () => {
+  const b = box('antigravity')
+  try {
+    for (const id of ['../../x', '-x']) {
+      spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env: { ...wrapped(b, 'antigravity'), ANTIGRAVITY_CONVERSATION_ID: id } })
+      assert.equal(session(b)?.sessionId, null)
+    }
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true })
+  }
+})
+
 test('the conversation id is ignored outside an antigravity wrapper', () => {
   const b = box('gemini')
   try {

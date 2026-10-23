@@ -25,30 +25,26 @@ import { hooksLogPath, type HookPayload } from '../hooks/hooks.ts'
 import { binEntry } from '../kit/manifest.ts'
 import { enrichEntry } from './enrich.ts'
 
-export const WRAPPER_ID_ENV = 'BITA_WRAPPER_ID'
-export const HARNESS_ENV = 'BITA_HARNESS'
-export const SESSION_PROJECT_ENV = 'BITA_SESSION_PROJECT'
-export const CHILD_ENV = 'BITA_CHILD'
-
-const SCRUBBED_ENV = [
-  WRAPPER_ID_ENV,
+import {
+  ANTIGRAVITY_CONVERSATION_ENV,
+  CHILD_ENV,
   HARNESS_ENV,
+  HEADLESS_ENV,
   SESSION_PROJECT_ENV,
-  'CLAUDECODE',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CODEX_SANDBOX',
-  'CODEX_SANDBOX_NETWORK_DISABLED',
-]
+  WRAPPER_ID_ENV,
+  withoutHarnessSession,
+} from './env-names.ts'
+import { isConversationId } from '../harness/antigravity-ids.ts'
 
-const SCRUBBED_ENV_PREFIXES = ['ANTIGRAVITY_']
+export { ANTIGRAVITY_CONVERSATION_ENV, CHILD_ENV, HARNESS_ENV, HEADLESS_ENV, SESSION_PROJECT_ENV, WRAPPER_ID_ENV, withoutHarnessSession }
+
+const SCRUBBED_ENV = [WRAPPER_ID_ENV, HARNESS_ENV, SESSION_PROJECT_ENV]
 
 const ORPHAN_RETRY_MS = 15 * 60_000
 const STALE_CLAIM_MS = 10 * 60_000
 const PROCESS_START_SLACK_MS = 1_000
 const PS_TIMEOUT_MS = 2_000
 const UNVERIFIABLE_WRAPPER_MS = 24 * 60 * 60_000
-export const HEADLESS_ENV = 'KIT_HEADLESS'
-export const ANTIGRAVITY_CONVERSATION_ENV = 'ANTIGRAVITY_CONVERSATION_ID'
 
 export interface WrapperEnv {
   wrapperId: string
@@ -115,9 +111,8 @@ export function wrapperEnv(env: NodeJS.ProcessEnv = process.env): WrapperEnv | n
 }
 
 export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const next: NodeJS.ProcessEnv = { ...env }
+  const next = withoutHarnessSession(env)
   for (const key of SCRUBBED_ENV) delete next[key]
-  for (const key of Object.keys(next)) if (SCRUBBED_ENV_PREFIXES.some((prefix) => key.toUpperCase().startsWith(prefix))) delete next[key]
   next[CHILD_ENV] = '1'
   return next
 }
@@ -275,12 +270,14 @@ export function bindHarnessConversation(
   transcriptPath: (conversationId: string) => string | null,
 ): boolean {
   const conversationId = env[ANTIGRAVITY_CONVERSATION_ENV]
-  if (!conversationId) return false
+  if (!isConversationId(conversationId)) return false
   const wrapper = wrapperEnv(env)
   if (!wrapper || wrapper.harness !== 'antigravity') return false
+  const file = transcriptPath(conversationId)
+  if (file === null) return false
   const ctx = open()
   try {
-    return attachExitSession(ctx, wrapper.wrapperId, { sessionId: conversationId, transcriptPath: transcriptPath(conversationId) })
+    return attachExitSession(ctx, wrapper.wrapperId, { sessionId: conversationId, transcriptPath: file })
   } finally {
     ctx.db.close()
   }
@@ -314,12 +311,12 @@ export function processStartedAt(pid: number, platform: NodeJS.Platform = proces
 export function wrapperAlive(
   pid: number,
   sinceIso: string,
-  probe: { alive?: (pid: number) => boolean; startedAt?: (pid: number) => number | null; now?: number } = {},
+  probe: { alive?: (pid: number) => boolean; startedAt?: (pid: number) => number | null; now?: number; platform?: NodeJS.Platform } = {},
 ): boolean {
   if (!(probe.alive ?? processAlive)(pid)) return false
   const started = (probe.startedAt ?? processStartedAt)(pid)
   const since = Date.parse(sinceIso)
-  if (started === null) return (probe.now ?? Date.now()) - since <= UNVERIFIABLE_WRAPPER_MS
+  if (started === null) return (probe.platform ?? process.platform) !== 'win32' || (probe.now ?? Date.now()) - since <= UNVERIFIABLE_WRAPPER_MS
   return started <= since + PROCESS_START_SLACK_MS
 }
 

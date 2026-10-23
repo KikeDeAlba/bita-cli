@@ -35,19 +35,31 @@ export function isExecutable(file: string): boolean {
   }
 }
 
-export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
+export function executableNames(name: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string[] {
+  if (platform !== 'win32') return [name]
+  const extensions = (env[Object.keys(env).find((key) => key.toUpperCase() === 'PATHEXT') ?? 'PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .filter((extension) => extension.length > 0)
+  if (extensions.some((extension) => name.toLowerCase().endsWith(extension.toLowerCase()))) return [name]
+  return [...extensions.map((extension) => `${name}${extension.toLowerCase()}`), name]
+}
+
+export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
   if (isAbsolute(name)) return isExecutable(name) ? name : null
-  for (const dir of (env['PATH'] ?? '').split(delimiter)) {
+  const separator = platform === 'win32' ? ';' : delimiter
+  for (const dir of (env[pathKeyOf(env)] ?? '').split(separator)) {
     if (!dir) continue
-    const candidate = join(dir, name)
-    if (isExecutable(candidate)) return candidate
+    for (const candidateName of executableNames(name, env, platform)) {
+      const candidate = join(dir, candidateName)
+      if (isExecutable(candidate)) return candidate
+    }
   }
   return null
 }
 
 export function resolveHarnessBin(envVar: string, name: string, env: NodeJS.ProcessEnv = process.env, agent?: AgentName): string | null {
   const override = env[envVar]
-  if (override) return isExecutable(override) ? override : null
+  if (override) return isAbsolute(override) && isExecutable(override) ? override : null
   const agents = kitAgents()
   const ctx = kitContext(env)
   if (agent && agents && ctx) return agents.findAgentBinarySync(agent, { ctx })
@@ -64,8 +76,8 @@ export function withBinOnPath(env: NodeJS.ProcessEnv, bin: string): NodeJS.Proce
   const key = pathKeyOf(env)
   const current = env[key] ?? ''
   const parts = current.split(delimiter)
-  if (parts[0] === dir) return env
-  return { ...env, [key]: current ? `${dir}${delimiter}${current}` : dir }
+  if (parts.includes(dir)) return env
+  return { ...env, [key]: current ? `${current}${delimiter}${dir}` : dir }
 }
 
 export interface SpawnCommand {

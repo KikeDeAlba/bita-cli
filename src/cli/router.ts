@@ -12,6 +12,7 @@ import { runMerge } from './commands/merge.ts'
 import { runReport } from './commands/report.ts'
 import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/timer.ts'
 import { writeOut } from './output.ts'
+import { ANTIGRAVITY_CONVERSATION_ENV, WRAPPER_ID_ENV } from '../domain/env-names.ts'
 
 export const VERSION = '1.7.0'
 
@@ -188,7 +189,7 @@ function assertNoMovedFlags(command: string, rest: readonly string[]): void {
 }
 
 async function bindConversation(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  if (!env['ANTIGRAVITY_CONVERSATION_ID'] || !env['BITA_WRAPPER_ID']) return
+  if (!env[ANTIGRAVITY_CONVERSATION_ENV] || !env[WRAPPER_ID_ENV]) return
   try {
     const [{ bindHarnessConversation }, { createLocalContext }, { antigravityConversationPath }] = await Promise.all([
       import('../domain/session.ts'),
@@ -196,8 +197,13 @@ async function bindConversation(env: NodeJS.ProcessEnv = process.env): Promise<v
       import('../harness/antigravity.ts'),
     ])
     bindHarnessConversation(env, () => createLocalContext({ values: {}, positionals: [] }), (id) => antigravityConversationPath(id, env))
-  } catch {
-    return
+  } catch (error) {
+    try {
+      const [{ appendHookLog }, { databasePath }] = await Promise.all([import('../domain/session.ts'), import('../db/paths.ts')])
+      appendHookLog(databasePath(env), `antigravity conversation not linked: ${error instanceof Error ? error.message : String(error)}`)
+    } catch {
+      return
+    }
   }
 }
 

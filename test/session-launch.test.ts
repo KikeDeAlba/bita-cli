@@ -414,7 +414,7 @@ for (const nested of [{ BITA_WRAPPER_ID: 'outer' }, { BITA_CHILD: '1' }]) {
     assert.equal(h.swept, 0)
     assert.equal(h.started.length, 0)
     assert.equal(h.closed.length, 0)
-    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env: { ...env, PATH: `/fake${delimiter}/usr/bin` } }])
+    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env: { ...env, PATH: `/usr/bin${delimiter}/fake` } }])
     assert.match(errors.text(), /already inside a bita session; launching the harness without a new timer/)
   })
 }
@@ -847,5 +847,31 @@ test('after the harness exits, afterExit runs before the wrapper closes', async 
   assert.ok(Date.parse(calls[0]?.startedAt ?? '') >= before - 1)
   assert.ok(Date.parse(calls[0]?.endedAt ?? '') >= Date.parse(calls[0]?.startedAt ?? ''))
   assert.equal(h.closed.length, 1)
-  assert.equal(h.spawned[0]?.env['PATH'], `/fake${delimiter}/usr/bin`)
+  assert.equal(h.spawned[0]?.env['PATH'], `/usr/bin${delimiter}/fake`)
+})
+
+test('bita work does not hand the harness the session markers of another agent', async () => {
+  const h = harness()
+  const env = {
+    PATH: '/usr/bin',
+    ANTIGRAVITY_CONVERSATION_ID: 'foreign',
+    ANTIGRAVITY_AGENT: '1',
+    CODEX_THREAD_ID: 't',
+    GEMINI_SESSION_ID: 'g',
+    GEMINI_PROJECT_DIR: '/p',
+    CLAUDECODE: '1',
+    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    KEEP: 'yes',
+  }
+  await h.run(['--harness', 'antigravity', '--project', 'Alpha'], { env, adapters: [fakeAdapter('antigravity', 'Antigravity')] })
+  await h.run(['--', 'x'], { env: { ...env, BITA_WRAPPER_ID: 'outer' }, adapters: [fakeAdapter('claude', 'Claude')] })
+  for (const spawned of h.spawned) {
+    for (const key of ['ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_AGENT', 'CODEX_THREAD_ID', 'GEMINI_SESSION_ID', 'GEMINI_PROJECT_DIR', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT']) {
+      assert.equal(spawned.env[key], undefined, key)
+    }
+    assert.equal(spawned.env['KEEP'], 'yes')
+    assert.equal(spawned.env['CLAUDE_CODE_USE_BEDROCK'], '1')
+  }
+  assert.equal(h.spawned[1]?.env['BITA_WRAPPER_ID'], 'outer')
 })

@@ -23,6 +23,7 @@ import {
   WRAPPER_ID_ENV,
   attachExitSession,
   closeWrapper,
+  withoutHarnessSession,
   isChild,
   startSessionEntry,
   sweepOrphans,
@@ -400,7 +401,7 @@ async function launchNested(args: ParsedArgs, deps: LaunchDeps, harnessArgs: rea
   const plan = adapter.launchArgs(harnessArgs)
   for (const warning of plan.warnings) writeErr(warning)
   const bin = adapter.resolveBin(deps.env) ?? adapter.bin
-  return deps.spawnHarness(bin, plan.args, withBinOnPath(deps.env, bin))
+  return deps.spawnHarness(bin, plan.args, withBinOnPath(withoutHarnessSession(deps.env), bin))
 }
 
 export async function runSessionLaunch(argv: string[], overrides: Partial<LaunchDeps> = {}): Promise<number> {
@@ -425,7 +426,7 @@ export async function runSessionLaunch(argv: string[], overrides: Partial<Launch
   const plan = adapter.launchArgs(resumeSessionId === null ? harnessArgs : ['--resume', resumeSessionId, ...harnessArgs])
   for (const warning of plan.warnings) writeErr(warning)
   const bin = adapter.resolveBin(deps.env) ?? adapter.bin
-  const env = withBinOnPath(deps.env, bin)
+  const env = withBinOnPath(withoutHarnessSession(deps.env), bin)
 
   if (!project || entryId === null) return deps.spawnHarness(bin, plan.args, env, cwd)
 

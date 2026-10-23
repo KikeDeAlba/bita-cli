@@ -11,7 +11,9 @@ process.env['HOME'] = root
 process.env['KIT_NO_EVENTS'] = '1'
 after(() => rmSync(root, { recursive: true, force: true }))
 
-const { antigravityAdapter, findExitConversation, readAntigravityConversation } = await import('../src/harness/antigravity.ts')
+const { antigravityAdapter, antigravityConversationPath, findExitConversation, readAntigravityConversation, readHistoryTail } = await import('../src/harness/antigravity.ts')
+const { isConversationId } = await import('../src/harness/antigravity-ids.ts')
+const { executableNames, findOnPath, resolveHarnessBin } = await import('../src/harness/process.ts')
 const { harnessBinEnvVar } = await import('../src/harness/registry.ts')
 const { taskkillPath, withBinOnPath } = await import('../src/harness/process.ts')
 const { childEnv, processStartedAt, wrapperAlive, attachExitSession } = await import('../src/domain/session.ts')
@@ -64,7 +66,13 @@ test('reads user and assistant turns from an antigravity conversation database',
     { role: 'user', text: 'arregla el bug' },
     { role: 'assistant', text: 'Listo, quedó arreglado.' },
   ])
-  assert.deepEqual(await readAntigravityConversation(join(root, 'missing.db')), [])
+  await assert.rejects(readAntigravityConversation(join(root, 'missing.db')), /cannot open/)
+  const empty = join(root, 'empty.db')
+  conversationDb(empty, [])
+  assert.deepEqual(await readAntigravityConversation(empty), [])
+  const broken = join(root, 'broken.db')
+  writeFileSync(broken, 'not a database')
+  await assert.rejects(readAntigravityConversation(broken), /antigravity conversation|steps/)
   const ref = { harness: 'antigravity' as const, sessionId: null, transcriptPath: file, cwd: root, startedAt: '', endedAt: '' }
   assert.equal((await antigravityAdapter.extractTranscript(ref)).length, 2)
   assert.deepEqual(await antigravityAdapter.extractTranscript({ ...ref, transcriptPath: null }), [])
@@ -152,8 +160,9 @@ test('children lose the ANTIGRAVITY_ variables and get the binary dir first on P
   assert.equal(env['ANTIGRAVITY_CONVERSATION_ID'], undefined)
   assert.equal(env['ANTIGRAVITY_AGENT'], undefined)
   assert.equal(env['HOME'], '/h')
-  assert.equal(withBinOnPath({ PATH: '/usr/bin' }, '/opt/nvm/bin/gemini')['PATH'], `/opt/nvm/bin${delimiter}/usr/bin`)
-  assert.equal(withBinOnPath({ PATH: `/opt/nvm/bin${delimiter}/usr/bin` }, '/opt/nvm/bin/gemini')['PATH'], `/opt/nvm/bin${delimiter}/usr/bin`)
+  assert.equal(withBinOnPath({ PATH: '/usr/bin' }, '/opt/nvm/bin/gemini')['PATH'], `/usr/bin${delimiter}/opt/nvm/bin`)
+  assert.equal(withBinOnPath({ PATH: `/usr/bin${delimiter}/opt/nvm/bin${delimiter}/bin` }, '/opt/nvm/bin/gemini')['PATH'], `/usr/bin${delimiter}/opt/nvm/bin${delimiter}/bin`)
+  assert.equal(withBinOnPath({}, '/opt/nvm/bin/gemini')['PATH'], '/opt/nvm/bin')
   assert.deepEqual(withBinOnPath({ PATH: '/usr/bin' }, 'gemini'), { PATH: '/usr/bin' })
   assert.equal(taskkillPath({ SystemRoot: 'D:\\Win' }), 'D:\\Win\\System32\\taskkill.exe')
   assert.equal(taskkillPath({}), 'C:\\Windows\\System32\\taskkill.exe')
@@ -161,9 +170,10 @@ test('children lose the ANTIGRAVITY_ variables and get the binary dir first on P
 
 test('a wrapper whose start time cannot be read counts as orphan after 24 hours', () => {
   const since = '2026-10-20T10:00:00.000Z'
-  const probe = { alive: () => true, startedAt: () => null }
+  const probe = { alive: () => true, startedAt: () => null, platform: 'win32' as const }
   assert.equal(wrapperAlive(1, since, { ...probe, now: Date.parse(since) + 23 * 3_600_000 }), true)
   assert.equal(wrapperAlive(1, since, { ...probe, now: Date.parse(since) + 25 * 3_600_000 }), false)
+  assert.equal(wrapperAlive(1, since, { ...probe, platform: 'linux', now: Date.parse(since) + 25 * 3_600_000 }), true)
   assert.equal(wrapperAlive(1, since, { alive: () => false, startedAt: () => null, now: Date.parse(since) }), false)
   assert.equal(wrapperAlive(1, since, { alive: () => true, startedAt: () => Date.parse(since) + 60_000 }), false)
   assert.equal(processStartedAt(process.pid, 'win32'), null)
@@ -197,4 +207,46 @@ test('bita-timer looks for bita in the kit registry and the usual install dirs',
   assert.ok(unix.some((candidate) => candidate[0] === '/h/.local/bin/bita'))
   const windows = binaryCandidates({ USERPROFILE: 'C:\\Users\\a', APPDATA: 'C:\\Users\\a\\AppData\\Roaming' })
   assert.ok(windows.some((candidate) => candidate[0] === 'C:\\Users\\a\\AppData\\Roaming\\npm\\bita.cmd'))
+})
+
+test('conversation ids are validated and stay inside conversations/', async () => {
+  for (const id of ['../etc/passwd', '-x', '', 'a/b', 'a\\b', '.hidden', 'x'.repeat(129), 'a b']) {
+    assert.equal(isConversationId(id), false, id)
+    assert.equal(antigravityConversationPath(id, { HOME: '/h' }), null, id)
+  }
+  assert.equal(isConversationId('09b9fe5f-b94d-4c30-875e-b51afd912917'), true)
+  assert.equal(antigravityConversationPath('abc_1', { HOME: '/h' }), join('/h', '.gemini', 'antigravity-cli', 'conversations', 'abc_1.db'))
+  const home = mkdtempSync(join(root, 'ids-'))
+  mkdirSync(join(home, '.gemini', 'antigravity-cli'), { recursive: true })
+  const at = Date.parse('2026-10-22T10:00:00.000Z')
+  writeFileSync(
+    join(home, '.gemini', 'antigravity-cli', 'history.jsonl'),
+    [JSON.stringify({ timestamp: at, workspace: home, conversationId: 'good' }), JSON.stringify({ timestamp: at + 1, workspace: home, conversationId: '../../evil' }), JSON.stringify({ timestamp: at + 2, workspace: home, conversationId: '-x' })].join('\n'),
+  )
+  const found = await findExitConversation({ cwd: home, startedAt: new Date(at).toISOString(), endedAt: new Date(at + 5).toISOString() }, { HOME: home })
+  assert.equal(found?.sessionId, 'good')
+})
+
+test('only the tail of a large history is read', async () => {
+  const file = join(root, 'big-history.jsonl')
+  const lines = Array.from({ length: 200 }, (_, i) => JSON.stringify({ n: i, pad: 'x'.repeat(50) }))
+  writeFileSync(file, lines.join('\n'))
+  const tail = await readHistoryTail(file, 1_000)
+  assert.ok(tail !== null && tail.length <= 1_000)
+  const parsed = (tail ?? '').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { n: number })
+  assert.equal(parsed.at(-1)?.n, 199)
+  assert.equal(await readHistoryTail(join(root, 'none.jsonl')), null)
+})
+
+test('overrides must be absolute and PATHEXT names are tried on Windows', () => {
+  const dir = mkdtempSync(join(root, 'bins-'))
+  const fake = join(dir, 'gemini')
+  writeFileSync(fake, '#!/bin/sh\n')
+  chmodSync(fake, 0o755)
+  assert.equal(resolveHarnessBin('BITA_X', 'gemini', { BITA_X: fake }), fake)
+  assert.equal(resolveHarnessBin('BITA_X', 'gemini', { BITA_X: 'gemini' }), null)
+  assert.deepEqual(executableNames('agy', { PATHEXT: '.EXE;.CMD' }, 'win32'), ['agy.exe', 'agy.cmd', 'agy'])
+  assert.deepEqual(executableNames('agy.cmd', { PATHEXT: '.EXE;.CMD' }, 'win32'), ['agy.cmd'])
+  assert.deepEqual(executableNames('agy', {}, 'linux'), ['agy'])
+  assert.equal(findOnPath('gemini', { Path: dir }), fake)
 })

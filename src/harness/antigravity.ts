@@ -1,14 +1,15 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, open, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { childEnv } from '../domain/session.ts'
 import { homeOf, kitAgents, kitContext } from '../kit/runtime.ts'
 import { CLAUDE_SKIP_PERMISSION_FLAGS, droppedWarning, parseClaudeArgs } from './args.ts'
 import { errorMessage, remainingMs, resolveHarnessBin } from './process.ts'
+import { conversationFile, isConversationId } from './antigravity-ids.ts'
 import { protoString } from './protobuf.ts'
 import { harnessBinEnvVar } from './registry.ts'
 import { parseJsonLoose, retryInstructions, summaryContext, summaryInstructions, validateSessionSummary } from './summary.ts'
-import { parseJsonLines, pushTurn, readTextFile } from './transcript.ts'
+import { parseJsonLines, pushTurn } from './transcript.ts'
 import type { ExitRef, ExitSession, HarnessAdapter, LaunchPlan, SummaryInput, SummaryResult, TranscriptRef, Turn } from './types.ts'
 
 const LABEL = 'Antigravity'
@@ -20,15 +21,40 @@ const USER_STEP = 14
 const ASSISTANT_STEP = 15
 const USER_TEXT_PATH = [19, 2] as const
 const ASSISTANT_TEXT_PATH = [20, 1] as const
+export const HISTORY_TAIL_BYTES = 2 * 1024 * 1024
+export const MAX_STEPS = 20_000
 
-export const ANTIGRAVITY_CONVERSATION_ENV = 'ANTIGRAVITY_CONVERSATION_ID'
+export { ANTIGRAVITY_CONVERSATION_ENV } from '../domain/env-names.ts'
 
 export function antigravityHome(env: NodeJS.ProcessEnv = process.env): string {
   return join(homeOf(env), '.gemini', 'antigravity-cli')
 }
 
-export function antigravityConversationPath(conversationId: string, env: NodeJS.ProcessEnv = process.env): string {
-  return join(antigravityHome(env), 'conversations', `${conversationId}.db`)
+export function antigravityConversationPath(conversationId: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  return conversationFile(antigravityHome(env), conversationId)
+}
+
+export async function readHistoryTail(file: string, maxBytes: number = HISTORY_TAIL_BYTES): Promise<string | null> {
+  let handle
+  try {
+    handle = await open(file, 'r')
+  } catch {
+    return null
+  }
+  try {
+    const { size } = await handle.stat()
+    const length = Math.min(size, maxBytes)
+    const buffer = Buffer.alloc(length)
+    await handle.read(buffer, 0, length, size - length)
+    const text = buffer.toString('utf8')
+    if (length === size) return text
+    const firstBreak = text.indexOf('\n')
+    return firstBreak < 0 ? '' : text.slice(firstBreak + 1)
+  } catch {
+    return null
+  } finally {
+    await handle.close()
+  }
 }
 
 function isKeptFlag(token: string): boolean {
@@ -78,7 +104,7 @@ async function canonical(path: string): Promise<string> {
 }
 
 export async function findExitConversation(ref: ExitRef, env: NodeJS.ProcessEnv = process.env): Promise<ExitSession | null> {
-  const text = await readTextFile(join(antigravityHome(env), 'history.jsonl'))
+  const text = await readHistoryTail(join(antigravityHome(env), 'history.jsonl'))
   if (text === null) return null
   const from = Date.parse(ref.startedAt) - HISTORY_SLACK_MS
   if (Number.isNaN(from)) return null
@@ -88,11 +114,13 @@ export async function findExitConversation(ref: ExitRef, env: NodeJS.ProcessEnv 
     const id = record['conversationId']
     const at = record['timestamp']
     const workspace = record['workspace']
-    if (typeof id !== 'string' || !id || typeof at !== 'number' || typeof workspace !== 'string') continue
+    if (!isConversationId(id) || typeof at !== 'number' || typeof workspace !== 'string') continue
     if (at < from || !workspaces.has(workspace)) continue
     if (!latest || at >= latest.at) latest = { id, at }
   }
-  return latest ? { sessionId: latest.id, transcriptPath: antigravityConversationPath(latest.id, env) } : null
+  if (!latest) return null
+  const transcriptPath = antigravityConversationPath(latest.id, env)
+  return transcriptPath ? { sessionId: latest.id, transcriptPath } : null
 }
 
 function stepText(stepType: number, payload: Uint8Array): { role: Turn['role']; text: string } | null {
@@ -107,16 +135,23 @@ function stepText(stepType: number, payload: Uint8Array): { role: Turn['role']; 
   return null
 }
 
+export class ConversationReadError extends Error {}
+
 export async function readAntigravityConversation(file: string): Promise<Turn[]> {
   const { DatabaseSync } = await import('node:sqlite')
   let db: InstanceType<typeof DatabaseSync>
   try {
     db = new DatabaseSync(file, { readOnly: true })
-  } catch {
-    return []
+  } catch (error) {
+    throw new ConversationReadError(`cannot open the antigravity conversation ${file}: ${errorMessage(error)}`)
   }
   try {
-    const rows = db.prepare('SELECT step_type, step_payload FROM steps ORDER BY idx').all() as { step_type: unknown; step_payload: unknown }[]
+    let rows: { step_type: unknown; step_payload: unknown }[]
+    try {
+      rows = db.prepare('SELECT step_type, step_payload FROM steps ORDER BY idx LIMIT ?').all(MAX_STEPS) as typeof rows
+    } catch (error) {
+      throw new ConversationReadError(`cannot read the steps of ${file}: ${errorMessage(error)}`)
+    }
     const turns: Turn[] = []
     for (const row of rows) {
       if (typeof row.step_type !== 'number' || !(row.step_payload instanceof Uint8Array)) continue
@@ -124,8 +159,6 @@ export async function readAntigravityConversation(file: string): Promise<Turn[]>
       if (turn) pushTurn(turns, turn.role, turn.text)
     }
     return turns
-  } catch {
-    return []
   } finally {
     db.close()
   }
@@ -189,7 +222,7 @@ export const antigravityAdapter: HarnessAdapter = {
   },
   launchArgs,
   async extractTranscript(ref: TranscriptRef): Promise<Turn[]> {
-    const file = ref.transcriptPath ?? (ref.sessionId ? antigravityConversationPath(ref.sessionId) : null)
+    const file = ref.sessionId ? antigravityConversationPath(ref.sessionId) : ref.transcriptPath
     if (!file) return []
     return readAntigravityConversation(file)
   },
