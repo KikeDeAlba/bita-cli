@@ -118,7 +118,7 @@ export const opencodeAdapter: HarnessAdapter = {
   bin: 'opencode',
   defaultSummaryModel: 'openai/gpt-5.6-luna',
   resolveBin(env: NodeJS.ProcessEnv = process.env): string | null {
-    return resolveHarnessBin(harnessBinEnvVar('opencode'), 'opencode', env)
+    return resolveHarnessBin(harnessBinEnvVar('opencode'), 'opencode', env, 'opencode')
   },
   available(env: NodeJS.ProcessEnv = process.env): boolean {
     return opencodeAdapter.resolveBin(env) !== null

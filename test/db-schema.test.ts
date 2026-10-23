@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { LATEST_VERSION } from '../src/db/schema.ts'
+import { LATEST_VERSION, MIGRATIONS } from '../src/db/schema.ts'
+import { DatabaseSync } from 'node:sqlite'
 import { migrate, openDatabase, openMemoryDatabase, readSchemaVersion } from '../src/db/open.ts'
 import { DB_PATH_ENV_VAR, databasePath } from '../src/db/paths.ts'
 import { SCHEMA_VERSION } from '../src/config/constants.ts'
@@ -30,7 +31,7 @@ test('refuses a database written by a newer build', () => {
   db.close()
 
   assert.throws(() => openDatabase(path), /newer version/)
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
 })
 
 test('enforces foreign keys so a link cannot outlive its entry', () => {
@@ -101,7 +102,8 @@ test('the JSON envelope version is not the schema version', () => {
 
 test('reads the database location from the environment', () => {
   assert.equal(databasePath({ [DB_PATH_ENV_VAR]: '/tmp/custom.db' }), '/tmp/custom.db')
-  assert.equal(databasePath({ XDG_DATA_HOME: '/data' }), '/data/bita/bita.db')
+  if (process.platform !== 'win32') assert.equal(databasePath({ XDG_DATA_HOME: '/data' }), '/data/bita/bita.db')
+  else assert.equal(databasePath({ LOCALAPPDATA: 'C:\\Data' }), 'C:\\Data\\bita\\bita.db')
 })
 
 test('version 9 adds a nullable kind to every entry, existing ones included', () => {
@@ -182,5 +184,58 @@ test('version 14 links sessions to entries, checks their states and cascades on 
 
   db.prepare('DELETE FROM entries WHERE id = ?').run(entry)
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions').get() as { n: number }).n, 0)
+  db.close()
+})
+
+function databaseAt(version: number): DatabaseSync {
+  const db = new DatabaseSync(':memory:')
+  db.exec('PRAGMA foreign_keys = ON')
+  for (const migration of MIGRATIONS) {
+    if (migration.version > version) break
+    for (const statement of migration.statements) db.exec(statement)
+    migration.run?.(db)
+    db.exec(`PRAGMA user_version = ${migration.version}`)
+  }
+  return db
+}
+
+test('version 15 lets antigravity sessions in and keeps the sessions already recorded', () => {
+  const db = databaseAt(14)
+  const at = '2026-10-20T10:00:00.000Z'
+  const end = '2026-10-20T11:00:00.000Z'
+  const entry = (description: string) =>
+    Number(
+      db
+        .prepare(`INSERT INTO entries (description, started_at, source, created_at, updated_at) VALUES (?, ?, 'session', ?, ?)`)
+        .run(description, at, at, at).lastInsertRowid,
+    )
+  const first = entry('one')
+  const second = entry('two')
+  const third = entry('three')
+  const insert = db.prepare(
+    `INSERT INTO entry_sessions (entry_id, wrapper_id, wrapper_pid, harness, session_id, transcript_path, cwd, started_at, ended_at, end_reason, finalized_at, outcome, error)
+     VALUES (?, ?, 42, ?, ?, ?, '/repo', ?, ?, ?, ?, ?, ?)`,
+  )
+  insert.run(first, 'w1', 'claude', 's1', '/t/s1.jsonl', at, end, 'exit', end, 'summarized', null)
+  insert.run(second, 'w2', 'gemini', null, null, at, null, null, null, null, null)
+  assert.throws(() => insert.run(third, 'w3', 'antigravity', null, null, at, null, null, null, null, null), /CHECK/)
+  const before = db.prepare('SELECT * FROM entry_sessions ORDER BY id').all()
+
+  assert.equal(migrate(db), LATEST_VERSION)
+  assert.ok(LATEST_VERSION >= 15)
+  assert.deepEqual(db.prepare('SELECT * FROM entry_sessions ORDER BY id').all(), before)
+  const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'entry_sessions' AND sql IS NOT NULL ORDER BY name").all() as { name: string }[]).map((row) => row.name)
+  assert.deepEqual(indexes, ['entry_sessions_open', 'entry_sessions_session', 'entry_sessions_wrapper'])
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'entry_sessions_next'").get() as { n: number }).n, 0)
+
+  insert.run(third, 'w3', 'antigravity', 'conv', null, at, null, null, null, null, null)
+  const row = db.prepare('SELECT id, harness FROM entry_sessions WHERE entry_id = ?').get(third) as { id: number; harness: string }
+  assert.equal(row.harness, 'antigravity')
+  assert.ok(row.id > 2)
+  assert.throws(() => insert.run(entry('four'), 'w4', 'cursor', null, null, at, null, null, null, null, null), /CHECK/)
+  assert.throws(() => insert.run(third, 'w5', 'claude', null, null, at, null, null, null, null, null), /UNIQUE/)
+  db.prepare('DELETE FROM entries WHERE id = ?').run(first)
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions WHERE entry_id = ?').get(first) as { n: number }).n, 0)
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [])
   db.close()
 })

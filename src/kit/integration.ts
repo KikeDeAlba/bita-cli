@@ -155,7 +155,12 @@ export function integration(root: string, options: IntegrationOptions = {}): Age
     opencode: { plugins: [{ name: TOOL_NAME, file: opencodePluginSource(root) }] },
     codex: { hooks: codexHooks(options.codexEditMatcher) },
     gemini: { hooks: geminiHooks(options.geminiEditMatcher) },
+    ...(existsSync(antigravityRulesSource(root)) ? { antigravity: { rules: antigravityRulesSource(root) } } : {}),
   }
+}
+
+export function antigravityRulesSource(root: string): string {
+  return join(root, 'rules', 'antigravity.md')
 }
 
 export function claudePermissions(): AgentIntegration {

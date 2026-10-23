@@ -25,25 +25,26 @@ import { hooksLogPath, type HookPayload } from '../hooks/hooks.ts'
 import { binEntry } from '../kit/manifest.ts'
 import { enrichEntry } from './enrich.ts'
 
-export const WRAPPER_ID_ENV = 'BITA_WRAPPER_ID'
-export const HARNESS_ENV = 'BITA_HARNESS'
-export const SESSION_PROJECT_ENV = 'BITA_SESSION_PROJECT'
-export const CHILD_ENV = 'BITA_CHILD'
-
-const SCRUBBED_ENV = [
-  WRAPPER_ID_ENV,
+import {
+  ANTIGRAVITY_CONVERSATION_ENV,
+  CHILD_ENV,
   HARNESS_ENV,
+  HEADLESS_ENV,
   SESSION_PROJECT_ENV,
-  'CLAUDECODE',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CODEX_SANDBOX',
-  'CODEX_SANDBOX_NETWORK_DISABLED',
-]
+  WRAPPER_ID_ENV,
+  withoutHarnessSession,
+} from './env-names.ts'
+import { isConversationId } from '../harness/antigravity-ids.ts'
+
+export { ANTIGRAVITY_CONVERSATION_ENV, CHILD_ENV, HARNESS_ENV, HEADLESS_ENV, SESSION_PROJECT_ENV, WRAPPER_ID_ENV, withoutHarnessSession }
+
+const SCRUBBED_ENV = [WRAPPER_ID_ENV, HARNESS_ENV, SESSION_PROJECT_ENV]
 
 const ORPHAN_RETRY_MS = 15 * 60_000
 const STALE_CLAIM_MS = 10 * 60_000
 const PROCESS_START_SLACK_MS = 1_000
 const PS_TIMEOUT_MS = 2_000
+const UNVERIFIABLE_WRAPPER_MS = 24 * 60 * 60_000
 
 export interface WrapperEnv {
   wrapperId: string
@@ -88,6 +89,11 @@ export interface SessionEndInput {
   reason: string
 }
 
+export function isHeadless(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env[HEADLESS_ENV]
+  return value !== undefined && value !== '' && value !== '0'
+}
+
 export function isChild(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env[CHILD_ENV]
   return value !== undefined && value !== '' && value !== '0'
@@ -105,7 +111,7 @@ export function wrapperEnv(env: NodeJS.ProcessEnv = process.env): WrapperEnv | n
 }
 
 export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const next: NodeJS.ProcessEnv = { ...env }
+  const next = withoutHarnessSession(env)
   for (const key of SCRUBBED_ENV) delete next[key]
   next[CHILD_ENV] = '1'
   return next
@@ -251,6 +257,32 @@ export async function closeWrapper(ctx: LocalContext, wrapperId: string, deps: S
   return pending.map((row) => row.entryId)
 }
 
+export function attachExitSession(ctx: LocalContext, wrapperId: string, session: { sessionId: string; transcriptPath: string | null }): boolean {
+  return immediate(ctx.db, () => {
+    const unlinked = findOpenByWrapper(ctx.db, wrapperId).filter((row) => row.sessionId === null).at(-1)
+    return unlinked ? linkSession(ctx.db, unlinked.id, session.sessionId, session.transcriptPath) : false
+  })
+}
+
+export function bindHarnessConversation(
+  env: NodeJS.ProcessEnv,
+  open: () => LocalContext,
+  transcriptPath: (conversationId: string) => string | null,
+): boolean {
+  const conversationId = env[ANTIGRAVITY_CONVERSATION_ENV]
+  if (!isConversationId(conversationId)) return false
+  const wrapper = wrapperEnv(env)
+  if (!wrapper || wrapper.harness !== 'antigravity') return false
+  const file = transcriptPath(conversationId)
+  if (file === null) return false
+  const ctx = open()
+  try {
+    return attachExitSession(ctx, wrapper.wrapperId, { sessionId: conversationId, transcriptPath: file })
+  } finally {
+    ctx.db.close()
+  }
+}
+
 export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -260,7 +292,8 @@ export function processAlive(pid: number): boolean {
   }
 }
 
-export function processStartedAt(pid: number): number | null {
+export function processStartedAt(pid: number, platform: NodeJS.Platform = process.platform): number | null {
+  if (platform === 'win32') return null
   try {
     const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
@@ -275,10 +308,16 @@ export function processStartedAt(pid: number): number | null {
   }
 }
 
-export function wrapperAlive(pid: number, sinceIso: string): boolean {
-  if (!processAlive(pid)) return false
-  const started = processStartedAt(pid)
-  return started === null || started <= Date.parse(sinceIso) + PROCESS_START_SLACK_MS
+export function wrapperAlive(
+  pid: number,
+  sinceIso: string,
+  probe: { alive?: (pid: number) => boolean; startedAt?: (pid: number) => number | null; now?: number; platform?: NodeJS.Platform } = {},
+): boolean {
+  if (!(probe.alive ?? processAlive)(pid)) return false
+  const started = (probe.startedAt ?? processStartedAt)(pid)
+  const since = Date.parse(sinceIso)
+  if (started === null) return (probe.platform ?? process.platform) !== 'win32' || (probe.now ?? Date.now()) - since <= UNVERIFIABLE_WRAPPER_MS
+  return started <= since + PROCESS_START_SLACK_MS
 }
 
 function orphanEnd(db: DatabaseSync, row: { entryId: number; transcriptPath: string | null }, nowIso: string): string {
@@ -291,7 +330,7 @@ function orphanEnd(db: DatabaseSync, row: { entryId: number; transcriptPath: str
 }
 
 export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): Promise<number[]> {
-  const alive = deps.isAlive ?? wrapperAlive
+  const alive = deps.isAlive ?? ((pid: number, sinceIso: string) => wrapperAlive(pid, sinceIso))
   const now = Date.now()
   const pending = immediate(ctx.db, () => {
     const orphans = listOpenSessions(ctx.db).filter((row) => !alive(row.wrapperPid, row.startedAt))
@@ -328,6 +367,7 @@ export function spawnFinalize(entryId: number, options: { cwd: string; databaseP
     fd = openSync(logPath, 'a')
     const child = spawn(process.execPath, [binEntry(), 'session', 'finalize', String(entryId)], {
       detached: true,
+      windowsHide: true,
       stdio: ['ignore', fd, fd],
       cwd: existsSync(options.cwd) ? options.cwd : os.tmpdir(),
       env: { ...childEnv(), BITA_DB_PATH: options.databasePath },

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { RunningTimer } from '../types'
-import { BAND_PREFIX, bandText, isBitaCommand, parseEnvelope } from './timers.ts'
+import { BAND_PREFIX, bandText, binaryCandidates, isBitaCommand, manifestCommand, parseEnvelope, registryManifestPath, type CandidateEnv } from './timers.ts'
 
 const timers = atom({ plugin: 'bita-timer', key: 'timers' } as const, [] as RunningTimer[])
 const now = atom({ plugin: 'bita-timer', key: 'now' } as const, 0)
@@ -12,22 +12,52 @@ const TICK_MS = 15_000
 const MISSING_BACKOFF_MS = 300_000
 const AFTER_COMMAND_MS = 250
 
-let binary: string | null = null
+let binary: string[] | null = null
 let missingUntil = 0
 let inFlight: Promise<void> | null = null
 let isQueued = false
 let loops: Timer[] = []
 
-async function candidates($: EngineInterface): Promise<string[]> {
-  const home = await $.env.get('HOME')
-  const list = ['bita']
-  if (home) list.push(`${home}/Library/pnpm/bin/bita`, `${home}/.local/bin/bita`)
-  return binary === null ? list : [binary, ...list.filter(item => item !== binary)]
+async function candidateEnv($: EngineInterface): Promise<CandidateEnv> {
+  const env: CandidateEnv = {}
+  const set = (key: keyof CandidateEnv, value: string | undefined) => {
+    if (value) env[key] = value
+  }
+  set('HOME', await $.env.get('HOME'))
+  set('USERPROFILE', await $.env.get('USERPROFILE'))
+  set('APPDATA', await $.env.get('APPDATA'))
+  set('LOCALAPPDATA', await $.env.get('LOCALAPPDATA'))
+  set('XDG_CONFIG_HOME', await $.env.get('XDG_CONFIG_HOME'))
+  set('KIT_REGISTRY_DIR', await $.env.get('KIT_REGISTRY_DIR'))
+  set('PNPM_HOME', await $.env.get('PNPM_HOME'))
+  set('NVM_BIN', await $.env.get('NVM_BIN'))
+  set('VOLTA_HOME', await $.env.get('VOLTA_HOME'))
+  set('BUN_INSTALL', await $.env.get('BUN_INSTALL'))
+  set('NPM_CONFIG_PREFIX', await $.env.get('NPM_CONFIG_PREFIX'))
+  return env
 }
 
-async function runBita($: EngineInterface, candidate: string): Promise<{ stdout: string; exitCode: number } | null> {
+async function registered($: EngineInterface, env: CandidateEnv): Promise<string[] | null> {
+  const file = registryManifestPath(env)
+  if (file === null) return null
   try {
-    return await $.process.run([candidate, 'ls', '--json'], { timeoutMs: 10_000 })
+    return manifestCommand(await $.fs.read(file))
+  } catch {
+    return null
+  }
+}
+
+async function candidates($: EngineInterface): Promise<string[][]> {
+  const env = await candidateEnv($)
+  const fromRegistry = await registered($, env)
+  const list = [...(fromRegistry ? [fromRegistry] : []), ...binaryCandidates(env)]
+  const same = (a: string[], b: string[]) => a.join('\0') === b.join('\0')
+  return binary === null ? list : [binary, ...list.filter(item => !same(item, binary as string[]))]
+}
+
+async function runBita($: EngineInterface, candidate: string[]): Promise<{ stdout: string; exitCode: number } | null> {
+  try {
+    return await $.process.run([...candidate, 'ls', '--json'], { timeoutMs: 10_000 })
   } catch {
     return null
   }

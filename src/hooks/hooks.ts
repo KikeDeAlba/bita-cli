@@ -208,6 +208,7 @@ async function launch(hook: HookConfig, payload: HookPayload, target: HookTarget
       const timer = setTimeout(() => finish(spawned), HANDOFF_TIMEOUT_MS)
       const child = spawn(command, args, {
         detached: true,
+        windowsHide: true,
         stdio: ['pipe', log.fd, log.fd],
         env: hookEnvironment(payload, target),
         cwd: '/',

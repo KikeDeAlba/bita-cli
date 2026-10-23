@@ -120,7 +120,7 @@ export const codexAdapter: HarnessAdapter = {
   bin: 'codex',
   defaultSummaryModel: 'gpt-5.6-luna',
   resolveBin(env: NodeJS.ProcessEnv = process.env): string | null {
-    return resolveHarnessBin(harnessBinEnvVar('codex'), 'codex', env)
+    return resolveHarnessBin(harnessBinEnvVar('codex'), 'codex', env, 'codex')
   },
   available(env: NodeJS.ProcessEnv = process.env): boolean {
     return codexAdapter.resolveBin(env) !== null

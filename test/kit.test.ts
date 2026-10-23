@@ -15,7 +15,7 @@ const repo = join(import.meta.dirname, '..')
 const bin = join(repo, 'src', 'bin', 'bita.ts')
 const root = mkdtempSync(join(tmpdir(), 'bita-kit-'))
 
-after(() => rmSync(root, { recursive: true, force: true }))
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 function sandbox(name: string): { dir: string; env: NodeJS.ProcessEnv } {
   const dir = join(root, name)

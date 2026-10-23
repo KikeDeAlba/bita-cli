@@ -83,7 +83,7 @@ bita setup
    `stop`, `cancel`, `amend`, `delete`, `merge`). Así lo encuentran recap,
    inkwell, tally y Den sin depender del `PATH`. `--no-register` se lo salta.
 2. **Instala la integración** con los agentes de código que encuentre: Claude
-   Code, OpenCode, Codex y Gemini CLI.
+   Code, OpenCode, Codex, Gemini CLI y Antigravity CLI (`agy`).
 
 ```sh
 bita setup --target claude
@@ -97,6 +97,7 @@ bita setup --target all
 | OpenCode | `~/.config/opencode/skills/bita`, `commands` y `plugins/bita.*` |
 | Codex | `~/.agents/skills/bita`, `~/.codex/prompts` y `~/.codex/hooks.json` (el `PostToolUse` solo para las herramientas que editan) |
 | Gemini CLI | La extensión `~/.gemini/extensions/bita`: skill, comandos y hooks (`bita hook gemini`) |
+| Antigravity CLI | Un plugin de `agy` con la skill y una regla `always_on` corta (`rules/antigravity.md`). `agy` no admite hooks: la sesión la liga `bita work` al salir, con `~/.gemini/antigravity-cli/history.jsonl` |
 
 ### El plugin de Claude Code
 
@@ -331,9 +332,11 @@ bita work --resume                   # selector de sesiones terminadas en este d
 bita work --resume 123 -- "sigue con los tests"   # reanuda la sesión de la entrada #123
 ```
 
-1. **Agente.** Si hay más de uno instalado (Claude, OpenCode, Codex, Gemini),
-   pregunta con Claude por defecto (Enter). Con uno solo, no pregunta.
-   `--harness claude|opencode|codex|gemini` se salta el selector.
+1. **Agente.** Si hay más de uno instalado (Claude, OpenCode, Codex, Gemini,
+   Antigravity), pregunta con Claude por defecto (Enter). Con uno solo, no pregunta.
+   `--harness claude|opencode|codex|gemini|antigravity` se salta el selector.
+   Cada binario se busca en el `PATH` y, si no está, donde lo dejan nvm, fnm,
+   Volta, pnpm, Bun o el instalador del agente; `BITA_HARNESS_BIN_<ID>` lo fija.
 2. **Proyecto.** Lista los proyectos y preselecciona el que corresponde al
    directorio actual (el prefijo de `bita scope` o un repo de `bita project
    repo`). `0` es **sin cronómetro**: lanza el agente y no registra nada.
@@ -419,6 +422,7 @@ salida va a `hooks.log`, junto a la base):
    | OpenCode | `openai/gpt-5.6-luna` | `summary.opencode.model` |
    | Codex | `gpt-5.6-luna` | `summary.codex.model` |
    | Gemini | `flash-lite` | `summary.gemini.model` |
+   | Antigravity | `gemini-3.8-flash-low` | `summary.antigravity.model` |
 
    ```json
    { "summary": { "claude": { "model": "sonnet" } } }
@@ -458,7 +462,8 @@ otra), `busy` (otro proceso la tiene), `already-finalized` o `not-found`.
 
 | Variable | Qué hace |
 |---|---|
-| `BITA_HARNESS_BIN_CLAUDE`, `_OPENCODE`, `_CODEX`, `_GEMINI` | Ruta absoluta del ejecutable de ese agente en vez de buscarlo en el `PATH`. Si no es ejecutable, ese agente cuenta como no instalado |
+| `BITA_HARNESS_BIN_CLAUDE`, `_OPENCODE`, `_CODEX`, `_GEMINI`, `_ANTIGRAVITY` | Ruta absoluta del ejecutable de ese agente en vez de buscarlo. Si no es ejecutable, ese agente cuenta como no instalado |
+| `KIT_HEADLESS=1` | Los hooks de bita no hacen nada: lo fija kit en los agentes que corre sin interfaz, para que esas corridas no registren sesiones |
 | `BITA_WRAPPER_ID`, `BITA_HARNESS`, `BITA_SESSION_PROJECT` | Las pone `bita work` al agente para ligar sus hooks; no las definas tú |
 | `BITA_NO_HOOKS=1`, `KIT_NO_EVENTS=1` | Apagan los eventos (`start`, `stop`, …) |
 

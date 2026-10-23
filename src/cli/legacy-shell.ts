@@ -9,7 +9,7 @@ export const SHELL_BLOCK_START = '# >>> bita session >>>'
 export const SHELL_BLOCK_END = '# <<< bita session <<<'
 
 function home(env: NodeJS.ProcessEnv): string {
-  return env['HOME'] || homedir()
+  return env['HOME'] || env['USERPROFILE'] || homedir()
 }
 
 export function defaultRcFile(shell: ShellName, env: NodeJS.ProcessEnv = process.env): string {
@@ -17,13 +17,14 @@ export function defaultRcFile(shell: ShellName, env: NodeJS.ProcessEnv = process
   return join(home(env), '.bashrc')
 }
 
-export function legacyRcFiles(env: NodeJS.ProcessEnv = process.env): string[] {
+export function legacyRcFiles(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
+  if (platform === 'win32') return []
   return [...new Set([defaultRcFile('zsh', env), join(home(env), '.zshrc'), defaultRcFile('bash', env)])]
 }
 
 export function displayPath(path: string, env: NodeJS.ProcessEnv = process.env): string {
   const base = home(env)
-  return path.startsWith(`${base}/`) ? `~${path.slice(base.length)}` : path
+  return path.startsWith(`${base}/`) || path.startsWith(`${base}\\`) ? `~${path.slice(base.length)}` : path
 }
 
 async function readRc(rc: string): Promise<string> {

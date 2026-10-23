@@ -68,7 +68,7 @@ test('touching a file of another project never splits, stops or creates entries'
       after.close()
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -94,7 +94,7 @@ test('a draft without project gets the touch but not the project', () => {
       after.close()
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -125,6 +125,6 @@ test('the preferred entry gets the touch over the oldest running one', async () 
   } finally {
     if (previousConfig === undefined) delete process.env['BITA_CONFIG_PATH']
     else process.env['BITA_CONFIG_PATH'] = previousConfig
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })

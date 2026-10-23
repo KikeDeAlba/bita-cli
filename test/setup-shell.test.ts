@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
+import { POSIX_ONLY } from './helpers/fake-bin.ts'
 import {
   SHELL_BLOCK_END,
   SHELL_BLOCK_START,
@@ -18,7 +19,7 @@ import {
 const bin = join(import.meta.dirname, '..', 'src', 'bin', 'bita.ts')
 const root = mkdtempSync(join(tmpdir(), 'bita-legacy-shell-'))
 
-test.after(() => rmSync(root, { recursive: true, force: true }))
+test.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 function rc(content?: string): string {
   const dir = mkdtempSync(join(root, 'rc-'))
@@ -40,7 +41,7 @@ const LEGACY_BLOCK = [
   '',
 ].join('\n')
 
-test('the rc files follow ZDOTDIR for zsh and HOME for bash', () => {
+test('the rc files follow ZDOTDIR for zsh and HOME for bash', { skip: POSIX_ONLY }, () => {
   assert.equal(defaultRcFile('zsh', { HOME: '/h' }), '/h/.zshrc')
   assert.equal(defaultRcFile('zsh', { HOME: '/h', ZDOTDIR: '/z' }), '/z/.zshrc')
   assert.equal(defaultRcFile('bash', { HOME: '/h', ZDOTDIR: '/z' }), '/h/.bashrc')
@@ -94,7 +95,7 @@ test('an unterminated block after a valid one leaves the whole rc untouched', as
   assert.equal(readFileSync(path, 'utf8'), content)
 })
 
-test('an rc that cannot be read or written is reported and the next one is still cleaned', async () => {
+test('an rc that cannot be read or written is reported and the next one is still cleaned', { skip: POSIX_ONLY }, async () => {
   const dir = mkdtempSync(join(root, 'unwritable-'))
   const asDirectory = join(dir, 'dir-rc')
   mkdirSync(asDirectory)
@@ -177,7 +178,7 @@ function homeWith(dir: string, files: Record<string, string>): string {
   return home
 }
 
-test('setup removes the 1.4.0 block from ~/.zshrc and ~/.bashrc, and says so only when it did', () => {
+test('setup removes the 1.4.0 block from ~/.zshrc and ~/.bashrc, and says so only when it did', { skip: POSIX_ONLY }, () => {
   const dir = mkdtempSync(join(root, 'setup-'))
   const home = homeWith(dir, { '.zshrc': `export A=1\n${LEGACY_BLOCK}`, '.bashrc': `${LEGACY_BLOCK}export B=2\n` })
 
@@ -193,7 +194,7 @@ test('setup removes the 1.4.0 block from ~/.zshrc and ~/.bashrc, and says so onl
   assert.doesNotMatch(second.stdout, /- shell:/)
 })
 
-test('setup --json lists the rc files it cleaned', () => {
+test('setup --json lists the rc files it cleaned', { skip: POSIX_ONLY }, () => {
   const dir = mkdtempSync(join(root, 'setup-json-'))
   const home = homeWith(dir, { '.zshrc': LEGACY_BLOCK })
   const run = setup(dir, '--json')
@@ -203,7 +204,7 @@ test('setup --json lists the rc files it cleaned', () => {
   assert.deepEqual(jsonData(again.stdout)['shell'], { removed: [] })
 })
 
-test('setup warns about an unterminated block and leaves it alone', () => {
+test('setup warns about an unterminated block and leaves it alone', { skip: POSIX_ONLY }, () => {
   const dir = mkdtempSync(join(root, 'setup-broken-'))
   const content = `${SHELL_BLOCK_START}\nfunction claude { old; }\n`
   const home = homeWith(dir, { '.zshrc': content })
@@ -213,7 +214,7 @@ test('setup warns about an unterminated block and leaves it alone', () => {
   assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), content)
 })
 
-test('setup cleans both $ZDOTDIR/.zshrc and ~/.zshrc', () => {
+test('setup cleans both $ZDOTDIR/.zshrc and ~/.zshrc', { skip: POSIX_ONLY }, () => {
   const dir = mkdtempSync(join(root, 'setup-zdotdir-'))
   const home = homeWith(dir, { '.zshrc': `${LEGACY_BLOCK}export H=1\n` })
   const zdotdir = join(dir, 'zdot')
@@ -226,7 +227,7 @@ test('setup cleans both $ZDOTDIR/.zshrc and ~/.zshrc', () => {
   assert.equal(readFileSync(join(zdotdir, '.zshrc'), 'utf8'), 'export Z=1\n')
 })
 
-test('setup warns about an rc it cannot write, cleans the rest and finishes', () => {
+test('setup warns about an rc it cannot write, cleans the rest and finishes', { skip: POSIX_ONLY }, () => {
   const dir = mkdtempSync(join(root, 'setup-unwritable-'))
   const home = homeWith(dir, { '.bashrc': `${LEGACY_BLOCK}export B=2\n` })
   mkdirSync(join(home, '.zshrc'))

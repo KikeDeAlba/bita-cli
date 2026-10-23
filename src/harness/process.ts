@@ -1,8 +1,10 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { accessSync, closeSync, constants, openSync, readFileSync, statSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, isAbsolute, join } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, win32 } from 'node:path'
+import type { AgentName } from '@kikedealba/kit/agents'
+import { kitAgents, kitContext, kitPlatform } from '../kit/runtime.ts'
 
 export interface RunOptions {
   input?: string
@@ -25,6 +27,7 @@ const EXIT_GRACE_MS = 2_000
 export function isExecutable(file: string): boolean {
   try {
     if (!statSync(file).isFile()) return false
+    if (process.platform === 'win32') return true
     accessSync(file, constants.X_OK)
     return true
   } catch {
@@ -32,20 +35,95 @@ export function isExecutable(file: string): boolean {
   }
 }
 
-export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
+export function executableNames(name: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string[] {
+  if (platform !== 'win32') return [name]
+  const extensions = (env[Object.keys(env).find((key) => key.toUpperCase() === 'PATHEXT') ?? 'PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .filter((extension) => extension.length > 0)
+  if (extensions.some((extension) => name.toLowerCase().endsWith(extension.toLowerCase()))) return [name]
+  return [...extensions.map((extension) => `${name}${extension.toLowerCase()}`), name]
+}
+
+export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
   if (isAbsolute(name)) return isExecutable(name) ? name : null
-  for (const dir of (env['PATH'] ?? '').split(delimiter)) {
+  const separator = platform === 'win32' ? ';' : delimiter
+  for (const dir of (env[pathKeyOf(env)] ?? '').split(separator)) {
     if (!dir) continue
-    const candidate = join(dir, name)
-    if (isExecutable(candidate)) return candidate
+    for (const candidateName of executableNames(name, env, platform)) {
+      const candidate = join(dir, candidateName)
+      if (isExecutable(candidate)) return candidate
+    }
   }
   return null
 }
 
-export function resolveHarnessBin(envVar: string, name: string, env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveHarnessBin(envVar: string, name: string, env: NodeJS.ProcessEnv = process.env, agent?: AgentName): string | null {
   const override = env[envVar]
-  if (override) return isExecutable(override) ? override : null
+  if (override) {
+    if (!isAbsolute(override)) {
+      process.stderr.write(`bita: ${envVar} must be an absolute path; ignoring "${override}".\n`)
+      return null
+    }
+    return isExecutable(override) ? override : null
+  }
+  const agents = kitAgents()
+  const ctx = kitContext(env)
+  if (agent && agents && ctx) return agents.findAgentBinarySync(agent, { ctx })
   return findOnPath(name, env)
+}
+
+export function pathKeyOf(env: NodeJS.ProcessEnv): string {
+  return Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH'
+}
+
+export function withBinOnPath(env: NodeJS.ProcessEnv, bin: string): NodeJS.ProcessEnv {
+  if (!isAbsolute(bin) && !win32.isAbsolute(bin)) return env
+  const dir = process.platform === 'win32' ? win32.dirname(bin) : dirname(bin)
+  const key = pathKeyOf(env)
+  const current = env[key] ?? ''
+  const parts = current.split(delimiter)
+  if (parts.includes(dir)) return env
+  return { ...env, [key]: current ? `${dir}${delimiter}${current}` : dir }
+}
+
+export interface SpawnCommand {
+  command: string
+  args: string[]
+  windowsVerbatimArguments: boolean
+}
+
+export function spawnCommand(bin: string, args: readonly string[], env: NodeJS.ProcessEnv = process.env): SpawnCommand {
+  const kit = kitPlatform()
+  const ctx = kitContext(env)
+  if (kit && ctx) return kit.spawnSpec(bin, args, ctx)
+  return { command: bin, args: [...args], windowsVerbatimArguments: false }
+}
+
+export function taskkillPath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = env['SystemRoot'] ?? env['SYSTEMROOT'] ?? env['windir'] ?? env['WINDIR'] ?? 'C:\\Windows'
+  return win32.join(root, 'System32', 'taskkill.exe')
+}
+
+export function killTree(child: ChildProcess, signal: NodeJS.Signals, platform: NodeJS.Platform = process.platform): void {
+  if (child.pid === undefined) return
+  if (platform === 'win32') {
+    if (child.exitCode !== null || child.signalCode !== null) return
+    try {
+      spawnSync(taskkillPath(), ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    } catch {
+      try {
+        child.kill(signal)
+      } catch {}
+    }
+    return
+  }
+  try {
+    process.kill(-child.pid, signal)
+  } catch {
+    try {
+      child.kill(signal)
+    } catch {}
+  }
 }
 
 export function runProcess(bin: string, args: readonly string[], options: RunOptions): Promise<RunResult> {
@@ -70,22 +148,23 @@ export function runProcess(bin: string, args: readonly string[], options: RunOpt
     let settled = false
     let killer: NodeJS.Timeout | undefined
     let drain: NodeJS.Timeout | undefined
-    const child = spawn(bin, [...args], {
+    let spec: SpawnCommand
+    try {
+      spec = spawnCommand(bin, args, options.env)
+    } catch (error) {
+      closeFd()
+      resolve({ code: null, stdout: '', stderr: errorMessage(error), timedOut: false })
+      return
+    }
+    const child = spawn(spec.command, spec.args, {
       cwd: options.cwd,
       env: options.env,
       stdio: ['pipe', stdoutFd ?? 'pipe', 'pipe'],
-      detached: true,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments,
     })
-    const killGroup = (signal: NodeJS.Signals) => {
-      if (child.pid === undefined) return
-      try {
-        process.kill(-child.pid, signal)
-      } catch {
-        try {
-          child.kill(signal)
-        } catch {}
-      }
-    }
+    const killGroup = (signal: NodeJS.Signals) => killTree(child, signal)
     const finish = (code: number | null, extra?: string) => {
       if (settled) return
       settled = true

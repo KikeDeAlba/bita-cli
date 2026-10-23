@@ -21,14 +21,17 @@ import {
   HARNESS_ENV,
   SESSION_PROJECT_ENV,
   WRAPPER_ID_ENV,
+  attachExitSession,
   closeWrapper,
+  withoutHarnessSession,
   isChild,
   startSessionEntry,
   sweepOrphans,
 } from '../../domain/session.ts'
 import { parseClaudeArgs } from '../../harness/args.ts'
+import { spawnCommand, withBinOnPath } from '../../harness/process.ts'
 import { isHarnessId, listAdapters } from '../../harness/registry.ts'
-import type { HarnessAdapter, HarnessId } from '../../harness/types.ts'
+import { HARNESS_IDS, type HarnessAdapter, type HarnessId } from '../../harness/types.ts'
 
 export const EXIT_INTERRUPTED = 130
 export const EXIT_NOT_FOUND = 127
@@ -65,7 +68,13 @@ function signalExitCode(signal: NodeJS.Signals): number {
 
 export function spawnHarness(bin: string, args: readonly string[], env: NodeJS.ProcessEnv, cwd?: string): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, [...args], { stdio: 'inherit', env: cwd === undefined ? env : { ...env, PWD: cwd }, cwd })
+    const spec = spawnCommand(bin, args, env)
+    const child = spawn(spec.command, spec.args, {
+      stdio: 'inherit',
+      env: cwd === undefined ? env : { ...env, PWD: cwd },
+      cwd,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments,
+    })
     const ignore = (): void => {}
     const forward = (signal: NodeJS.Signals): void => {
       if (child.exitCode === null && child.signalCode === null) child.kill(signal)
@@ -213,13 +222,13 @@ function resumeAdapter(deps: LaunchDeps, session: ResumableSession, requested: s
 async function pickHarness(deps: LaunchDeps, requested: string | undefined): Promise<Choice<HarnessAdapter>> {
   const available = deps.adapters.filter((adapter) => adapter.available(deps.env))
   if (requested !== undefined) {
-    if (!isHarnessId(requested)) throw new UsageError(`Unknown harness "${requested}". Valid harnesses: claude, opencode, codex, gemini.`)
+    if (!isHarnessId(requested)) throw new UsageError(`Unknown harness "${requested}". Valid harnesses: ${HARNESS_IDS.join(', ')}.`)
     const adapter = available.find((candidate) => candidate.id === requested)
     if (!adapter) throw new UsageError(`The ${requested} harness is not installed.`)
     return { value: adapter }
   }
   const [only] = available
-  if (!only) throw new UsageError('No harness is installed: claude, opencode, codex or gemini must be on PATH.')
+  if (!only) throw new UsageError(`No harness is installed: install one of ${HARNESS_IDS.join(', ')} (agy for antigravity), or point BITA_HARNESS_BIN_<ID> to it.`)
   if (available.length === 1) return { value: only }
 
   const fallback = available.find((adapter) => adapter.id === 'claude') ?? only
@@ -353,10 +362,24 @@ function sessionEnv(env: NodeJS.ProcessEnv, wrapperId: string, harness: HarnessI
   }
 }
 
-async function closeSession(args: ParsedArgs, deps: LaunchDeps, wrapperId: string): Promise<void> {
+interface ExitContext {
+  adapter: HarnessAdapter
+  cwd: string
+  startedAt: string
+}
+
+async function closeSession(args: ParsedArgs, deps: LaunchDeps, wrapperId: string, exit: ExitContext): Promise<void> {
   try {
     const ctx = createLocalContext(args)
     try {
+      if (exit.adapter.afterExit) {
+        try {
+          const session = await exit.adapter.afterExit({ cwd: exit.cwd, startedAt: exit.startedAt, endedAt: new Date().toISOString() }, deps.env)
+          if (session) attachExitSession(ctx, wrapperId, session)
+        } catch (error) {
+          writeErr(`bita: could not find the ${exit.adapter.label} conversation: ${errorMessage(error)}`)
+        }
+      }
       await deps.closeWrapper(ctx, wrapperId)
     } finally {
       ctx.db.close()
@@ -377,7 +400,8 @@ async function launchNested(args: ParsedArgs, deps: LaunchDeps, harnessArgs: rea
   const adapter = harness.value
   const plan = adapter.launchArgs(harnessArgs)
   for (const warning of plan.warnings) writeErr(warning)
-  return deps.spawnHarness(adapter.resolveBin(deps.env) ?? adapter.bin, plan.args, deps.env)
+  const bin = adapter.resolveBin(deps.env) ?? adapter.bin
+  return deps.spawnHarness(bin, plan.args, withBinOnPath(withoutHarnessSession(deps.env), bin))
 }
 
 export async function runSessionLaunch(argv: string[], overrides: Partial<LaunchDeps> = {}): Promise<number> {
@@ -402,12 +426,14 @@ export async function runSessionLaunch(argv: string[], overrides: Partial<Launch
   const plan = adapter.launchArgs(resumeSessionId === null ? harnessArgs : ['--resume', resumeSessionId, ...harnessArgs])
   for (const warning of plan.warnings) writeErr(warning)
   const bin = adapter.resolveBin(deps.env) ?? adapter.bin
+  const env = withBinOnPath(withoutHarnessSession(deps.env), bin)
 
-  if (!project || entryId === null) return deps.spawnHarness(bin, plan.args, deps.env, cwd)
+  if (!project || entryId === null) return deps.spawnHarness(bin, plan.args, env, cwd)
 
+  const startedAt = new Date().toISOString()
   try {
-    return await deps.spawnHarness(bin, plan.args, sessionEnv(deps.env, wrapperId, adapter.id, project.id, databasePath), cwd)
+    return await deps.spawnHarness(bin, plan.args, sessionEnv(env, wrapperId, adapter.id, project.id, databasePath), cwd)
   } finally {
-    await closeSession(args, deps, wrapperId)
+    await closeSession(args, deps, wrapperId, { adapter, cwd, startedAt })
   }
 }

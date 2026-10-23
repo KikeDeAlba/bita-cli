@@ -79,3 +79,63 @@ const BITA_COMMAND = /(?:^|[;&|(`\n]|\$\()\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(
 export function isBitaCommand(command: unknown): boolean {
   return typeof command === 'string' && BITA_COMMAND.test(command)
 }
+
+export type CandidateEnv = Partial<
+  Record<
+    'HOME' | 'USERPROFILE' | 'APPDATA' | 'LOCALAPPDATA' | 'XDG_CONFIG_HOME' | 'KIT_REGISTRY_DIR' | 'PNPM_HOME' | 'NVM_BIN' | 'VOLTA_HOME' | 'BUN_INSTALL' | 'NPM_CONFIG_PREFIX',
+    string
+  >
+>
+
+function joinPath(windows: boolean, ...parts: string[]): string {
+  return parts.join(windows ? '\\' : '/')
+}
+
+function isWindows(env: CandidateEnv): boolean {
+  return env.HOME === undefined && (env.USERPROFILE !== undefined || env.APPDATA !== undefined)
+}
+
+export function registryManifestPath(env: CandidateEnv): string | null {
+  const windows = isWindows(env)
+  if (env.KIT_REGISTRY_DIR) return joinPath(windows, env.KIT_REGISTRY_DIR, 'bita.json')
+  const config = windows ? env.APPDATA : (env.XDG_CONFIG_HOME ?? (env.HOME ? joinPath(false, env.HOME, '.config') : undefined))
+  return config ? joinPath(windows, config, 'kikedealba', 'tools.d', 'bita.json') : null
+}
+
+export function manifestCommand(text: string): string[] | null {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    const bin = typeof parsed === 'object' && parsed !== null ? (parsed as { bin?: unknown }).bin : undefined
+    if (!Array.isArray(bin) || bin.length === 0 || !bin.every(part => typeof part === 'string' && part.length > 0)) return null
+    return bin as string[]
+  } catch {
+    return null
+  }
+}
+
+export function binaryCandidates(env: CandidateEnv): string[][] {
+  const windows = isWindows(env)
+  const home = windows ? (env.USERPROFILE ?? env.HOME) : env.HOME
+  const name = windows ? 'bita.cmd' : 'bita'
+  const dirs: string[] = []
+  const add = (dir: string | undefined) => {
+    if (dir && !dirs.includes(dir)) dirs.push(dir)
+  }
+  add(env.PNPM_HOME)
+  add(env.NVM_BIN)
+  if (env.VOLTA_HOME) add(joinPath(windows, env.VOLTA_HOME, 'bin'))
+  if (env.NPM_CONFIG_PREFIX) add(windows ? env.NPM_CONFIG_PREFIX : joinPath(false, env.NPM_CONFIG_PREFIX, 'bin'))
+  if (env.BUN_INSTALL) add(joinPath(windows, env.BUN_INSTALL, 'bin'))
+  if (windows) {
+    if (env.APPDATA) add(joinPath(true, env.APPDATA, 'npm'))
+    if (env.LOCALAPPDATA) add(joinPath(true, env.LOCALAPPDATA, 'pnpm'))
+  } else if (home) {
+    add(joinPath(false, home, '.local', 'share', 'pnpm'))
+    add(joinPath(false, home, 'Library', 'pnpm'))
+    add(joinPath(false, home, '.npm-global', 'bin'))
+    add(joinPath(false, home, '.volta', 'bin'))
+    add(joinPath(false, home, '.bun', 'bin'))
+    add(joinPath(false, home, '.local', 'bin'))
+  }
+  return [['bita'], ...dirs.map(dir => [joinPath(windows, dir, name)])]
+}

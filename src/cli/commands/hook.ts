@@ -7,6 +7,7 @@ import {
   currentSessionEntryId,
   handleSessionEnd,
   handleSessionStart,
+  isHeadless,
   wrapperEnv,
   type WrapperEnv,
 } from '../../domain/session.ts'
@@ -176,6 +177,7 @@ async function route(event: string, argv: readonly string[]): Promise<void> {
 
 export async function runHook(argv: string[]): Promise<number> {
   const event = argv[0] ?? 'session-start'
+  if (isHeadless()) return 0
   try {
     await route(event, argv.slice(1))
   } catch (error) {
