@@ -432,7 +432,7 @@ test('inside a session --harness picks which harness to launch', async () => {
   assert.equal(h.spawned[0]?.bin, '/fake/codex')
 })
 
-test('mappedProjectId resolves the cwd through the mapped checkouts', async () => {
+test('mappedProjectId resolves the cwd through the mapped checkouts', { skip: POSIX_ONLY }, async () => {
   const repo = realpathSync(mkdtempSync(join(root, 'repo-')))
   execFileSync('git', ['init', '-q', repo])
   const dbPath = join(repo, '..', `${basename(repo)}.db`)

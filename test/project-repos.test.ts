@@ -24,7 +24,13 @@ const db = join(dir, 'bita.db')
 const docs = join(dir, 'docs')
 const common = ['--db-path', db, '--docs-dir', docs, '--json']
 
-after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
+after(() => {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  } catch (error) {
+    if (process.platform !== 'win32') throw error
+  }
+})
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.email=test@example.com', '-c', 'user.name=Test', ...args], {

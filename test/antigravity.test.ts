@@ -82,7 +82,7 @@ test('reads user and assistant turns from an antigravity conversation database',
 
 test('afterExit picks the last conversation of the workspace since the session started', async () => {
   const home = mkdtempSync(join(root, 'home-'))
-  const real = realpathSync(mkdtempSync(join(root, 'repo-')))
+  const real = realpathSync.native(mkdtempSync(join(root, 'repo-')))
   const link = join(home, 'repo-link')
   symlinkSync(real, link, 'junction')
   const history = join(home, '.gemini', 'antigravity-cli')
@@ -124,7 +124,7 @@ test('attachExitSession links only the open unlinked session of the wrapper', ()
   db.close()
 })
 
-test('summarize asks agy headless in read mode and validates the answer', async () => {
+test('summarize asks agy headless in read mode and validates the answer', { skip: IS_WINDOWS && 'a fake agy.cmd cannot take a multi-line argument; the real agy is an .exe' }, async () => {
   const dir = mkdtempSync(join(root, 'agy-'))
   const log = join(dir, 'argv.json')
   const reply = JSON.stringify({

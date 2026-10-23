@@ -36,6 +36,9 @@ function sandbox(): Sandbox {
   const env: NodeJS.ProcessEnv = {
     PATH: [binDir, nodeDir, '/usr/bin', '/bin'].join(delimiter),
     HOME: home,
+    USERPROFILE: home,
+    APPDATA: join(root, 'config'),
+    LOCALAPPDATA: join(root, 'data'),
     XDG_CONFIG_HOME: join(root, 'config'),
     XDG_DATA_HOME: join(root, 'data'),
     XDG_STATE_HOME: join(root, 'state'),
@@ -145,7 +148,7 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     const result = setup(box, '--target', 'all')
     const data = result['data'] as { agents: string[] }
     assert.deepEqual(data.agents, ['claude', 'opencode', 'codex', 'gemini', 'antigravity', 'claude-desktop'])
-    const dataHome = process.platform === 'win32' ? join(box.root, 'home', 'AppData', 'Local') : join(box.root, 'data')
+    const dataHome = join(box.root, 'data')
     const rules = readFileSync(join(dataHome, 'kikedealba', 'agents', 'antigravity', 'bita', 'rules', 'bita.md'), 'utf8').replace(/\r\n/g, '\n')
     assert.match(rules, /^---\ntrigger: always_on\n---\n/)
     assert.ok(rules.split('\n').filter((line) => line.trim().length > 0).length <= 6)

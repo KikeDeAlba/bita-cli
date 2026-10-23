@@ -185,8 +185,9 @@ test('gemini runs headless in a trusted workspace without hooks or tools and ret
     assert.deepEqual(call.argv.slice(0, -1), ['-m', 'flash-lite', '--approval-mode', 'plan', '-e', 'none', '-o', 'json', '-p'])
     assert.match(call.stdin, /### Usuario\nAgrega export CSV/)
   }
-  assert.doesNotMatch(calls[0]?.argv.at(-1) ?? '', /no pasó la validación/)
-  assert.match(calls[1]?.argv.at(-1) ?? '', /no pasó la validación \(summary is not a JSON object\)/)
+  const instructionsOf = (call: FakeBinCall | undefined): string => (process.platform === 'win32' ? (call?.stdin ?? '') : (call?.argv.at(-1) ?? ''))
+  assert.doesNotMatch(instructionsOf(calls[0]), /no pasó la validación/)
+  assert.match(instructionsOf(calls[1]), /no pasó la validación \(summary is not a JSON object\)/)
 })
 
 test('gemini gives up after the second invalid answer and surfaces API errors', async () => {

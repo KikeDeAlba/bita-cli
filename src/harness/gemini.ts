@@ -97,6 +97,8 @@ export function parseGeminiChat(text: string): Turn[] {
   return turns
 }
 
+export const WINDOWS_PROMPT_POINTER = 'Follow the instructions at the start of the input and answer with the JSON they ask for.'
+
 const REGISTRY_LOCK_ATTEMPTS = 20
 const REGISTRY_LOCK_DELAY_MS = 50
 
@@ -205,8 +207,11 @@ async function summarize(input: SummaryInput): Promise<SummaryResult> {
     let instructions = summaryInstructions(input)
     let last: SummaryResult = { ok: false, error: 'gemini was not called' }
     for (let attempt = 0; attempt < 2; attempt++) {
-      const args = ['-m', model, '--approval-mode', 'plan', '-e', 'none', '-o', 'json', '-p', instructions]
-      const result = await runProcess(bin, args, { input: context, env, cwd, timeoutMs: remainingMs(deadline) })
+      const viaCmd = process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)
+      const prompt = viaCmd ? WINDOWS_PROMPT_POINTER : instructions
+      const args = ['-m', model, '--approval-mode', 'plan', '-e', 'none', '-o', 'json', '-p', prompt]
+      const stdin = viaCmd ? `${instructions}\n\n${context}` : context
+      const result = await runProcess(bin, args, { input: stdin, env, cwd, timeoutMs: remainingMs(deadline) })
       if (result.timedOut) return { ok: false, error: describeFailure('gemini', result) }
       const response = extractResponse(result.stdout)
       if ('error' in response) return { ok: false, error: response.error.startsWith('gemini failed') || result.code === 0 ? response.error : describeFailure('gemini', result) }

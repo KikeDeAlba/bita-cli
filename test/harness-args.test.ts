@@ -2,7 +2,7 @@ import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
 import { POSIX_ONLY } from './helpers/fake-bin.ts'
 import { getAdapter, harnessBinEnvVar, listAdapters } from '../src/harness/registry.ts'
@@ -26,7 +26,7 @@ test('resolveBin prefers an executable override and falls back to PATH', () => {
     assert.equal(adapter.resolveBin({ PATH: '', [harnessBinEnvVar('gemini')]: fake }), fake)
     assert.equal(adapter.resolveBin({ PATH: '', [harnessBinEnvVar('gemini')]: join(dir, 'missing') }), null)
     assert.equal(adapter.available({ PATH: '', HOME: dir }), false)
-    assert.equal(getAdapter('opencode').resolveBin({ PATH: `/nonexistent:${dir}`, HOME: dir }), onPath)
+    assert.equal(getAdapter('opencode').resolveBin({ PATH: `/nonexistent${delimiter}${dir}`, HOME: dir }), onPath)
     assert.equal(getAdapter('opencode').available({ PATH: dir, HOME: dir }), true)
   } finally {
     rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
