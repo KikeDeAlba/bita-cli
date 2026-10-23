@@ -14,7 +14,7 @@ import { runCancel, runCurrent, runLog, runStart, runStop } from './commands/tim
 import { writeOut } from './output.ts'
 import { ANTIGRAVITY_CONVERSATION_ENV, WRAPPER_ID_ENV } from '../domain/env-names.ts'
 
-export const VERSION = '1.7.0'
+export const VERSION = '1.8.0'
 
 export const MOVED_COMMANDS: Readonly<Record<string, string>> = {
   jira: 'Jira lives in atl now. Use atl jira … (atl jira --help).',
