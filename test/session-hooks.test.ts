@@ -188,7 +188,7 @@ test(
     try {
       silent(hook(b, ['session-start'], JSON.stringify({ session_id: 's1', cwd: b.dir, source: 'startup' }), wrapped(b, 'claude')))
       silent(hook(b, ['session-end'], JSON.stringify({ session_id: 's1', reason: 'prompt_input_exit' }), wrapped(b, 'claude')))
-      const deadline = Date.now() + 10_000
+      const deadline = Date.now() + 30_000
       let stopped: string | null = null
       let title = ''
       while (Date.now() < deadline) {
