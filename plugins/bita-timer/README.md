@@ -31,8 +31,10 @@ Codex, opencode ni Gemini.
   conserva lo último que leyó. Si bita no está instalado, deja de buscarlo
   durante 5 minutos, salvo que se ejecute un comando `bita`.
 
-El binario se busca como lo haría el shell de Claude (en el `PATH`) y, si no
-está ahí, en `~/Library/pnpm/bin/bita` y `~/.local/bin/bita`.
+El binario se busca primero en el registro de kit (la línea de comando que
+`bita setup` deja en `tools.d/bita.json`), luego en el `PATH` y, si no está ahí,
+en las carpetas de pnpm, nvm, Volta, npm, Bun y `~/.local/bin` (en Windows,
+`%APPDATA%\npm` y `%LOCALAPPDATA%\pnpm`).
 
 ## Instalación
 
