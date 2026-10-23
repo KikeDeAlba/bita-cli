@@ -4,6 +4,7 @@ import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
+import { nodeScriptBin } from './helpers/fake-bin.ts'
 import assert from 'node:assert/strict'
 import { CAPABILITIES } from '../src/kit/manifest.ts'
 import { VERSION } from '../src/cli/router.ts'
@@ -35,6 +36,9 @@ function sandbox(): Sandbox {
   const env: NodeJS.ProcessEnv = {
     PATH: [binDir, nodeDir, '/usr/bin', '/bin'].join(delimiter),
     HOME: home,
+    USERPROFILE: home,
+    APPDATA: join(root, 'config'),
+    LOCALAPPDATA: join(root, 'data'),
     XDG_CONFIG_HOME: join(root, 'config'),
     XDG_DATA_HOME: join(root, 'data'),
     XDG_STATE_HOME: join(root, 'state'),
@@ -69,7 +73,6 @@ function setup(box: Sandbox, ...args: string[]): Record<string, unknown> {
 }
 
 function bitaShim(box: Sandbox, version: string): string {
-  const path = join(box.binDir, 'bita')
   const envelope = JSON.stringify({
     schemaVersion: 3,
     ok: true,
@@ -77,9 +80,7 @@ function bitaShim(box: Sandbox, version: string): string {
     generatedAt: new Date(0).toISOString(),
     data: { name: 'bita', version, envelope: 1, capabilities: [...CAPABILITIES], emits: [] },
   })
-  writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' '${envelope}'\n`, 'utf8')
-  chmodSync(path, 0o755)
-  return path
+  return nodeScriptBin(box.binDir, 'bita', `process.stdout.write(${JSON.stringify(envelope + '\n')})\n`)
 }
 
 function readJson(path: string): Record<string, unknown> {
@@ -98,7 +99,7 @@ test('setup registers bita in the kit registry with its capabilities and events'
     assert.equal(bitaBin[0], process.execPath)
     assert.equal(bitaBin[1], bin)
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -110,7 +111,7 @@ test('setup registers the bita on PATH when it reports the same version', () => 
     const manifest = readJson(join(box.registry, 'bita.json'))
     assert.deepEqual(manifest['bin'], [shim])
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -122,19 +123,17 @@ test('setup keeps its own path when the bita on PATH reports another version', (
     const manifest = readJson(join(box.registry, 'bita.json'))
     assert.deepEqual(manifest['bin'], [process.execPath, bin])
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
 function fakeClaude(box: Sandbox): string {
   const log = join(box.root, 'claude-argv.log')
-  const path = join(box.binDir, 'claude')
-  writeFileSync(
-    path,
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncase "$*" in\n  *--json*) printf '[]\\n' ;;\nesac\nexit 0\n`,
-    'utf8',
+  nodeScriptBin(
+    box.binDir,
+    'claude',
+    `const args = process.argv.slice(2).join(' ')\nrequire('node:fs').appendFileSync(${JSON.stringify(log)}, args + '\\n')\nif (args.includes('--json')) process.stdout.write('[]\\n')\n`,
   )
-  chmodSync(path, 0o755)
   return log
 }
 
@@ -148,7 +147,12 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     const log = fakeClaude(box)
     const result = setup(box, '--target', 'all')
     const data = result['data'] as { agents: string[] }
-    assert.deepEqual(data.agents, ['claude', 'opencode', 'codex', 'gemini'])
+    assert.deepEqual(data.agents, ['claude', 'opencode', 'codex', 'gemini', 'antigravity', 'claude-desktop'])
+    const dataHome = join(box.root, 'data')
+    const rules = readFileSync(join(dataHome, 'kikedealba', 'agents', 'antigravity', 'bita', 'rules', 'bita.md'), 'utf8').replace(/\r\n/g, '\n')
+    assert.match(rules, /^---\ntrigger: always_on\n---\n/)
+    assert.ok(rules.split('\n').filter((line) => line.trim().length > 0).length <= 6)
+    assert.match(rules, /skill `bita`/)
 
     const calls = claudeCalls(log)
     assert.ok(calls.includes('plugin marketplace add KikeDeAlba/bita-cli'), calls.join(' | '))
@@ -168,6 +172,12 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     assert.match(openCodeSkill, /^name: bita$/m)
     assert.ok(existsSync(join(box.opencode, 'commands', 'bita-stop.md')))
     assert.equal(existsSync(join(box.opencode, 'plugins', 'bita.ts')), true)
+    const launcher = readJson(join(box.opencode, 'bita-launcher.json')) as { command: string; args: string[]; cwd: string; log: string }
+    assert.equal(launcher.command, process.execPath)
+    assert.equal(launcher.args.length, 1)
+    assert.ok(existsSync(launcher.args[0] as string))
+    assert.ok(existsSync(launcher.cwd))
+    assert.match(launcher.log, /hooks\.log$/)
     assert.equal(existsSync(join(box.opencode, 'opencode.json')), false)
 
     assert.ok(existsSync(join(box.agentsSkills, 'bita', 'SKILL.md')))
@@ -192,7 +202,7 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     const geminiManifest = readJson(join(extension, 'gemini-extension.json'))
     assert.equal(geminiManifest['mcpServers'], undefined)
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -205,7 +215,7 @@ test('setup --mod also installs the bita-timer plugin', () => {
     assert.ok(calls.includes('plugin install bita@bita --scope user'))
     assert.ok(calls.includes('plugin install bita-timer@bita --scope user'))
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -247,7 +257,7 @@ test('setup removes the loose Claude files and hooks an older bita wrote, keepin
     assert.ok(settings.permissions.allow.includes('Bash(git status:*)'))
     assert.ok(settings.permissions.allow.includes('Bash(bita start:*)'))
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -268,7 +278,7 @@ test('setup --no-settings still drops the old Claude hooks but leaves the permis
     assert.deepEqual(settings.hooks ?? {}, {})
     assert.deepEqual(settings.permissions.allow, ['Bash(bita summary:*)'])
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -287,7 +297,7 @@ test('setup leaves the old Claude files alone when the plugin could not be insta
     const settings = readJson(join(box.claude, 'settings.json')) as { hooks: Record<string, unknown[]> }
     assert.equal(settings.hooks['UserPromptSubmit']?.length, 1)
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -304,7 +314,7 @@ test('setup narrows an older catch-all Codex PostToolUse hook to the edit tools'
     assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
     assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -333,7 +343,7 @@ test('setup drops the old Codex UserPromptSubmit hook and keeps the user ones', 
     assert.equal(codexHooks.hooks['SessionEnd']?.length, 1)
     assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -355,7 +365,7 @@ test('running setup twice keeps the settings and hooks without duplicates', () =
     assert.equal(settings.permissions.allow.filter((rule) => rule === 'Bash(bita start:*)').length, 1)
     assert.equal(settings.hooks, undefined)
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -369,7 +379,7 @@ test('an Atlassian MCP the user already configured in Codex is left alone', () =
     assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), own)
     assert.ok(existsSync(join(box.agentsSkills, 'bita', 'SKILL.md')))
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -390,7 +400,7 @@ test('the old setup flags are accepted and ignored with a warning', () => {
     assert.equal(geminiManifest['mcpServers'], undefined)
     assert.equal(existsSync(join(box.claude, 'skills')), false)
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -428,7 +438,7 @@ test('setup cleans what an older bita installed for documents and Atlassian', ()
     assert.ok(!commands.includes('bita hook ref'))
     assert.ok(commands.includes('echo mine'))
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -457,7 +467,7 @@ test('the commands that moved to other tools fail with a hint to the right one',
       assert.match(envelope.error.hint, hint)
     }
   } finally {
-    rmSync(box.root, { recursive: true, force: true })
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 

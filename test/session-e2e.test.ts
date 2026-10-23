@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { test } from 'node:test'
+import { nodeScriptBin } from './helpers/fake-bin.ts'
 import { openDatabase } from '../src/db/open.ts'
 import { queryAll } from '../src/db/query.ts'
 import { startSessionEntry } from '../src/domain/session.ts'
@@ -14,9 +15,8 @@ import { createLocalContext } from '../src/cli/local-context.ts'
 const bin = join(import.meta.dirname, '..', 'src', 'bin', 'bita.ts')
 const fixture = join(import.meta.dirname, 'fixtures', 'harness', 'claude-session.jsonl')
 
-const FAKE_CLAUDE = `#!/bin/sh
-/bin/cat > /dev/null
-echo '{"is_error":false,"structured_output":{"title":"Synthetic title","kind":null,"note":{"context":"ctx","done":"- done","decisions":null,"findings":null,"verification":null,"pending":null}}}'
+const FAKE_CLAUDE = `process.stdin.resume()
+process.stdin.on('end', () => process.stdout.write(JSON.stringify({ is_error: false, structured_output: { title: 'Synthetic title', kind: null, note: { context: 'ctx', done: '- done', decisions: null, findings: null, verification: null, pending: null } } })))
 `
 
 interface Row {
@@ -34,9 +34,7 @@ test('a /clear rotation and a final exit leave two stopped entries with titles a
   try {
     mkdirSync(join(dir, 'empty-path'))
     const dbPath = join(dir, 'bita.db')
-    const fake = join(dir, 'fake-claude')
-    writeFileSync(fake, FAKE_CLAUDE)
-    chmodSync(fake, 0o755)
+    const fake = nodeScriptBin(dir, 'fake-claude', FAKE_CLAUDE)
     const first = join(dir, 'first.jsonl')
     const second = join(dir, 'second.jsonl')
     copyFileSync(fixture, first)
@@ -111,6 +109,6 @@ test('a /clear rotation and a final exit leave two stopped entries with titles a
     }
     assert.ok(rows[0]!.stopped_at! <= rows[1]!.started_at)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })

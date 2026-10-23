@@ -37,6 +37,7 @@ function baseEnv(b: Box): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: b.dir,
+    USERPROFILE: b.dir,
     PATH: join(b.dir, 'empty-path'),
     BITA_DB_PATH: b.db,
     BITA_CONFIG_PATH: join(b.dir, 'config.json'),
@@ -46,7 +47,10 @@ function baseEnv(b: Box): NodeJS.ProcessEnv {
     BITA_HARNESS_BIN_CODEX: join(b.dir, 'missing'),
     BITA_HARNESS_BIN_GEMINI: join(b.dir, 'missing'),
     BITA_HARNESS_BIN_OPENCODE: join(b.dir, 'missing'),
+    BITA_HARNESS_BIN_ANTIGRAVITY: join(b.dir, 'missing'),
   }
+  delete env['KIT_HEADLESS']
+  delete env['ANTIGRAVITY_CONVERSATION_ID']
   for (const key of ['BITA_WRAPPER_ID', 'BITA_HARNESS', 'BITA_SESSION_PROJECT', 'BITA_CHILD', 'CLAUDECODE']) delete env[key]
   return env
 }
@@ -87,7 +91,7 @@ test('every hook exits 0 and prints nothing, with garbage, empty stdin or no wra
     silent(hook(b, ['session-start', '--harness', 'cursor'], '{"session_id":"s","source":"startup"}', wrapped(b, 'claude')))
     assert.equal(session(b)?.sessionId, null)
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -97,7 +101,7 @@ test('inside a child nothing links, even with the wrapper variables', () => {
     silent(hook(b, ['session-start'], JSON.stringify({ session_id: 's1', source: 'startup', cwd: b.dir }), { ...wrapped(b, 'claude'), BITA_CHILD: '1' }))
     assert.equal(session(b)?.sessionId, null)
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -114,7 +118,7 @@ test('Claude session-start links and session-end marks the row and launches fina
     assert.notEqual(session(b)?.endedAt, null)
     assert.match(readFileSync(join(b.dir, 'hooks.log'), 'utf8'), new RegExp(`session finalize #${b.entryId} launched`))
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -133,7 +137,7 @@ test('codex routes SessionStart, SessionEnd and PostToolUse', () => {
     silent(hook(b, ['codex'], JSON.stringify({ hook_event_name: 'SessionEnd', session_id: 'c1', reason: 'other' }), wrapped(b, 'codex')))
     assert.equal(session(b)?.endReason, 'other')
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -147,7 +151,7 @@ test('gemini routes SessionStart and SessionEnd, and ignores BeforeAgent', () =>
     silent(hook(b, ['gemini'], JSON.stringify({ hook_event_name: 'SessionEnd', session_id: 'g1', reason: 'exit' }), wrapped(b, 'gemini')))
     assert.equal(session(b)?.endReason, 'exit')
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -159,7 +163,7 @@ test('opencode goes through session-start --harness opencode, and a Claude hook 
     silent(hook(b, ['session-start', '--harness', 'opencode'], JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'ses_1', cwd: b.dir, source: 'startup' }), wrapped(b, 'opencode')))
     assert.equal(session(b)?.sessionId, 'ses_1')
   } finally {
-    rmSync(b.dir, { recursive: true, force: true })
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -172,7 +176,7 @@ function finalizeRoutes(): boolean {
     })
     return result.status === 0
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 }
 
@@ -184,7 +188,7 @@ test(
     try {
       silent(hook(b, ['session-start'], JSON.stringify({ session_id: 's1', cwd: b.dir, source: 'startup' }), wrapped(b, 'claude')))
       silent(hook(b, ['session-end'], JSON.stringify({ session_id: 's1', reason: 'prompt_input_exit' }), wrapped(b, 'claude')))
-      const deadline = Date.now() + 10_000
+      const deadline = Date.now() + 30_000
       let stopped: string | null = null
       let title = ''
       while (Date.now() < deadline) {
@@ -200,7 +204,59 @@ test(
       assert.match(title, /^Sesión Claude · /)
       assert.equal(session(b)?.outcome, 'fallback')
     } finally {
-      rmSync(b.dir, { recursive: true, force: true })
+      rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
     }
   },
 )
+
+test('hooks of a headless run (KIT_HEADLESS=1) record nothing', () => {
+  const b = box('gemini')
+  try {
+    const env = { ...wrapped(b, 'gemini'), KIT_HEADLESS: '1' }
+    silent(hook(b, ['gemini'], JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'g1', cwd: b.dir, source: 'startup' }), env))
+    silent(hook(b, ['session-start', '--harness', 'gemini'], JSON.stringify({ session_id: 'g1', cwd: b.dir, source: 'startup' }), env))
+    assert.equal(session(b)?.sessionId, null)
+    silent(hook(b, ['gemini'], JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'g1', cwd: b.dir, source: 'startup' }), { ...env, KIT_HEADLESS: '0' }))
+    assert.equal(session(b)?.sessionId, 'g1')
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('any bita run inside agy links the antigravity conversation of the wrapper', () => {
+  const b = box('antigravity')
+  try {
+    const env = { ...wrapped(b, 'antigravity'), ANTIGRAVITY_CONVERSATION_ID: 'conv-1' }
+    const listed = spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env })
+    assert.equal(listed.status, 0, listed.stderr)
+    assert.equal(session(b)?.sessionId, 'conv-1')
+    assert.equal(session(b)?.transcriptPath, join(b.dir, '.gemini', 'antigravity-cli', 'conversations', 'conv-1.db'))
+    spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env: { ...env, ANTIGRAVITY_CONVERSATION_ID: 'conv-2' } })
+    assert.equal(session(b)?.sessionId, 'conv-1')
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('an invalid conversation id in the environment is never linked', () => {
+  const b = box('antigravity')
+  try {
+    for (const id of ['../../x', '-x']) {
+      spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env: { ...wrapped(b, 'antigravity'), ANTIGRAVITY_CONVERSATION_ID: id } })
+      assert.equal(session(b)?.sessionId, null)
+    }
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('the conversation id is ignored outside an antigravity wrapper', () => {
+  const b = box('gemini')
+  try {
+    const env = { ...wrapped(b, 'gemini'), ANTIGRAVITY_CONVERSATION_ID: 'conv-1' }
+    spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env })
+    assert.equal(session(b)?.sessionId, null)
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})

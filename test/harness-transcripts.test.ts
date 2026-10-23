@@ -13,7 +13,7 @@ const fixtures = join(import.meta.dirname, 'fixtures', 'harness')
 const root = mkdtempSync(join(tmpdir(), 'bita-transcripts-'))
 process.env['HOME'] = root
 process.env['KIT_NO_EVENTS'] = '1'
-after(() => rmSync(root, { recursive: true, force: true }))
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 function ref(harness: HarnessId, overrides: Partial<TranscriptRef> = {}): TranscriptRef {
   return {

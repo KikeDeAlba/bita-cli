@@ -4,10 +4,11 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
+import { POSIX_ONLY } from './helpers/fake-bin.ts'
 import { runProcess } from '../src/harness/process.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'bita-process-'))
-after(() => rmSync(root, { recursive: true, force: true }))
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 function script(name: string, body: string): string {
   const file = join(root, name)
@@ -30,7 +31,7 @@ async function settle(pid: number): Promise<boolean> {
   return alive(pid)
 }
 
-test('a grandchild that inherits stderr does not keep runProcess from resolving', async () => {
+test('a grandchild that inherits stderr does not keep runProcess from resolving', { skip: POSIX_ONLY }, async () => {
   const pidFile = join(root, 'exit.pid')
   const bin = script('leaky', `sleep 30 >/dev/null &\necho $! > ${pidFile}\necho done\nexit 0`)
   const started = Date.now()
@@ -42,7 +43,7 @@ test('a grandchild that inherits stderr does not keep runProcess from resolving'
   assert.equal(await settle(Number(readFileSync(pidFile, 'utf8'))), false)
 })
 
-test('a timeout kills the whole process group', async () => {
+test('a timeout kills the whole process group', { skip: POSIX_ONLY }, async () => {
   const pidFile = join(root, 'timeout.pid')
   const bin = script('hung', `sleep 30 >/dev/null &\necho $! > ${pidFile}\nsleep 30`)
   const started = Date.now()

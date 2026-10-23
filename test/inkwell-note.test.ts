@@ -36,7 +36,7 @@ function registry(dir: string, bin: string): string {
       manifestVersion: 1,
       name: 'inkwell',
       version: '0.5.0',
-      bin: [bin],
+      bin: [process.execPath, bin],
       envelope: 1,
       capabilities: ['docs.entry-notes'],
       emits: [],
@@ -74,7 +74,7 @@ test('writeEntryNote saves one section per non-empty field, in order, with the f
     assert.equal(calls[3]?.args.includes('--file'), false)
     assert.ok(calls.every((call) => call.child === '1'))
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 
@@ -84,6 +84,6 @@ test('writeEntryNote reports inkwell missing without throwing', async () => {
     const result = await writeEntryNote(1, NOTE, { cwd: dir, touchedFiles: [], env: { ...process.env, KIT_REGISTRY_DIR: dir } })
     assert.deepEqual(result, { written: 0, error: 'inkwell not found' })
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })

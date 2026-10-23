@@ -54,6 +54,7 @@ const HARNESS_LABELS: Readonly<Record<HarnessId, string>> = {
   opencode: 'OpenCode',
   codex: 'Codex',
   gemini: 'Gemini',
+  antigravity: 'Antigravity',
 }
 
 function errorText(error: unknown): string {

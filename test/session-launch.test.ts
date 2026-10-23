@@ -3,8 +3,9 @@ import { strict as assert } from 'node:assert'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { basename, delimiter, join } from 'node:path'
 import { test } from 'node:test'
+import { nodeScriptBin, POSIX_ONLY } from './helpers/fake-bin.ts'
 import type { HarnessAdapter, HarnessId } from '../src/harness/types.ts'
 import type { StartSessionInput } from '../src/domain/session.ts'
 import type { LocalContext } from '../src/cli/local-context.ts'
@@ -30,7 +31,7 @@ const { insertEntrySession, linkSession, markSessionEnded } = await import('../s
 const bin = join(import.meta.dirname, '..', 'src', 'bin', 'bita.ts')
 const TTY = { stdinIsTTY: true, stdoutIsTTY: true }
 
-test.after(() => rmSync(root, { recursive: true, force: true }))
+test.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
 
 function fakeAdapter(id: HarnessId, label: string, available = true): HarnessAdapter {
   return {
@@ -414,7 +415,7 @@ for (const nested of [{ BITA_WRAPPER_ID: 'outer' }, { BITA_CHILD: '1' }]) {
     assert.equal(h.swept, 0)
     assert.equal(h.started.length, 0)
     assert.equal(h.closed.length, 0)
-    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env }])
+    assert.deepEqual(h.spawned, [{ bin: '/fake/claude', args: ['--claude-default', 'hola'], env: { ...env, PATH: `/fake${delimiter}/usr/bin` } }])
     assert.match(errors.text(), /already inside a bita session; launching the harness without a new timer/)
   })
 }
@@ -431,10 +432,10 @@ test('inside a session --harness picks which harness to launch', async () => {
   assert.equal(h.spawned[0]?.bin, '/fake/codex')
 })
 
-test('mappedProjectId resolves the cwd through the mapped checkouts', async () => {
+test('mappedProjectId resolves the cwd through the mapped checkouts', { skip: POSIX_ONLY }, async () => {
   const repo = realpathSync(mkdtempSync(join(root, 'repo-')))
   execFileSync('git', ['init', '-q', repo])
-  const dbPath = join(repo, '..', `${repo.split('/').at(-1)}.db`)
+  const dbPath = join(repo, '..', `${basename(repo)}.db`)
   const db = openDatabase(dbPath)
   const project = insertProject(db, { name: 'Mapped', clientName: null, createdAt: new Date().toISOString() })
   upsertProjectRepo(db, { projectId: project.id, path: repo, slug: null, source: 'manual', now: new Date().toISOString() })
@@ -451,10 +452,7 @@ test('mappedProjectId resolves the cwd through the mapped checkouts', async () =
 })
 
 function script(dir: string, name: string, body: string): string {
-  const path = join(dir, name)
-  writeFileSync(path, `#!${process.execPath}\n${body}\n`, 'utf8')
-  chmodSync(path, 0o755)
-  return path
+  return nodeScriptBin(dir, name, `${body}\n`)
 }
 
 test('spawnHarness returns the exit code, 128 + signal, and 127 when the binary is missing', async () => {
@@ -463,7 +461,7 @@ test('spawnHarness returns the exit code, 128 + signal, and 127 when the binary 
   const killed = script(dir, 'killed', "process.kill(process.pid, 'SIGTERM'); setTimeout(() => {}, 5000)")
   const env = { ...process.env }
   assert.equal(await spawnHarness(exits, [], env), 4)
-  assert.equal(await spawnHarness(killed, [], env), 143)
+  if (process.platform !== 'win32') assert.equal(await spawnHarness(killed, [], env), 143)
   assert.equal(await spawnHarness(join(dir, 'missing'), [], env), 127)
 })
 
@@ -503,7 +501,7 @@ test('bita work --help prints the bita help', () => {
   assert.match(run.stdout, /work \[--harness ID\]/)
 })
 
-test('the wrapper forwards SIGTERM to the agent and exits with its code', async () => {
+test('the wrapper forwards SIGTERM to the agent and exits with its code', { skip: POSIX_ONLY }, async () => {
   const dir = mkdtempSync(join(root, 'e2e-signal-'))
   const binDir = join(dir, 'bin')
   mkdirSync(binDir)
@@ -826,4 +824,59 @@ test('a positional without --resume is still rejected, and --resume with an unre
   } finally {
     errors.restore()
   }
+})
+
+test('after the harness exits, afterExit runs before the wrapper closes', async () => {
+  const h = harness()
+  const calls: { cwd: string; startedAt: string; endedAt: string }[] = []
+  const adapter: HarnessAdapter = {
+    ...fakeAdapter('antigravity', 'Antigravity'),
+    afterExit: async (ref) => {
+      calls.push(ref)
+      assert.equal(h.closed.length, 0)
+      return { sessionId: 'conv-1', transcriptPath: null }
+    },
+  }
+  const before = Date.now()
+  const code = await h.run(['--harness', 'antigravity', '--project', 'Alpha'], { adapters: [adapter] })
+  assert.equal(code, 0)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.cwd, h.dir)
+  assert.ok(Date.parse(calls[0]?.startedAt ?? '') >= before - 1)
+  assert.ok(Date.parse(calls[0]?.endedAt ?? '') >= Date.parse(calls[0]?.startedAt ?? ''))
+  assert.equal(h.closed.length, 1)
+  assert.equal(h.spawned[0]?.env['PATH'], `/fake${delimiter}/usr/bin`)
+})
+
+test('bita work does not hand the harness the session markers of another agent', async () => {
+  const h = harness()
+  const env = {
+    PATH: '/usr/bin',
+    ANTIGRAVITY_CONVERSATION_ID: 'foreign',
+    ANTIGRAVITY_AGENT: '1',
+    CODEX_THREAD_ID: 't',
+    GEMINI_SESSION_ID: 'g',
+    GEMINI_PROJECT_DIR: '/p',
+    CLAUDECODE: '1',
+    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_SSE_PORT: '4242',
+    CLAUDE_CODE_IDE_HOST_OVERRIDE: 'h',
+    VSCODE_PID: '1',
+    TERM_PROGRAM: 'vscode',
+    ANTIGRAVITY_USER_SETTING: 'keep',
+    ANTIGRAVITY_TRAJECTORY_ID: 'drop',
+    KEEP: 'yes',
+  }
+  await h.run(['--harness', 'antigravity', '--project', 'Alpha'], { env, adapters: [fakeAdapter('antigravity', 'Antigravity')] })
+  await h.run(['--', 'x'], { env: { ...env, BITA_WRAPPER_ID: 'outer' }, adapters: [fakeAdapter('claude', 'Claude')] })
+  for (const spawned of h.spawned) {
+    for (const key of ['CLAUDE_CODE_SSE_PORT', 'CLAUDE_CODE_IDE_HOST_OVERRIDE', 'VSCODE_PID', 'TERM_PROGRAM', 'ANTIGRAVITY_USER_SETTING']) assert.ok(spawned.env[key], key)
+    for (const key of ['ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_TRAJECTORY_ID', 'ANTIGRAVITY_AGENT', 'CODEX_THREAD_ID', 'GEMINI_SESSION_ID', 'GEMINI_PROJECT_DIR', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT']) {
+      assert.equal(spawned.env[key], undefined, key)
+    }
+    assert.equal(spawned.env['KEEP'], 'yes')
+    assert.equal(spawned.env['CLAUDE_CODE_USE_BEDROCK'], '1')
+  }
+  assert.equal(h.spawned[1]?.env['BITA_WRAPPER_ID'], 'outer')
 })

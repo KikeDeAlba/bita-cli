@@ -1,6 +1,6 @@
-export type HarnessId = 'claude' | 'opencode' | 'codex' | 'gemini'
+export const HARNESS_IDS = ['claude', 'opencode', 'codex', 'gemini', 'antigravity'] as const
 
-export const HARNESS_IDS: readonly HarnessId[] = ['claude', 'opencode', 'codex', 'gemini']
+export type HarnessId = (typeof HARNESS_IDS)[number]
 
 export interface LaunchPlan {
   args: string[]
@@ -56,6 +56,17 @@ export interface SummaryInput {
 
 export type SummaryResult = { ok: true; summary: SessionSummary } | { ok: false; error: string }
 
+export interface ExitRef {
+  cwd: string
+  startedAt: string
+  endedAt: string
+}
+
+export interface ExitSession {
+  sessionId: string
+  transcriptPath: string | null
+}
+
 export interface HarnessAdapter {
   readonly id: HarnessId
   readonly label: string
@@ -66,4 +77,5 @@ export interface HarnessAdapter {
   launchArgs(userArgs: readonly string[]): LaunchPlan
   extractTranscript(ref: TranscriptRef): Promise<Turn[]>
   summarize(input: SummaryInput): Promise<SummaryResult>
+  afterExit?(ref: ExitRef, env?: NodeJS.ProcessEnv): Promise<ExitSession | null>
 }

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { test } from 'node:test'
+import { POSIX_ONLY } from './helpers/fake-bin.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'bita-stop-hooks-'))
 const events = join(dir, 'events.ndjson')
@@ -60,7 +61,7 @@ function runningIds(): number[] {
   }
 }
 
-test('stop no longer takes --did, and a plain stop fires the hook', async () => {
+test('stop no longer takes --did, and a plain stop fires the hook', { skip: POSIX_ONLY }, async () => {
   await quietly(() => runStart(['Reunión presencial', '--kind', 'in-person-meeting', ...common]))
   const [started] = await receivedEvents(1)
   assert.equal(started?.event, 'start')
