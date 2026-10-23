@@ -43,6 +43,10 @@ export interface BitaCommand {
 
 export type BitaCommandResult = { ok: true; spec: BitaCommand } | { ok: false; reason: string; log: string | null }
 
+export function isUncPath(file: string): boolean {
+  return /^[\\/]{2}/.test(file)
+}
+
 function isAbsoluteFor(file: string, platform: NodeJS.Platform): boolean {
   return platform === 'win32' ? win32.isAbsolute(file) : isAbsolute(file)
 }
@@ -53,7 +57,8 @@ function launcherCandidates(env: NodeJS.ProcessEnv): string[] {
   const add = (file: string | undefined) => {
     if (file && !list.includes(file)) list.push(file)
   }
-  add(env[LAUNCHER_ENV])
+  const fromEnv = env[LAUNCHER_ENV]
+  add(fromEnv && !isUncPath(fromEnv) ? fromEnv : undefined)
   add(join(here, '..', LAUNCHER_FILE))
   add(env['OPENCODE_CONFIG_DIR'] ? join(env['OPENCODE_CONFIG_DIR'], LAUNCHER_FILE) : undefined)
   add(env['XDG_CONFIG_HOME'] ? join(env['XDG_CONFIG_HOME'], 'opencode', LAUNCHER_FILE) : undefined)
@@ -75,7 +80,7 @@ export function readLauncher(env: NodeJS.ProcessEnv = process.env, platform: Nod
     const record = parsed as Record<string, unknown>
     const command = record['command']
     const args = record['args']
-    if (typeof command !== 'string' || !isAbsoluteFor(command, platform)) continue
+    if (typeof command !== 'string' || !isAbsoluteFor(command, platform) || isUncPath(command)) continue
     if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) continue
     return {
       command,
@@ -98,10 +103,10 @@ export function viaCmd(bin: string, args: readonly string[], env: NodeJS.Process
   const next: NodeJS.ProcessEnv = { ...env }
   const parts = values.map((value, index) => {
     const name = `BITA_HOOK_ARG_${index}`
-    next[name] = value
+    next[name] = value.replace(/(\\+)$/, '$1$1')
     return `"%${name}%"`
   })
-  return { args: ['/d', '/s', '/c', `"${parts.join(' ')}"`], env: next }
+  return { args: ['/d', '/v:off', '/s', '/c', `"${parts.join(' ')}"`], env: next }
 }
 
 export function bitaCommand(args: readonly string[], env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): BitaCommandResult {
@@ -119,6 +124,7 @@ export function bitaCommand(args: readonly string[], env: NodeJS.ProcessEnv = pr
   }
   if (bin) {
     if (!isAbsoluteFor(bin, platform)) return { ok: false, reason: `BITA_BIN must be an absolute path: ${bin}`, log }
+    if (isUncPath(bin)) return { ok: false, reason: `BITA_BIN cannot be a network path: ${bin}`, log }
     return direct(bin, [])
   }
   if (launcher) return direct(launcher.command, launcher.args)
