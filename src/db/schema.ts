@@ -286,13 +286,13 @@ const PROJECT_REPOS: readonly string[] = [
 
 const ENTRY_JIRA_ISSUE: readonly string[] = [`ALTER TABLE entries ADD COLUMN jira_issue INTEGER`]
 
-const ENTRY_SESSIONS: readonly string[] = [
-  `CREATE TABLE entry_sessions (
+function entrySessionsTable(name: string, harnesses: readonly string[]): string {
+  return `CREATE TABLE ${name} (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      entry_id INTEGER NOT NULL UNIQUE REFERENCES entries (id) ON DELETE CASCADE,
      wrapper_id TEXT NOT NULL,
      wrapper_pid INTEGER NOT NULL,
-     harness TEXT NOT NULL CHECK (harness IN ('claude', 'opencode', 'codex', 'gemini')),
+     harness TEXT NOT NULL CHECK (harness IN (${harnesses.map((id) => `'${id}'`).join(', ')})),
      session_id TEXT,
      transcript_path TEXT,
      cwd TEXT NOT NULL,
@@ -305,10 +305,29 @@ const ENTRY_SESSIONS: readonly string[] = [
      error TEXT,
      CHECK (ended_at IS NULL OR ended_at >= started_at),
      CHECK ((finalized_at IS NULL) = (outcome IS NULL))
-   )`,
+   )`
+}
+
+const ENTRY_SESSIONS_INDEXES: readonly string[] = [
   `CREATE INDEX entry_sessions_wrapper ON entry_sessions (wrapper_id, ended_at)`,
   `CREATE INDEX entry_sessions_session ON entry_sessions (harness, session_id) WHERE session_id IS NOT NULL`,
   `CREATE INDEX entry_sessions_open ON entry_sessions (ended_at) WHERE ended_at IS NULL`,
+]
+
+const ENTRY_SESSIONS: readonly string[] = [
+  entrySessionsTable('entry_sessions', ['claude', 'opencode', 'codex', 'gemini']),
+  ...ENTRY_SESSIONS_INDEXES,
+]
+
+const ENTRY_SESSION_COLUMNS =
+  'id, entry_id, wrapper_id, wrapper_pid, harness, session_id, transcript_path, cwd, started_at, ended_at, end_reason, claimed_at, finalized_at, outcome, error'
+
+const ENTRY_SESSIONS_ANTIGRAVITY: readonly string[] = [
+  entrySessionsTable('entry_sessions_next', ['claude', 'opencode', 'codex', 'gemini', 'antigravity']),
+  `INSERT INTO entry_sessions_next (${ENTRY_SESSION_COLUMNS}) SELECT ${ENTRY_SESSION_COLUMNS} FROM entry_sessions`,
+  `DROP TABLE entry_sessions`,
+  `ALTER TABLE entry_sessions_next RENAME TO entry_sessions`,
+  ...ENTRY_SESSIONS_INDEXES,
 ]
 
 function backfillBacklogKeys(db: DatabaseSync): void {
@@ -333,6 +352,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 12, statements: PROJECT_REPOS },
   { version: 13, statements: ENTRY_JIRA_ISSUE },
   { version: 14, statements: ENTRY_SESSIONS },
+  { version: 15, statements: ENTRY_SESSIONS_ANTIGRAVITY },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(
