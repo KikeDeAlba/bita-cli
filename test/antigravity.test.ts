@@ -134,11 +134,13 @@ test('attachExitSession links only the open unlinked session of the wrapper', ()
 test('summarize asks agy headless in read mode and validates the answer', { skip: IS_WINDOWS && 'a fake agy.cmd cannot take a multi-line argument; the real agy is an .exe' }, async () => {
   const dir = mkdtempSync(join(root, 'agy-'))
   const log = join(dir, 'argv.json')
-  const reply = JSON.stringify({
-    response: JSON.stringify({ title: 'Arreglar el bug', kind: 'dev', note: { context: 'c', done: 'd', decisions: null, findings: null, verification: null, pending: null } }),
-    conversation_id: 'c1',
-  })
-  const fake = nodeScriptBin(dir, 'agy', `require('node:fs').writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), headless: process.env.KIT_HEADLESS ?? null, wrapper: process.env.BITA_WRAPPER_ID ?? null }))\nprocess.stdout.write(${JSON.stringify(reply)})\n`)
+  const answer = JSON.stringify({ title: 'Arreglar el bug', kind: 'dev', note: { context: 'c', done: 'd', decisions: null, findings: null, verification: null, pending: null } })
+  const events = [
+    { event: 'init', conversation_id: 'c1', init: { cwd: root, tools: [], permission_mode: 'request-review' } },
+    { event: 'step_update', step_update: { conversation_id: 'c1', step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: answer } },
+    { event: 'result', result: { conversation_id: 'c1', status: 'SUCCESS', response: answer, num_turns: 1 } },
+  ].map((event) => JSON.stringify(event)).join('\n') + '\n'
+  const fake = nodeScriptBin(dir, 'agy', `const input = require('node:fs').readFileSync(0, 'utf8')\nrequire('node:fs').writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), input, headless: process.env.KIT_HEADLESS ?? null, wrapper: process.env.BITA_WRAPPER_ID ?? null }))\nprocess.stdout.write(${JSON.stringify(events)})\n`)
   process.env[harnessBinEnvVar('antigravity')] = fake
   process.env['BITA_WRAPPER_ID'] = 'w-1'
   try {
