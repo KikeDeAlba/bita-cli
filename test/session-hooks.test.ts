@@ -46,7 +46,10 @@ function baseEnv(b: Box): NodeJS.ProcessEnv {
     BITA_HARNESS_BIN_CODEX: join(b.dir, 'missing'),
     BITA_HARNESS_BIN_GEMINI: join(b.dir, 'missing'),
     BITA_HARNESS_BIN_OPENCODE: join(b.dir, 'missing'),
+    BITA_HARNESS_BIN_ANTIGRAVITY: join(b.dir, 'missing'),
   }
+  delete env['KIT_HEADLESS']
+  delete env['ANTIGRAVITY_CONVERSATION_ID']
   for (const key of ['BITA_WRAPPER_ID', 'BITA_HARNESS', 'BITA_SESSION_PROJECT', 'BITA_CHILD', 'CLAUDECODE']) delete env[key]
   return env
 }
@@ -204,3 +207,43 @@ test(
     }
   },
 )
+
+test('hooks of a headless run (KIT_HEADLESS=1) record nothing', () => {
+  const b = box('gemini')
+  try {
+    const env = { ...wrapped(b, 'gemini'), KIT_HEADLESS: '1' }
+    silent(hook(b, ['gemini'], JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'g1', cwd: b.dir, source: 'startup' }), env))
+    silent(hook(b, ['session-start', '--harness', 'gemini'], JSON.stringify({ session_id: 'g1', cwd: b.dir, source: 'startup' }), env))
+    assert.equal(session(b)?.sessionId, null)
+    silent(hook(b, ['gemini'], JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'g1', cwd: b.dir, source: 'startup' }), { ...env, KIT_HEADLESS: '0' }))
+    assert.equal(session(b)?.sessionId, 'g1')
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true })
+  }
+})
+
+test('any bita run inside agy links the antigravity conversation of the wrapper', () => {
+  const b = box('antigravity')
+  try {
+    const env = { ...wrapped(b, 'antigravity'), ANTIGRAVITY_CONVERSATION_ID: 'conv-1' }
+    const listed = spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env })
+    assert.equal(listed.status, 0, listed.stderr)
+    assert.equal(session(b)?.sessionId, 'conv-1')
+    assert.equal(session(b)?.transcriptPath, join(b.dir, '.gemini', 'antigravity-cli', 'conversations', 'conv-1.db'))
+    spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env: { ...env, ANTIGRAVITY_CONVERSATION_ID: 'conv-2' } })
+    assert.equal(session(b)?.sessionId, 'conv-1')
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true })
+  }
+})
+
+test('the conversation id is ignored outside an antigravity wrapper', () => {
+  const b = box('gemini')
+  try {
+    const env = { ...wrapped(b, 'gemini'), ANTIGRAVITY_CONVERSATION_ID: 'conv-1' }
+    spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env })
+    assert.equal(session(b)?.sessionId, null)
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true })
+  }
+})

@@ -827,3 +827,25 @@ test('a positional without --resume is still rejected, and --resume with an unre
     errors.restore()
   }
 })
+
+test('after the harness exits, afterExit runs before the wrapper closes', async () => {
+  const h = harness()
+  const calls: { cwd: string; startedAt: string; endedAt: string }[] = []
+  const adapter: HarnessAdapter = {
+    ...fakeAdapter('antigravity', 'Antigravity'),
+    afterExit: async (ref) => {
+      calls.push(ref)
+      assert.equal(h.closed.length, 0)
+      return { sessionId: 'conv-1', transcriptPath: null }
+    },
+  }
+  const before = Date.now()
+  const code = await h.run(['--harness', 'antigravity', '--project', 'Alpha'], { adapters: [adapter] })
+  assert.equal(code, 0)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.cwd, h.dir)
+  assert.ok(Date.parse(calls[0]?.startedAt ?? '') >= before - 1)
+  assert.ok(Date.parse(calls[0]?.endedAt ?? '') >= Date.parse(calls[0]?.startedAt ?? ''))
+  assert.equal(h.closed.length, 1)
+  assert.equal(h.spawned[0]?.env['PATH'], `/fake${delimiter}/usr/bin`)
+})
