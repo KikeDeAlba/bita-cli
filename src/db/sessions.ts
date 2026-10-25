@@ -251,23 +251,171 @@ const RESUMABLE_SELECT = `SELECT s.id, s.entry_id, s.harness, s.session_id, s.cw
        JOIN entries e ON e.id = s.entry_id
        LEFT JOIN projects p ON p.id = e.project_id`
 
-export function listResumableSessions(db: DatabaseSync, cwd: string, limit = 50): ResumableSession[] {
-  return queryAll<RawResumableSession>(
-    db.prepare(
-      `${RESUMABLE_SELECT}
-       WHERE s.cwd = ? AND s.session_id IS NOT NULL AND s.ended_at IS NOT NULL
+const LATEST_RESUMABLE = `s.session_id IS NOT NULL AND s.ended_at IS NOT NULL
          AND NOT EXISTS (
            SELECT 1 FROM entry_sessions later
            WHERE later.harness = s.harness AND later.session_id = s.session_id
              AND later.ended_at IS NOT NULL
              AND (later.started_at > s.started_at OR (later.started_at = s.started_at AND later.id > s.id))
-         )
+         )`
+
+export function listResumableSessions(db: DatabaseSync, cwd: string, limit = 50): ResumableSession[] {
+  return queryAll<RawResumableSession>(
+    db.prepare(
+      `${RESUMABLE_SELECT}
+       WHERE s.cwd = ? AND ${LATEST_RESUMABLE}
        ORDER BY s.started_at DESC, s.id DESC
        LIMIT ?`,
     ),
     cwd,
     limit,
   ).map(toResumable)
+}
+
+export function findResumableByRow(db: DatabaseSync, rowId: number): ResumableSession | undefined {
+  const raw = queryOne<RawResumableSession>(
+    db.prepare(`${RESUMABLE_SELECT} WHERE s.id = ? AND s.session_id IS NOT NULL AND s.ended_at IS NOT NULL`),
+    rowId,
+  )
+  return raw ? toResumable(raw) : undefined
+}
+
+export function findResumableBySessionId(db: DatabaseSync, sessionId: string): ResumableSession | undefined {
+  const raw = queryOne<RawResumableSession>(
+    db.prepare(
+      `${RESUMABLE_SELECT}
+       WHERE s.session_id = ? AND s.ended_at IS NOT NULL
+       ORDER BY s.started_at DESC, s.id DESC
+       LIMIT 1`,
+    ),
+    sessionId,
+  )
+  return raw ? toResumable(raw) : undefined
+}
+
+export interface SessionFilter {
+  cwd: string | null
+  open: boolean
+  harness: HarnessId | null
+  limit: number
+}
+
+export interface SessionListing {
+  id: number
+  entryId: number
+  harness: HarnessId
+  sessionId: string | null
+  wrapperPid: number
+  cwd: string
+  transcriptPath: string | null
+  startedAt: string
+  endedAt: string | null
+  open: boolean
+  resumable: boolean
+  entry: { description: string; projectId: number | null; projectName: string | null }
+}
+
+interface RawSessionListing {
+  id: number
+  entry_id: number
+  harness: string
+  session_id: string | null
+  wrapper_pid: number
+  cwd: string
+  transcript_path: string | null
+  started_at: string
+  ended_at: string | null
+  resumable: number
+  description: string
+  project_id: number | null
+  project_name: string | null
+}
+
+export function listSessions(db: DatabaseSync, filter: SessionFilter): SessionListing[] {
+  const where: string[] = []
+  const params: Array<string | number> = []
+  if (filter.cwd !== null) {
+    where.push('s.cwd = ?')
+    params.push(filter.cwd)
+  }
+  if (filter.open) where.push('s.ended_at IS NULL')
+  if (filter.harness !== null) {
+    where.push('s.harness = ?')
+    params.push(filter.harness)
+  }
+  const raws = queryAll<RawSessionListing>(
+    db.prepare(
+      `SELECT s.id, s.entry_id, s.harness, s.session_id, s.wrapper_pid, s.cwd, s.transcript_path, s.started_at, s.ended_at,
+         CASE WHEN ${LATEST_RESUMABLE} THEN 1 ELSE 0 END AS resumable,
+         e.description, e.project_id, p.name AS project_name
+       FROM entry_sessions s
+       JOIN entries e ON e.id = s.entry_id
+       LEFT JOIN projects p ON p.id = e.project_id
+       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY s.started_at DESC, s.id DESC
+       LIMIT ?`,
+    ),
+    ...params,
+    filter.limit,
+  )
+  return raws.map((raw) => ({
+    id: raw.id,
+    entryId: raw.entry_id,
+    harness: raw.harness as HarnessId,
+    sessionId: raw.session_id,
+    wrapperPid: raw.wrapper_pid,
+    cwd: raw.cwd,
+    transcriptPath: raw.transcript_path,
+    startedAt: raw.started_at,
+    endedAt: raw.ended_at,
+    open: raw.ended_at === null,
+    resumable: raw.resumable === 1,
+    entry: { description: raw.description, projectId: raw.project_id, projectName: raw.project_name },
+  }))
+}
+
+export interface SessionDirectory {
+  cwd: string
+  lastUsedAt: string
+  sessions: number
+  projectId: number | null
+  projectName: string | null
+}
+
+interface RawSessionDirectory {
+  cwd: string
+  last_used_at: string
+  sessions: number
+  project_id: number | null
+  project_name: string | null
+}
+
+export function listSessionDirectories(db: DatabaseSync, limit = 20): SessionDirectory[] {
+  return queryAll<RawSessionDirectory>(
+    db.prepare(
+      `SELECT d.cwd, d.last_used_at, d.sessions, d.project_id, p.name AS project_name
+       FROM (
+         SELECT s.cwd, MAX(COALESCE(s.ended_at, s.started_at)) AS last_used_at, COUNT(*) AS sessions,
+           (SELECT e.project_id FROM entry_sessions recent
+              JOIN entries e ON e.id = recent.entry_id
+             WHERE recent.cwd = s.cwd AND e.project_id IS NOT NULL
+             ORDER BY recent.started_at DESC, recent.id DESC
+             LIMIT 1) AS project_id
+         FROM entry_sessions s
+         GROUP BY s.cwd
+       ) d
+       LEFT JOIN projects p ON p.id = d.project_id
+       ORDER BY d.last_used_at DESC, d.cwd
+       LIMIT ?`,
+    ),
+    limit,
+  ).map((raw) => ({
+    cwd: raw.cwd,
+    lastUsedAt: raw.last_used_at,
+    sessions: raw.sessions,
+    projectId: raw.project_id,
+    projectName: raw.project_name,
+  }))
 }
 
 export function findResumableByEntry(db: DatabaseSync, entryId: number): ResumableSession | undefined {

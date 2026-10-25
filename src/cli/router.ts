@@ -267,6 +267,8 @@ export async function route(argv: string[]): Promise<number> {
       return (await import('./commands/session-launch.ts')).runSessionLaunch(rest)
     case 'work':
       return (await import('./commands/session-launch.ts')).runSessionLaunch(rest)
+    case 'sessions':
+      return (await import('./commands/sessions.ts')).runSessions(rest)
     case 'merge':
       return runMerge(rest)
     case 'start':
