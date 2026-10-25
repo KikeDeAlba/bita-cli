@@ -278,3 +278,36 @@ test('version 16 lets a session have no entry and keeps the sessions already rec
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [])
   db.close()
 })
+
+test('version 16 keeps the id sequence, so an id freed by a cascade is never reused', () => {
+  const db = databaseAt(15)
+  const at = '2026-10-20T10:00:00.000Z'
+  const entry = (description: string) =>
+    Number(
+      db
+        .prepare(`INSERT INTO entries (description, started_at, source, created_at, updated_at) VALUES (?, ?, 'session', ?, ?)`)
+        .run(description, at, at, at).lastInsertRowid,
+    )
+  const insert = db.prepare(`INSERT INTO entry_sessions (entry_id, wrapper_id, wrapper_pid, harness, cwd, started_at) VALUES (?, ?, 42, 'claude', '/repo', ?)`)
+  insert.run(entry('kept'), 'w1', at)
+  const doomed = entry('doomed')
+  const freed = Number(insert.run(doomed, 'w2', at).lastInsertRowid)
+  db.prepare('DELETE FROM entries WHERE id = ?').run(doomed)
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions WHERE id = ?').get(freed) as { n: number }).n, 0)
+
+  assert.equal(migrate(db), LATEST_VERSION)
+  const next = Number(insert.run(null, 'w3', at).lastInsertRowid)
+  assert.ok(next > freed, `${next} > ${freed}`)
+  assert.deepEqual(db.prepare("SELECT name FROM sqlite_sequence WHERE name LIKE 'entry_sessions%' ORDER BY name").all().map((row) => ({ ...row })), [{ name: 'entry_sessions' }])
+  db.close()
+})
+
+test('version 16 on an entry_sessions table that never had a row starts the sequence at 1', () => {
+  const db = databaseAt(15)
+  assert.equal(migrate(db), LATEST_VERSION)
+  const id = db
+    .prepare(`INSERT INTO entry_sessions (entry_id, wrapper_id, wrapper_pid, harness, cwd, started_at) VALUES (NULL, 'w1', 42, 'codex', '/repo', ?)`)
+    .run('2026-10-20T10:00:00.000Z').lastInsertRowid
+  assert.equal(Number(id), 1)
+  db.close()
+})

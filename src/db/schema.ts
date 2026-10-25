@@ -324,17 +324,23 @@ const ENTRY_SESSIONS: readonly string[] = [
 const ENTRY_SESSION_COLUMNS =
   'id, entry_id, wrapper_id, wrapper_pid, harness, session_id, transcript_path, cwd, started_at, ended_at, end_reason, claimed_at, finalized_at, outcome, error'
 
-function rebuildEntrySessions(entry: 'required' | 'optional'): readonly string[] {
+function rebuildEntrySessions(entry: 'required' | 'optional', keepSequence = true): readonly string[] {
   return [
     entrySessionsTable('entry_sessions_next', SESSION_HARNESSES, entry),
     `INSERT INTO entry_sessions_next (${ENTRY_SESSION_COLUMNS}) SELECT ${ENTRY_SESSION_COLUMNS} FROM entry_sessions`,
+    ...(keepSequence
+      ? [
+          `DELETE FROM sqlite_sequence WHERE name = 'entry_sessions_next'`,
+          `UPDATE sqlite_sequence SET name = 'entry_sessions_next' WHERE name = 'entry_sessions'`,
+        ]
+      : []),
     `DROP TABLE entry_sessions`,
     `ALTER TABLE entry_sessions_next RENAME TO entry_sessions`,
     ...ENTRY_SESSIONS_INDEXES,
   ]
 }
 
-const ENTRY_SESSIONS_ANTIGRAVITY = rebuildEntrySessions('required')
+const ENTRY_SESSIONS_ANTIGRAVITY = rebuildEntrySessions('required', false)
 
 const TIMERLESS_SESSIONS = rebuildEntrySessions('optional')
 
