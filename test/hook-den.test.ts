@@ -1,10 +1,12 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
+import { DEN_HOOK_TIMEOUT_ENV } from '../src/cli/commands/hook.ts'
 import { nodeScriptBin, POSIX_ONLY } from './helpers/fake-bin.ts'
 
 const bin = join(import.meta.dirname, '..', 'src', 'bin', 'bita.ts')
@@ -93,11 +95,85 @@ test('bita hook den reports every harness name it is given to Den unchanged', ()
   })
 })
 
-test('bita hook den does not wait forever for a Den that hangs', { skip: POSIX_ONLY, todo: 'forward() in src/cli/commands/hook.ts has no timeout, and the hung Den child is left running' }, () => {
-  withBox((root, env) => {
-    const fake = nodeScriptBin(root, 'den-hang', `setTimeout(() => process.exit(0), 12000)\nprocess.stdin.resume()\n`)
+const HANG = (pidFile: string): string =>
+  `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))\nprocess.stdin.resume()\nsetTimeout(() => process.exit(0), 60000)\n`
+
+function hooksLog(root: string): string {
+  const file = join(root, 'hooks.log')
+  return existsSync(file) ? readFileSync(file, 'utf8') : ''
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function waitFor(check: () => boolean, ms = 5000): Promise<boolean> {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    if (check()) return true
+    await delay(50)
+  }
+  return check()
+}
+
+test('bita hook den kills a Den that hangs past its limit, exits 0 and logs it', { skip: POSIX_ONLY }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'bita-hook-den-'))
+  try {
+    mkdirSync(join(root, 'home'))
+    const pidFile = join(root, 'den.pid')
+    const fake = nodeScriptBin(root, 'den-hang', HANG(pidFile))
+    const env = { PATH: process.env['PATH'], HOME: join(root, 'home'), BITA_DB_PATH: join(root, 'bita.db'), DEN_AGENT_HOOK: fake, [DEN_HOOK_TIMEOUT_ENV]: '500' }
     const started = Date.now()
-    const run = den({ ...env, DEN_AGENT_HOOK: fake }, ['codex'], '{}', { timeout: 5000 })
-    assert.notEqual(run.signal, 'SIGTERM', `bita hook den was still running after ${Date.now() - started} ms`)
+    const run = den(env, ['codex'], '{}', { timeout: 15000 })
+    assert.equal(run.signal, null, `bita hook den was still running after ${Date.now() - started} ms`)
+    assert.equal(run.status, 0, run.stderr)
+    assert.equal(run.stdout, '')
+    assert.ok(Date.now() - started < 10000)
+    assert.match(hooksLog(root), /hook den codex: Den did not answer within 500 ms; killed it/)
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    assert.ok(await waitFor(() => !alive(pid)), `Den ${pid} is still running`)
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('bita hook den returns 1 and logs it when Den is ended by a signal', { skip: POSIX_ONLY }, () => {
+  withBox((root, env) => {
+    const fake = nodeScriptBin(root, 'den-killed', `process.kill(process.pid, 'SIGKILL')\n`)
+    const run = den({ ...env, DEN_AGENT_HOOK: fake }, ['gemini'], '{}')
+    assert.equal(run.status, 1, run.stderr)
+    assert.match(hooksLog(root), /hook den gemini: Den was ended by SIGKILL/)
   })
 })
+
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+  test(`bita hook den kills Den when it receives ${signal}`, { skip: POSIX_ONLY }, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bita-hook-den-'))
+    try {
+      mkdirSync(join(root, 'home'))
+      const pidFile = join(root, 'den.pid')
+      const fake = nodeScriptBin(root, 'den-hang', HANG(pidFile))
+      const env = { PATH: process.env['PATH'], HOME: join(root, 'home'), BITA_DB_PATH: join(root, 'bita.db'), DEN_AGENT_HOOK: fake }
+      const child = spawn(process.execPath, [bin, 'hook', 'den', 'codex'], { env, stdio: ['pipe', 'ignore', 'ignore'] })
+      child.stdin.end('{}')
+      const exited = new Promise<NodeJS.Signals | null>((resolve) => child.on('exit', (_code, sig) => resolve(sig)))
+      try {
+        assert.ok(await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8') !== ''), 'Den never started')
+        const pid = Number(readFileSync(pidFile, 'utf8'))
+        child.kill(signal)
+        assert.equal(await exited, signal)
+        assert.ok(await waitFor(() => !alive(pid)), `Den ${pid} is still running`)
+        assert.match(hooksLog(root), new RegExp(`hook den codex: received ${signal}; killed Den`))
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+    }
+  })
+}
