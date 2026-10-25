@@ -1,5 +1,7 @@
+import { spawn } from 'node:child_process'
 import { openDatabase } from '../../db/open.ts'
 import { databasePath } from '../../db/paths.ts'
+import { killTree, spawnCommand } from '../../harness/process.ts'
 import { isHarnessId } from '../../harness/registry.ts'
 import type { HarnessId } from '../../harness/types.ts'
 import {
@@ -175,9 +177,88 @@ async function route(event: string, argv: readonly string[]): Promise<void> {
   if (event === 'gemini') return runAgentHook('gemini', GEMINI_EVENTS)
 }
 
+export const DEN_HOOK_ENV = 'DEN_AGENT_HOOK'
+
+export const DEN_HOOK_TIMEOUT_ENV = 'BITA_DEN_HOOK_TIMEOUT_MS'
+const DEN_HOOK_TIMEOUT_MS = 8000
+const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
+
+function denHookTimeoutMs(): number {
+  const raw = Number(process.env[DEN_HOOK_TIMEOUT_ENV])
+  return Number.isSafeInteger(raw) && raw > 0 ? Math.min(raw, DEN_HOOK_TIMEOUT_MS) : DEN_HOOK_TIMEOUT_MS
+}
+
+function forward(command: string, args: readonly string[], input: string, log: (line: string) => void): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const spec = spawnCommand(command, args)
+    const child = spawn(spec.command, spec.args, {
+      stdio: ['pipe', 'pipe', 'inherit'],
+      windowsHide: true,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments,
+    })
+    const output: Buffer[] = []
+    const timeoutMs = denHookTimeoutMs()
+    let settled = false
+    const kill = (): void => {
+      if (child.exitCode !== null || child.signalCode !== null) return
+      if (process.platform === 'win32') killTree(child, 'SIGKILL')
+      else child.kill('SIGKILL')
+    }
+    const finish = (): boolean => {
+      if (settled) return false
+      settled = true
+      clearTimeout(timer)
+      for (const signal of FORWARDED_SIGNALS) process.off(signal, onSignal)
+      return true
+    }
+    const onSignal = (signal: NodeJS.Signals): void => {
+      kill()
+      if (!finish()) return
+      log(`received ${signal}; killed Den (pid ${child.pid ?? 'unknown'})`)
+      process.kill(process.pid, signal)
+    }
+    const timer = setTimeout(() => {
+      kill()
+      if (!finish()) return
+      log(`Den did not answer within ${timeoutMs} ms; killed it (pid ${child.pid ?? 'unknown'})`)
+      child.stdout.destroy()
+      child.stdin.destroy()
+      child.unref()
+      resolve(0)
+    }, timeoutMs)
+    for (const signal of FORWARDED_SIGNALS) process.on(signal, onSignal)
+    child.stdout.on('data', (chunk: Buffer) => output.push(chunk))
+    child.stdin.on('error', () => undefined)
+    child.on('error', (error) => {
+      if (finish()) reject(error)
+    })
+    child.on('close', (code, signal) => {
+      if (!finish()) return
+      const status = signal !== null ? 1 : (code ?? 1)
+      if (signal !== null) log(`Den was ended by ${signal}`)
+      process.stdout.write(Buffer.concat(output), () => resolve(status))
+    })
+    child.stdin.end(input)
+  })
+}
+
+async function runDenHook(harness: string | undefined): Promise<number> {
+  const input = await readStdin()
+  const command = process.env[DEN_HOOK_ENV]
+  if (!command || !harness) return 0
+  const log = (line: string): void => appendHookLog(databasePath(), `hook den ${harness}: ${line}`)
+  try {
+    return await forward(command, ['--agent-hook', harness], input, log)
+  } catch (error) {
+    appendHookLog(databasePath(), `hook den ${harness} failed: ${error instanceof Error ? error.message : String(error)}`)
+    return 0
+  }
+}
+
 export async function runHook(argv: string[]): Promise<number> {
   const event = argv[0] ?? 'session-start'
   if (isHeadless()) return 0
+  if (event === 'den') return runDenHook(argv[1])
   try {
     await route(event, argv.slice(1))
   } catch (error) {

@@ -13,7 +13,7 @@ import { currentRepoIdentity } from './repo.ts'
 import { findProjectById, listProjects } from '../../db/projects.ts'
 import { findCheckoutProject } from '../../db/project-repos.ts'
 import type { ProjectRow } from '../../db/rows.ts'
-import { findResumableByEntry, listResumableSessions, type ResumableSession } from '../../db/sessions.ts'
+import { findResumableByEntry, findResumableByRow, findResumableBySessionId, listResumableSessions, type ResumableSession } from '../../db/sessions.ts'
 import { localDay } from '../../domain/timezone.ts'
 import { readRepoContext } from '../../state/git.ts'
 import { readConfig } from '../../state/config.ts'
@@ -40,6 +40,8 @@ const LAUNCH_OPTIONS = {
   harness: { type: 'string' as const },
   project: { type: 'string' as const },
   resume: { type: 'boolean' as const },
+  session: { type: 'string' as const },
+  prompt: { type: 'string' as const },
 }
 
 export interface LaunchDeps {
@@ -157,9 +159,14 @@ function isDirectory(path: string): boolean {
 
 interface ResumeRequest {
   entryId: number | null
+  session: string | null
 }
 
 function readResumeRequest(args: ParsedArgs): ResumeRequest | null {
+  const session = readString(args, 'session')
+  if (session !== undefined && !readBoolean(args, 'resume')) {
+    throw new UsageError('--session picks the session to resume; pass it with --resume: bita work --resume --session ID')
+  }
   if (!readBoolean(args, 'resume')) {
     if (args.positionals.length > 0) {
       throw new UsageError(`Unexpected argument "${args.positionals[0]}". Pass the harness arguments after --: bita work -- ${args.positionals.join(' ')}`)
@@ -170,19 +177,49 @@ function readResumeRequest(args: ParsedArgs): ResumeRequest | null {
   if (extra !== undefined) {
     throw new UsageError(`Unexpected argument "${extra}". --resume takes at most one ENTRY_ID; pass the harness arguments after --.`)
   }
-  if (raw === undefined) return { entryId: null }
+  if (session !== undefined) {
+    if (raw !== undefined) throw new UsageError('Pass either ENTRY_ID or --session ID to --resume, not both.')
+    if (session.trim() === '') throw new UsageError('--session takes a session id; see bita sessions ls.')
+    return { entryId: null, session: session.trim() }
+  }
+  if (raw === undefined) return { entryId: null, session: null }
   const entryId = Number(raw)
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(entryId) || entryId <= 0) {
     throw new UsageError(`Invalid ENTRY_ID "${raw}". Expected a positive integer.`)
   }
-  return { entryId }
+  return { entryId, session: null }
+}
+
+function findResumableBySession(ctx: LocalContext, ref: string): ResumableSession | undefined {
+  const rowId = /^\d+$/.test(ref) ? Number(ref) : Number.NaN
+  const byRow = Number.isSafeInteger(rowId) && rowId > 0 ? findResumableByRow(ctx.db, rowId) : undefined
+  return byRow ?? findResumableBySessionId(ctx.db, ref)
+}
+
+export function withPrompt(harnessArgs: readonly string[], prompt: string | undefined): string[] {
+  if (prompt === undefined) return [...harnessArgs]
+  if (prompt.trim() === '') throw new UsageError('--prompt takes the text of the first message.')
+  if (parseClaudeArgs(harnessArgs).prompt !== null) {
+    throw new UsageError('Pass the first message either with --prompt or after --, not both.')
+  }
+  return harnessArgs.includes('--') ? [...harnessArgs, prompt] : [...harnessArgs, '--', prompt]
+}
+
+function sessionLabel(session: ResumableSession): string {
+  return session.entryId === null ? `Session #${session.rowId}` : `Entry #${session.entryId}`
 }
 
 function harnessLabel(deps: LaunchDeps, harness: HarnessId): string {
   return deps.adapters.find((adapter) => adapter.id === harness)?.label ?? harness
 }
 
-async function pickResumable(ctx: LocalContext, deps: LaunchDeps, requested: number | null): Promise<Choice<ResumableSession>> {
+async function pickResumable(ctx: LocalContext, deps: LaunchDeps, request: ResumeRequest): Promise<Choice<ResumableSession>> {
+  if (request.session !== null) {
+    const session = findResumableBySession(ctx, request.session)
+    if (!session) throw new UsageError(`No finished harness session "${request.session}" to resume; see bita sessions ls.`)
+    return { value: session }
+  }
+  const requested = request.entryId
   if (requested !== null) {
     const session = findResumableByEntry(ctx.db, requested)
     if (!session) throw new UsageError(`Entry #${requested} has no finished harness session to resume.`)
@@ -197,7 +234,7 @@ async function pickResumable(ctx: LocalContext, deps: LaunchDeps, requested: num
     items: sessions.map((session) => ({
       label: session.description.trim() || '(untitled)',
       hint: [
-        `#${session.entryId}`,
+        session.entryId === null ? `session #${session.rowId}` : `#${session.entryId}`,
         session.projectName ?? 'No project',
         harnessLabel(deps, session.harness),
         localDay(session.startedAt, ctx.timezone),
@@ -211,11 +248,11 @@ async function pickResumable(ctx: LocalContext, deps: LaunchDeps, requested: num
 
 function resumeAdapter(deps: LaunchDeps, session: ResumableSession, requested: string | undefined): HarnessAdapter {
   if (requested !== undefined && requested !== session.harness) {
-    throw new UsageError(`Entry #${session.entryId} is a ${session.harness} session; drop --harness or pass --harness ${session.harness}.`)
+    throw new UsageError(`${sessionLabel(session)} is a ${session.harness} session; drop --harness or pass --harness ${session.harness}.`)
   }
   const adapter = deps.adapters.find((candidate) => candidate.id === session.harness && candidate.available(deps.env))
   if (!adapter) throw new UsageError(`The ${session.harness} harness is not installed.`)
-  if (!isDirectory(session.cwd)) throw new UsageError(`The directory of entry #${session.entryId} no longer exists: ${session.cwd}`)
+  if (!isDirectory(session.cwd)) throw new UsageError(`The directory of ${sessionLabel(session).toLowerCase()} no longer exists: ${session.cwd}`)
   return adapter
 }
 
@@ -279,7 +316,7 @@ async function pickProject(
 interface Prepared {
   adapter: HarnessAdapter
   project: ProjectRow | null
-  entryId: number | null
+  sessionRowId: number | null
   databasePath: string
   resumeSessionId: string | null
   cwd: string
@@ -295,7 +332,7 @@ async function prepareWithoutDatabase(
   writeErr(`bita: could not open the database, launching without the timer: ${errorMessage(error)}`)
   const harness = await pickHarness(deps, readString(args, 'harness'))
   if ('interrupted' in harness) return null
-  return { adapter: harness.value, project: null, entryId: null, databasePath: '', resumeSessionId: null, cwd: deps.cwd }
+  return { adapter: harness.value, project: null, sessionRowId: null, databasePath: '', resumeSessionId: null, cwd: deps.cwd }
 }
 
 async function prepare(args: ParsedArgs, deps: LaunchDeps, wrapperId: string, resume: ResumeRequest | null): Promise<Prepared | null> {
@@ -311,7 +348,7 @@ async function prepare(args: ParsedArgs, deps: LaunchDeps, wrapperId: string, re
     } catch (error) {
       writeErr(`bita: could not close orphan sessions: ${errorMessage(error)}`)
     }
-    const target = resume ? await pickResumable(ctx, deps, resume.entryId) : null
+    const target = resume ? await pickResumable(ctx, deps, resume) : null
     if (target && 'interrupted' in target) return null
     const session = target?.value ?? null
     const harness: Choice<HarnessAdapter> = session
@@ -323,9 +360,11 @@ async function prepare(args: ParsedArgs, deps: LaunchDeps, wrapperId: string, re
       session && requestedProject === undefined && session.projectId !== null ? findProjectById(ctx.db, session.projectId) : undefined
     const project: Choice<ProjectRow | null> = entryProject
       ? { value: entryProject }
-      : session
-        ? await pickProject(ctx, deps, requestedProject, session.cwd, `Entry #${session.entryId} has no project; pass --project ID|NAME|0.`)
-        : await pickProject(ctx, deps, requestedProject)
+      : session && session.entryId === null && requestedProject === undefined
+        ? { value: null }
+        : session
+          ? await pickProject(ctx, deps, requestedProject, session.cwd, `${sessionLabel(session)} has no project; pass --project ID|NAME|0.`)
+          : await pickProject(ctx, deps, requestedProject)
     if ('interrupted' in project) return null
     const base = {
       adapter: harness.value,
@@ -333,31 +372,34 @@ async function prepare(args: ParsedArgs, deps: LaunchDeps, wrapperId: string, re
       resumeSessionId: session?.sessionId ?? null,
       cwd: session?.cwd ?? deps.cwd,
     }
-    if (!project.value) return { ...base, project: null, entryId: null }
     try {
       const started = await deps.startEntry(ctx, {
         wrapperId,
         wrapperPid: process.pid,
         harness: harness.value.id,
-        projectId: project.value.id,
+        projectId: project.value?.id ?? null,
         cwd: base.cwd,
       })
-      return { ...base, project: project.value, entryId: started.entryId }
+      return { ...base, project: project.value, sessionRowId: started.rowId }
     } catch (error) {
-      writeErr(`bita: could not start the timer, launching without it: ${errorMessage(error)}`)
-      return { ...base, project: null, entryId: null }
+      writeErr(
+        project.value
+          ? `bita: could not start the timer, launching without it: ${errorMessage(error)}`
+          : `bita: could not record the session, launching without it: ${errorMessage(error)}`,
+      )
+      return { ...base, project: null, sessionRowId: null }
     }
   } finally {
     ctx.db.close()
   }
 }
 
-function sessionEnv(env: NodeJS.ProcessEnv, wrapperId: string, harness: HarnessId, projectId: number, databasePath: string): NodeJS.ProcessEnv {
+function sessionEnv(env: NodeJS.ProcessEnv, wrapperId: string, harness: HarnessId, projectId: number | null, databasePath: string): NodeJS.ProcessEnv {
   return {
     ...env,
     [WRAPPER_ID_ENV]: wrapperId,
     [HARNESS_ENV]: harness,
-    [SESSION_PROJECT_ENV]: String(projectId),
+    [SESSION_PROJECT_ENV]: String(projectId ?? 0),
     BITA_DB_PATH: databasePath,
   }
 }
@@ -409,30 +451,31 @@ export async function runSessionLaunch(argv: string[], overrides: Partial<Launch
   const { own, harnessArgs } = splitLaunchArgv(argv)
   const args = parseCommandArgs(own, LAUNCH_OPTIONS, BASE_OPTIONS)
   const resume = readResumeRequest(args)
+  const launchArgs = withPrompt(harnessArgs, readString(args, 'prompt'))
   if (resume && parseClaudeArgs(harnessArgs).resume.kind !== 'none') {
     throw new UsageError('--resume already picks the session; drop -r/--resume/-c/--continue from the harness arguments.')
   }
 
   if (isNested(deps.env)) {
     if (resume) throw new UsageError('Already inside a bita session; run bita work --resume from a regular terminal.')
-    return launchNested(args, deps, harnessArgs)
+    return launchNested(args, deps, launchArgs)
   }
 
   const wrapperId = randomUUID()
   const prepared = await prepare(args, deps, wrapperId, resume)
   if (!prepared) return EXIT_INTERRUPTED
 
-  const { adapter, project, entryId, databasePath, resumeSessionId, cwd } = prepared
-  const plan = adapter.launchArgs(resumeSessionId === null ? harnessArgs : ['--resume', resumeSessionId, ...harnessArgs])
+  const { adapter, project, sessionRowId, databasePath, resumeSessionId, cwd } = prepared
+  const plan = adapter.launchArgs(resumeSessionId === null ? launchArgs : ['--resume', resumeSessionId, ...launchArgs])
   for (const warning of plan.warnings) writeErr(warning)
   const bin = adapter.resolveBin(deps.env) ?? adapter.bin
   const env = withBinOnPath(withoutHarnessSession(deps.env), bin)
 
-  if (!project || entryId === null) return deps.spawnHarness(bin, plan.args, env, cwd)
+  if (sessionRowId === null) return deps.spawnHarness(bin, plan.args, env, cwd)
 
   const startedAt = new Date().toISOString()
   try {
-    return await deps.spawnHarness(bin, plan.args, sessionEnv(env, wrapperId, adapter.id, project.id, databasePath), cwd)
+    return await deps.spawnHarness(bin, plan.args, sessionEnv(env, wrapperId, adapter.id, project?.id ?? null, databasePath), cwd)
   } finally {
     await closeSession(args, deps, wrapperId, { adapter, cwd, startedAt })
   }

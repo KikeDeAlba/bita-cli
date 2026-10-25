@@ -8,7 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { test } from 'node:test'
 import { openDatabase } from '../src/db/open.ts'
 import { findEntryById, insertEntry } from '../src/db/entries.ts'
-import { findSessionByEntry, insertEntrySession } from '../src/db/sessions.ts'
+import { findSessionByEntry, findSessionById, insertEntrySession } from '../src/db/sessions.ts'
 import { listTouches } from '../src/db/touches.ts'
 import type { HarnessId } from '../src/harness/types.ts'
 
@@ -256,6 +256,40 @@ test('the conversation id is ignored outside an antigravity wrapper', () => {
     const env = { ...wrapped(b, 'gemini'), ANTIGRAVITY_CONVERSATION_ID: 'conv-1' }
     spawnSync(process.execPath, [bin, 'ls', '--json'], { cwd: b.dir, encoding: 'utf8', env })
     assert.equal(session(b)?.sessionId, null)
+  } finally {
+    rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('a session without a timer links on session-start, ends on session-end and launches no finalize', () => {
+  const b = box('claude')
+  try {
+    const db = openDatabase(b.db)
+    const rowId = insertEntrySession(db, { entryId: null, wrapperId: 'w-free', wrapperPid: process.pid, harness: 'codex', cwd: b.dir, startedAt: new Date().toISOString() }).id
+    db.close()
+    const env = { ...baseEnv(b), BITA_WRAPPER_ID: 'w-free', BITA_HARNESS: 'codex', BITA_SESSION_PROJECT: '0' }
+    const row = () => {
+      const handle = openDatabase(b.db)
+      try {
+        return findSessionById(handle, rowId)
+      } finally {
+        handle.close()
+      }
+    }
+
+    silent(hook(b, ['codex'], JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'free-1', transcript_path: join(b.dir, 'free.jsonl'), cwd: b.dir, source: 'startup' }), env))
+    assert.equal(row()?.sessionId, 'free-1')
+    assert.equal(row()?.transcriptPath, join(b.dir, 'free.jsonl'))
+    assert.equal(row()?.entryId, null)
+
+    silent(hook(b, ['codex'], JSON.stringify({ hook_event_name: 'PostToolUse', tool_input: { file_path: join(b.dir, 'a.ts') } }), env))
+
+    silent(hook(b, ['codex'], JSON.stringify({ hook_event_name: 'SessionEnd', session_id: 'free-1', reason: 'exit' }), env))
+    assert.equal(row()?.endReason, 'exit')
+    assert.notEqual(row()?.endedAt, null)
+    const log = existsSync(join(b.dir, 'hooks.log')) ? readFileSync(join(b.dir, 'hooks.log'), 'utf8') : ''
+    assert.doesNotMatch(log, /session finalize/)
+    assert.equal(session(b)?.endedAt, null)
   } finally {
     rmSync(b.dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }

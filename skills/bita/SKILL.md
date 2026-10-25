@@ -63,10 +63,12 @@ estos comandos.
 ## Reuniones
 
 ```
-bita start "<título>" --kind remote-meeting      # Meet, Zoom, Teams, llamada
-bita start "<título>" --kind in-person-meeting   # presencial
-bita amend <id> --kind remote-meeting|in-person-meeting|none
+bita start "<título>" --kind meeting    # cualquier reunión: Meet, Zoom, Teams, llamada o presencial
+bita amend <id> --kind meeting|none
 ```
+
+`meeting` es el único tipo de reunión. `remote-meeting` e `in-person-meeting`
+quedan en el historial y también cuentan como reunión; no los uses para nuevas.
 
 Los eventos de bita hacen que recap grabe; si `meta.hooksFired` es 0, nadie
 graba. Al parar una reunión, `recap wait --bita-entry <id> --json` espera la

@@ -72,7 +72,7 @@ function launchArgs(userArgs: readonly string[]): LaunchPlan {
   const head: string[] = []
   if (parsed.resume.kind === 'continue') head.push('resume', '--last')
   else if (parsed.resume.kind === 'resume') head.push('resume', ...(parsed.resume.id ? [parsed.resume.id] : []))
-  const args = [...head, DEFAULT_FLAG, ...(parsed.prompt !== null ? [parsed.prompt] : [])]
+  const args = [...head, DEFAULT_FLAG, ...(parsed.prompt !== null ? ['--', parsed.prompt] : [])]
   return { args, warnings: parsed.extraFlags.map((flag) => droppedWarning(LABEL, flag)) }
 }
 

@@ -83,7 +83,18 @@ test('capabilities answers the kit envelope with what bita offers', () => {
     name: 'bita',
     version: manifest(packageRoot()).version,
     envelope: 1,
-    capabilities: ['time.entries.read', 'time.entries.write', 'time.events', 'time.report.read'],
+    capabilities: [
+      'time.entries.read',
+      'time.entries.write',
+      'time.events',
+      'time.report.read',
+      'sessions.list',
+      'sessions.dirs',
+      'work.resume.session',
+      'work.prompt',
+      'timer.kind.meeting',
+      'setup.den-agent-hooks',
+    ],
     emits: ['start', 'stop', 'cancel', 'amend', 'delete', 'merge'],
   })
 })

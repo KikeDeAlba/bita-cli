@@ -8,7 +8,7 @@ export function parseKind(raw: string, flag = '--kind'): string {
   const kind = raw.trim().toLowerCase()
   if (!KIND_PATTERN.test(kind) || kind === CLEAR_KIND) {
     throw new UsageError(
-      `${flag} takes a lowercase word with dashes, such as remote-meeting; "${raw}" is not one.`,
+      `${flag} takes a lowercase word with dashes, such as meeting or in-person-meeting; "${raw}" is not one.`,
     )
   }
   return kind
