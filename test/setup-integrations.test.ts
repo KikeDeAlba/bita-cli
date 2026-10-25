@@ -1,15 +1,19 @@
 import './helpers/isolate.ts'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
-import { nodeScriptBin } from './helpers/fake-bin.ts'
+import { IS_WINDOWS, nodeScriptBin } from './helpers/fake-bin.ts'
 import assert from 'node:assert/strict'
 import { CAPABILITIES } from '../src/kit/manifest.ts'
 import { VERSION } from '../src/cli/router.ts'
 
 const repo = join(import.meta.dirname, '..')
+const DEN_CODEX = 'bita hook den codex'
+const DEN_GEMINI = 'bita hook den gemini'
+const OLD_DEN_CODEX = '[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook codex'
+const OLD_DEN_GEMINI = '[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook gemini'
 const bin = join(repo, 'src', 'bin', 'bita.ts')
 
 interface Sandbox {
@@ -165,6 +169,7 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
       hooks?: Record<string, unknown>
     }
     assert.ok(settings.permissions.allow.includes('Bash(bita start:*)'))
+    assert.ok(settings.permissions.allow.includes('Bash(bita sessions:*)'))
     assert.ok(settings.permissions.ask.includes('Bash(bita cancel:*)'))
     assert.equal(settings.hooks, undefined)
 
@@ -187,6 +192,8 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     assert.equal(codexHooks.hooks['UserPromptSubmit'], undefined)
     assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
     assert.match(codexHooks.hooks['PostToolUse']?.[0]?.matcher ?? '', /apply_patch/)
+    assert.deepEqual(codexHooks.hooks['PreToolUse'], [{ hooks: [{ type: 'command', command: DEN_CODEX, timeout: 10 }] }])
+    assert.deepEqual(codexHooks.hooks['PostToolUse']?.[1], { hooks: [{ type: 'command', command: DEN_CODEX, timeout: 10 }] })
     assert.ok(existsSync(join(box.codex, 'prompts', 'bita-start.md')))
     assert.equal(existsSync(join(box.codex, 'config.toml')), false)
 
@@ -199,6 +206,10 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     assert.equal(geminiHooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook gemini')
     assert.equal(geminiHooks.hooks['SessionEnd']?.[0]?.hooks[0]?.command, 'bita hook gemini')
     assert.equal(geminiHooks.hooks['BeforeAgent'], undefined)
+    assert.equal(geminiHooks.hooks['BeforeTool']?.[0]?.matcher, undefined)
+    assert.equal(geminiHooks.hooks['BeforeTool']?.[0]?.hooks[0]?.command, DEN_GEMINI)
+    assert.equal(geminiHooks.hooks['AfterTool']?.[1]?.matcher, undefined)
+    assert.equal(geminiHooks.hooks['AfterTool']?.[1]?.hooks[0]?.command, DEN_GEMINI)
     const geminiManifest = readJson(join(extension, 'gemini-extension.json'))
     assert.equal(geminiManifest['mcpServers'], undefined)
   } finally {
@@ -311,7 +322,7 @@ test('setup narrows an older catch-all Codex PostToolUse hook to the edit tools'
     )
     setup(box, '--target', 'codex')
     const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string }>> }
-    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 2)
     assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
   } finally {
     rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
@@ -341,7 +352,7 @@ test('setup drops the old Codex UserPromptSubmit hook and keeps the user ones', 
     assert.deepEqual(prompt, ['echo mine'])
     assert.equal(codexHooks.hooks['SessionStart']?.length, 1)
     assert.equal(codexHooks.hooks['SessionEnd']?.length, 1)
-    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 2)
   } finally {
     rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
@@ -360,7 +371,8 @@ test('running setup twice keeps the settings and hooks without duplicates', () =
     const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
     assert.equal(codexHooks.hooks['Stop']?.[0]?.hooks[0]?.command, 'echo keep')
     assert.equal(codexHooks.hooks['SessionStart']?.length, 1)
-    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 2)
+    assert.equal(codexHooks.hooks['PreToolUse']?.length, 1)
     const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] }; hooks?: Record<string, unknown[]> }
     assert.equal(settings.permissions.allow.filter((rule) => rule === 'Bash(bita start:*)').length, 1)
     assert.equal(settings.hooks, undefined)
@@ -532,5 +544,199 @@ test('the main skill is a short user reference the model never invokes and never
   }
   for (const dir of ['bita', 'bita-start', 'bita-stop', 'bita-log', 'bita-amend', 'bita-timers', 'bita-init']) {
     assert.doesNotMatch(readFileSync(join(repo, 'skills', dir, 'SKILL.md'), 'utf8'), /rovo/i)
+  }
+})
+
+test('setup adds the Den tool hooks to Codex next to the user ones, once, and the stale cleanup puts them back once', () => {
+  const box = sandbox()
+  try {
+    mkdirSync(box.codex, { recursive: true })
+    const mine = { matcher: 'shell', hooks: [{ type: 'command', command: 'echo pre' }] }
+    writeFileSync(
+      join(box.codex, 'hooks.json'),
+      JSON.stringify({ hooks: { PreToolUse: [mine], PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] }] } }),
+    )
+    setup(box, '--target', 'codex')
+    setup(box, '--target', 'codex')
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> }
+    assert.deepEqual(codexHooks.hooks['PreToolUse']?.[0], mine)
+    const commands = (event: string): string[] => (codexHooks.hooks[event] ?? []).flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.deepEqual(commands('PreToolUse'), ['echo pre', DEN_CODEX])
+    assert.deepEqual(commands('PostToolUse'), ['bita hook codex', DEN_CODEX])
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('setup replaces older Den hook commands in Codex instead of adding a second one', () => {
+  const box = sandbox()
+  try {
+    mkdirSync(box.codex, { recursive: true })
+    const mine = { matcher: 'shell', hooks: [{ type: 'command', command: 'echo pre' }] }
+    writeFileSync(
+      join(box.codex, 'hooks.json'),
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [mine, { hooks: [{ type: 'command', command: OLD_DEN_CODEX, timeout: 10 }] }],
+          PostToolUse: [
+            { matcher: 'apply_patch|Edit|Write', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] },
+            { hooks: [{ type: 'command', command: OLD_DEN_CODEX, timeout: 10 }] },
+            { hooks: [{ type: 'command', command: '/opt/old/bita hook den codex --legacy', timeout: 10 }] },
+          ],
+        },
+      }),
+    )
+    setup(box, '--target', 'codex')
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> }
+    const commands = (event: string): string[] => (codexHooks.hooks[event] ?? []).flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.deepEqual(codexHooks.hooks['PreToolUse']?.[0], mine)
+    assert.deepEqual(commands('PreToolUse'), ['echo pre', DEN_CODEX])
+    assert.deepEqual(commands('PostToolUse'), ['bita hook codex', DEN_CODEX])
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('setup rewrites the Gemini extension hooks so an older Den hook command does not survive', () => {
+  const box = sandbox()
+  try {
+    const hooksFile = join(box.gemini, 'extensions', 'bita', 'hooks', 'hooks.json')
+    mkdirSync(join(box.gemini, 'extensions', 'bita', 'hooks'), { recursive: true })
+    writeFileSync(
+      hooksFile,
+      JSON.stringify({
+        hooks: {
+          BeforeTool: [{ hooks: [{ type: 'command', name: 'den-before-tool', command: OLD_DEN_GEMINI, timeout: 10000 }] }],
+          AfterTool: [{ hooks: [{ type: 'command', name: 'den-after-tool', command: OLD_DEN_GEMINI, timeout: 10000 }] }],
+        },
+      }),
+    )
+    setup(box, '--target', 'gemini')
+    const geminiHooks = readJson(hooksFile) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    const all = Object.values(geminiHooks.hooks).flatMap((groups) => groups.flatMap((group) => group.hooks.map((hook) => hook.command)))
+    assert.equal(all.filter((command) => command.includes('DEN_AGENT_HOOK')).length, 0)
+    assert.equal(all.filter((command) => command === DEN_GEMINI).length, 2)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('bita hook den is a no-op without DEN_AGENT_HOOK', () => {
+  const box = sandbox()
+  try {
+    const run = spawnSync(process.execPath, [bin, 'hook', 'den', 'codex'], { cwd: box.root, env: box.env, input: '{"hook_event_name":"PreToolUse"}', encoding: 'utf8' })
+    assert.equal(run.status, 0)
+    assert.equal(run.stdout, '')
+    assert.equal(run.stderr, '')
+    assert.equal(existsSync(join(box.root, 'bita.db')), false)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('bita hook den forwards stdin to DEN_AGENT_HOOK --agent-hook and returns its stdout and exit code', () => {
+  const box = sandbox()
+  try {
+    const fake = nodeScriptBin(
+      box.binDir,
+      'den-hook',
+      `const chunks = []
+process.stdin.on('data', (chunk) => chunks.push(chunk))
+process.stdin.on('end', () => {
+  process.stdout.write(JSON.stringify({ argv: process.argv.slice(2), stdin: Buffer.concat(chunks).toString('utf8') }))
+  process.exitCode = 2
+})
+`,
+    )
+    const input = '{"hook_event_name":"BeforeTool","tool_name":"run_shell_command"}'
+    const run = spawnSync(process.execPath, [bin, 'hook', 'den', 'gemini'], { cwd: box.root, env: { ...box.env, DEN_AGENT_HOOK: fake }, input, encoding: 'utf8' })
+    assert.equal(run.status, 2, run.stderr)
+    assert.deepEqual(JSON.parse(run.stdout), { argv: ['--agent-hook', 'gemini'], stdin: input })
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('bita hook den exits 0 when DEN_AGENT_HOOK cannot be started', () => {
+  const box = sandbox()
+  try {
+    const run = spawnSync(process.execPath, [bin, 'hook', 'den', 'codex'], {
+      cwd: box.root,
+      env: { ...box.env, DEN_AGENT_HOOK: join(box.root, 'missing-den') },
+      input: '{}',
+      encoding: 'utf8',
+    })
+    assert.equal(run.status, 0)
+    assert.equal(run.stdout, '')
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+function snapshotTree(root: string, skip: ReadonlySet<string>): Record<string, string> {
+  const files: Record<string, string> = {}
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir).sort()) {
+      const path = join(dir, name)
+      if (skip.has(path)) continue
+      const stat = lstatSync(path)
+      if (stat.isDirectory()) walk(path)
+      else files[path.slice(root.length)] = stat.isSymbolicLink() ? 'symlink' : readFileSync(path, 'utf8').replace(/"installedAt": "[^"]*"/, '"installedAt": "-"')
+    }
+  }
+  walk(root)
+  return files
+}
+
+test('running setup for every target twice leaves the whole tree byte-identical and registers each Den hook and permission once', () => {
+  const box = sandbox()
+  try {
+    fakeClaude(box)
+    mkdirSync(box.codex, { recursive: true })
+    mkdirSync(join(box.gemini, 'extensions', 'bita', 'hooks'), { recursive: true })
+    const skip = new Set([join(box.root, 'claude-argv.log'), join(box.root, 'bita.db'), join(box.root, 'bita.db-wal'), join(box.root, 'bita.db-shm')])
+    setup(box, '--target', 'all')
+    const first = snapshotTree(box.root, skip)
+    setup(box, '--target', 'all')
+    const second = snapshotTree(box.root, skip)
+    if (IS_WINDOWS) {
+      for (const path of Object.keys(second).filter((path) => !(path in first))) {
+        assert.ok(path.endsWith('.backup') && second[path] === first[path.slice(0, -'.backup'.length)], path)
+        delete second[path]
+      }
+    }
+    assert.deepEqual(Object.keys(second), Object.keys(first))
+    for (const [path, content] of Object.entries(first)) assert.equal(second[path], content, path)
+
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    const commands = (event: string): string[] => (codexHooks.hooks[event] ?? []).flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.equal(commands('PreToolUse').filter((command) => command === DEN_CODEX).length, 1)
+    assert.equal(commands('PostToolUse').filter((command) => command === DEN_CODEX).length, 1)
+    const geminiText = readFileSync(join(box.gemini, 'extensions', 'bita', 'hooks', 'hooks.json'), 'utf8')
+    assert.equal(geminiText.split(DEN_GEMINI).length - 1, 2)
+    const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] } }
+    const allow = settings.permissions.allow
+    assert.equal(new Set(allow).size, allow.length)
+    assert.equal(allow.filter((rule) => rule === 'Bash(bita sessions:*)').length, 1)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('only bita den hook commands count as Den hooks, never a user hook that looks alike', async () => {
+  const { isDenAgentHookCommand } = await import('../src/kit/integration.ts')
+  for (const command of [DEN_CODEX, DEN_GEMINI, OLD_DEN_CODEX, OLD_DEN_GEMINI, '/opt/old/bita hook den codex --legacy', 'C:\\tools\\bita.cmd hook den gemini', '  bita hook den codex  ']) {
+    assert.equal(isDenAgentHookCommand(command), true, command)
+  }
+  for (const command of [
+    'my-den hook den codex',
+    'notbita hook den codex',
+    'echo "$DEN_AGENT_HOOK" > /tmp/den.log',
+    '"$DEN_AGENT_HOOK" --agent-hook codex --my-extra',
+    'run-checks && bita hook den codex',
+    'bita hook dense',
+    'bita hook codex',
+  ]) {
+    assert.equal(isDenAgentHookCommand(command), false, command)
   }
 })

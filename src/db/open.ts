@@ -31,9 +31,9 @@ export function migrate(db: DatabaseSync): number {
 export function openDatabase(path: string = databasePath()): DatabaseSync {
   if (path !== MEMORY_DB_PATH) mkdirSync(dirname(path), { recursive: true })
   const db = new DatabaseSync(path)
+  db.exec('PRAGMA busy_timeout = 5000')
   if (path !== MEMORY_DB_PATH) db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA foreign_keys = ON')
-  db.exec('PRAGMA busy_timeout = 5000')
   const found = readSchemaVersion(db)
   if (found > LATEST_VERSION) {
     db.close()

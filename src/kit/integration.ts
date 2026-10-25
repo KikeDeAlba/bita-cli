@@ -34,6 +34,7 @@ export const CLAUDE_ALLOW = [
   'Bash(bita scope which:*)',
   'Bash(bita capabilities:*)',
   'Bash(bita doctor:*)',
+  'Bash(bita sessions:*)',
   'Bash(bita --version)',
 ]
 
@@ -95,11 +96,27 @@ export const CLAUDE_MOD_PLUGIN = 'bita-timer'
 
 export const CODEX_EDIT_MATCHER = 'apply_patch|Edit|Write'
 
+export function denAgentHookCommand(harness: 'codex' | 'gemini'): string {
+  return `bita hook den ${harness}`
+}
+
+const LEGACY_DEN_HOOK = /^\[ -z "\$DEN_AGENT_HOOK" \] \|\| "\$DEN_AGENT_HOOK" --agent-hook (?:codex|gemini)$/
+const BITA_DEN_HOOK = /^(?:\S*[/\\])?bita(?:\.cmd|\.exe)?\s+hook\s+den(?:\s|$)/
+
+export function isDenAgentHookCommand(command: string): boolean {
+  const trimmed = command.trim()
+  return LEGACY_DEN_HOOK.test(trimmed) || BITA_DEN_HOOK.test(trimmed)
+}
+
 export function codexHooks(editMatcher: string = CODEX_EDIT_MATCHER): HookMap {
   return {
     SessionStart: [{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 5 }] }],
     SessionEnd: [{ hooks: [{ type: 'command', command: 'bita hook codex', timeout: 5 }] }],
-    PostToolUse: [{ matcher: editMatcher, hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] }],
+    PreToolUse: [{ hooks: [{ type: 'command', command: denAgentHookCommand('codex'), timeout: 10 }] }],
+    PostToolUse: [
+      { matcher: editMatcher, hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] },
+      { hooks: [{ type: 'command', command: denAgentHookCommand('codex'), timeout: 10 }] },
+    ],
   }
 }
 
@@ -109,7 +126,11 @@ export function geminiHooks(editMatcher: string = GEMINI_EDIT_MATCHER): HookMap 
   return {
     SessionStart: [{ matcher: 'startup|resume|clear', hooks: [{ type: 'command', name: 'bita-session', command: 'bita hook gemini', timeout: 5000 }] }],
     SessionEnd: [{ hooks: [{ type: 'command', name: 'bita-session-end', command: 'bita hook gemini', timeout: 5000 }] }],
-    AfterTool: [{ matcher: editMatcher, hooks: [{ type: 'command', name: 'bita-tool', command: 'bita hook gemini', timeout: 10000 }] }],
+    BeforeTool: [{ hooks: [{ type: 'command', name: 'den-before-tool', command: denAgentHookCommand('gemini'), timeout: 10000 }] }],
+    AfterTool: [
+      { matcher: editMatcher, hooks: [{ type: 'command', name: 'bita-tool', command: 'bita hook gemini', timeout: 10000 }] },
+      { hooks: [{ type: 'command', name: 'den-after-tool', command: denAgentHookCommand('gemini'), timeout: 10000 }] },
+    ],
   }
 }
 

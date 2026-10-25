@@ -43,7 +43,7 @@ function launchArgs(userArgs: readonly string[]): LaunchPlan {
     : parsed.resume.kind === 'resume'
       ? ['--resume', parsed.resume.id ?? 'latest']
       : []
-  const prompt = parsed.prompt !== null ? ['-i', parsed.prompt] : []
+  const prompt = parsed.prompt !== null ? [`--prompt-interactive=${parsed.prompt}`] : []
   return { args: [...approval, ...resume, ...prompt], warnings: parsed.extraFlags.map((flag) => droppedWarning(LABEL, flag)) }
 }
 

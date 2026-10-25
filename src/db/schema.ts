@@ -286,10 +286,12 @@ const PROJECT_REPOS: readonly string[] = [
 
 const ENTRY_JIRA_ISSUE: readonly string[] = [`ALTER TABLE entries ADD COLUMN jira_issue INTEGER`]
 
-function entrySessionsTable(name: string, harnesses: readonly string[]): string {
+const SESSION_HARNESSES = ['claude', 'opencode', 'codex', 'gemini', 'antigravity'] as const
+
+function entrySessionsTable(name: string, harnesses: readonly string[], entry: 'required' | 'optional' = 'required'): string {
   return `CREATE TABLE ${name} (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
-     entry_id INTEGER NOT NULL UNIQUE REFERENCES entries (id) ON DELETE CASCADE,
+     entry_id INTEGER ${entry === 'required' ? 'NOT NULL ' : ''}UNIQUE REFERENCES entries (id) ON DELETE CASCADE,
      wrapper_id TEXT NOT NULL,
      wrapper_pid INTEGER NOT NULL,
      harness TEXT NOT NULL CHECK (harness IN (${harnesses.map((id) => `'${id}'`).join(', ')})),
@@ -322,13 +324,25 @@ const ENTRY_SESSIONS: readonly string[] = [
 const ENTRY_SESSION_COLUMNS =
   'id, entry_id, wrapper_id, wrapper_pid, harness, session_id, transcript_path, cwd, started_at, ended_at, end_reason, claimed_at, finalized_at, outcome, error'
 
-const ENTRY_SESSIONS_ANTIGRAVITY: readonly string[] = [
-  entrySessionsTable('entry_sessions_next', ['claude', 'opencode', 'codex', 'gemini', 'antigravity']),
-  `INSERT INTO entry_sessions_next (${ENTRY_SESSION_COLUMNS}) SELECT ${ENTRY_SESSION_COLUMNS} FROM entry_sessions`,
-  `DROP TABLE entry_sessions`,
-  `ALTER TABLE entry_sessions_next RENAME TO entry_sessions`,
-  ...ENTRY_SESSIONS_INDEXES,
-]
+function rebuildEntrySessions(entry: 'required' | 'optional', keepSequence = true): readonly string[] {
+  return [
+    entrySessionsTable('entry_sessions_next', SESSION_HARNESSES, entry),
+    `INSERT INTO entry_sessions_next (${ENTRY_SESSION_COLUMNS}) SELECT ${ENTRY_SESSION_COLUMNS} FROM entry_sessions`,
+    ...(keepSequence
+      ? [
+          `DELETE FROM sqlite_sequence WHERE name = 'entry_sessions_next'`,
+          `UPDATE sqlite_sequence SET name = 'entry_sessions_next' WHERE name = 'entry_sessions'`,
+        ]
+      : []),
+    `DROP TABLE entry_sessions`,
+    `ALTER TABLE entry_sessions_next RENAME TO entry_sessions`,
+    ...ENTRY_SESSIONS_INDEXES,
+  ]
+}
+
+const ENTRY_SESSIONS_ANTIGRAVITY = rebuildEntrySessions('required', false)
+
+const TIMERLESS_SESSIONS = rebuildEntrySessions('optional')
 
 function backfillBacklogKeys(db: DatabaseSync): void {
   backfillProjectKeys(db)
@@ -353,6 +367,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 13, statements: ENTRY_JIRA_ISSUE },
   { version: 14, statements: ENTRY_SESSIONS },
   { version: 15, statements: ENTRY_SESSIONS_ANTIGRAVITY },
+  { version: 16, statements: TIMERLESS_SESSIONS },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.reduce(

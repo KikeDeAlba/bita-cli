@@ -1,6 +1,7 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -238,4 +239,127 @@ test('version 15 lets antigravity sessions in and keeps the sessions already rec
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions WHERE entry_id = ?').get(first) as { n: number }).n, 0)
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [])
   db.close()
+})
+
+test('version 16 lets a session have no entry and keeps the sessions already recorded', () => {
+  const db = databaseAt(15)
+  const at = '2026-10-20T10:00:00.000Z'
+  const end = '2026-10-20T11:00:00.000Z'
+  const entry = (description: string) =>
+    Number(
+      db
+        .prepare(`INSERT INTO entries (description, started_at, source, created_at, updated_at) VALUES (?, ?, 'session', ?, ?)`)
+        .run(description, at, at, at).lastInsertRowid,
+    )
+  const first = entry('one')
+  const second = entry('two')
+  const insert = db.prepare(
+    `INSERT INTO entry_sessions (entry_id, wrapper_id, wrapper_pid, harness, session_id, transcript_path, cwd, started_at, ended_at, end_reason, finalized_at, outcome, error)
+     VALUES (?, ?, 42, ?, ?, ?, '/repo', ?, ?, ?, ?, ?, ?)`,
+  )
+  insert.run(first, 'w1', 'claude', 's1', '/t/s1.jsonl', at, end, 'exit', end, 'summarized', null)
+  insert.run(second, 'w2', 'antigravity', null, null, at, null, null, null, null, null)
+  assert.throws(() => insert.run(null, 'w3', 'codex', null, null, at, null, null, null, null, null), /NOT NULL/)
+  const before = db.prepare('SELECT * FROM entry_sessions ORDER BY id').all()
+
+  assert.equal(migrate(db), LATEST_VERSION)
+  assert.ok(LATEST_VERSION >= 16)
+  assert.deepEqual(db.prepare('SELECT * FROM entry_sessions ORDER BY id').all(), before)
+  const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'entry_sessions' AND sql IS NOT NULL ORDER BY name").all() as { name: string }[]).map((row) => row.name)
+  assert.deepEqual(indexes, ['entry_sessions_open', 'entry_sessions_session', 'entry_sessions_wrapper'])
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'entry_sessions_next'").get() as { n: number }).n, 0)
+
+  insert.run(null, 'w3', 'codex', 'free-1', null, at, null, null, null, null, null)
+  insert.run(null, 'w4', 'gemini', null, null, at, null, null, null, null, null)
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions WHERE entry_id IS NULL').get() as { n: number }).n, 2)
+  assert.throws(() => insert.run(second, 'w5', 'claude', null, null, at, null, null, null, null, null), /UNIQUE/)
+  assert.throws(() => insert.run(null, 'w6', 'cursor', null, null, at, null, null, null, null, null), /CHECK/)
+  db.prepare('DELETE FROM entries WHERE id = ?').run(first)
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions WHERE entry_id = ?').get(first) as { n: number }).n, 0)
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [])
+  db.close()
+})
+
+test('version 16 keeps the id sequence, so an id freed by a cascade is never reused', () => {
+  const db = databaseAt(15)
+  const at = '2026-10-20T10:00:00.000Z'
+  const entry = (description: string) =>
+    Number(
+      db
+        .prepare(`INSERT INTO entries (description, started_at, source, created_at, updated_at) VALUES (?, ?, 'session', ?, ?)`)
+        .run(description, at, at, at).lastInsertRowid,
+    )
+  const insert = db.prepare(`INSERT INTO entry_sessions (entry_id, wrapper_id, wrapper_pid, harness, cwd, started_at) VALUES (?, ?, 42, 'claude', '/repo', ?)`)
+  insert.run(entry('kept'), 'w1', at)
+  const doomed = entry('doomed')
+  const freed = Number(insert.run(doomed, 'w2', at).lastInsertRowid)
+  db.prepare('DELETE FROM entries WHERE id = ?').run(doomed)
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions WHERE id = ?').get(freed) as { n: number }).n, 0)
+
+  assert.equal(migrate(db), LATEST_VERSION)
+  const next = Number(insert.run(null, 'w3', at).lastInsertRowid)
+  assert.ok(next > freed, `${next} > ${freed}`)
+  assert.deepEqual(db.prepare("SELECT name FROM sqlite_sequence WHERE name LIKE 'entry_sessions%' ORDER BY name").all().map((row) => ({ ...row })), [{ name: 'entry_sessions' }])
+  db.close()
+})
+
+test('version 16 on an entry_sessions table that never had a row starts the sequence at 1', () => {
+  const db = databaseAt(15)
+  assert.equal(migrate(db), LATEST_VERSION)
+  const id = db
+    .prepare(`INSERT INTO entry_sessions (entry_id, wrapper_id, wrapper_pid, harness, cwd, started_at) VALUES (NULL, 'w1', 42, 'codex', '/repo', ?)`)
+    .run('2026-10-20T10:00:00.000Z').lastInsertRowid
+  assert.equal(Number(id), 1)
+  db.close()
+})
+
+test('opening waits for a writer that keeps reopening the database instead of failing as locked', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bita-db-busy-'))
+  try {
+    const path = join(dir, 'bita.db')
+    const ready = join(dir, 'ready')
+    openDatabase(path).close()
+    const writer = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const { DatabaseSync } = require('node:sqlite')
+const { writeFileSync } = require('node:fs')
+const until = Date.now() + 3000
+while (Date.now() < until) {
+  const db = new DatabaseSync(${JSON.stringify(path)})
+  db.exec('PRAGMA busy_timeout = 5000')
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('CREATE TABLE IF NOT EXISTS busy_rows (n INTEGER)')
+  db.exec('BEGIN IMMEDIATE')
+  for (let i = 0; i < 100; i++) db.prepare('INSERT INTO busy_rows (n) VALUES (?)').run(i)
+  db.exec('COMMIT')
+  db.close()
+  writeFileSync(${JSON.stringify(ready)}, '')
+}`,
+      ],
+      { stdio: 'inherit' },
+    )
+    const exited = new Promise((resolve) => writer.on('exit', resolve))
+    try {
+      const waitUntil = Date.now() + 10000
+      while (!existsSync(ready) && Date.now() < waitUntil) await new Promise((resolve) => setTimeout(resolve, 10))
+      assert.ok(existsSync(ready), 'the writer never committed')
+      const errors: string[] = []
+      const until = Date.now() + 1500
+      while (Date.now() < until) {
+        try {
+          openDatabase(path).close()
+        } catch (error) {
+          errors.push(String(error))
+        }
+      }
+      assert.deepEqual(errors.slice(0, 3), [])
+    } finally {
+      writer.kill()
+      await exited
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
 })

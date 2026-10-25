@@ -14,8 +14,8 @@ Corre `bita start` con lo que trae `$ARGUMENTS`, sin explorar ni inventar nada:
 
 - Vacío: `bita start`.
 - Con texto: `bita start "<título>"`, con el texto literal.
-- Si el texto pide flags de forma explícita (`--kind remote-meeting`,
-  `--kind in-person-meeting`, `--project X`, `--at HH:MM`, `--jira`), pásalos
+- Si el texto pide flags de forma explícita (`--kind meeting`,
+  `--project X`, `--at HH:MM`, `--jira`), pásalos
   tal cual.
 
 Si falla, enseña el error en una línea. Responde en una línea con el id y el
