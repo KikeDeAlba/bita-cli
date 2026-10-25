@@ -496,6 +496,8 @@ llámalo directo (`claude -p …`, `claude mcp …`).
 - Dentro de una sesión de bita (`BITA_WRAPPER_ID`) o en un proceso que lanzó el
   propio bita (`BITA_CHILD`), avisa en una línea y lanza el agente (Claude, o el
   de `--harness`) sin abrir otro cronómetro, para no anidar entradas.
+- Una sesión lanzada sin cronómetro también cuenta como sesión de bita: un
+  `bita work` dentro de ella se comporta igual que dentro de una con cronómetro.
 
 ### `/clear`, `/resume` y entradas
 

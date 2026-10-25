@@ -466,6 +466,31 @@ for (const nested of [{ BITA_WRAPPER_ID: 'outer' }, { BITA_CHILD: '1' }]) {
   })
 }
 
+test('inside a session without a timer it behaves as inside one with a timer', async () => {
+  const outer = harness()
+  await outer.run(['--harness', 'claude', '--project', '0'], { env: { PATH: '/usr/bin' } })
+  const env = outer.spawned[0]!.env
+  assert.equal(env['BITA_SESSION_PROJECT'], '0')
+  assert.ok(env['BITA_WRAPPER_ID'])
+
+  const h = harness()
+  const errors = captureStderr()
+  let code: number
+  try {
+    code = await h.run(['--', 'hola'], { env, exitCode: 4 })
+  } finally {
+    errors.restore()
+  }
+  assert.equal(code, 4)
+  assert.equal(h.prompts.length, 0)
+  assert.equal(h.swept, 0)
+  assert.equal(h.started.length, 0)
+  assert.equal(h.closed.length, 0)
+  assert.deepEqual(h.spawned[0]?.args, ['--claude-default', 'hola'])
+  assert.match(errors.text(), /already inside a bita session; launching the harness without a new timer/)
+  await assert.rejects(h.run(['--resume', '1'], { tty: false, env }), (error: unknown) => error instanceof UsageError && /Already inside a bita session/.test(error.message))
+})
+
 test('inside a session --harness picks which harness to launch', async () => {
   const h = harness()
   const errors = captureStderr()
