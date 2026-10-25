@@ -113,7 +113,11 @@ Windows con `cmd`. Lee la entrada del hook; si `DEN_AGENT_HOOK` no está
 definida, sale con 0 sin escribir nada. Si lo está, ejecuta ese binario con
 `--agent-hook <agente>`, le pasa la misma entrada y devuelve su salida y su
 código de salida, para que una decisión de permiso de Den llegue al agente. Si
-el binario no arranca, sale con 0 y lo anota en el log de hooks.
+el binario no arranca, sale con 0 y lo anota en el log de hooks. Si Den no
+responde en 8 s (antes de los 10 s que el agente le da al hook), bita lo mata,
+sale con 0 y lo anota; `BITA_DEN_HOOK_TIMEOUT_MS` cambia ese límite. Si Den
+termina por una señal, sale con 1 y lo anota. Si a bita le llega `SIGTERM`,
+`SIGINT` o `SIGHUP`, mata a Den antes de salir.
 
 Den define `DEN_AGENT_HOOK` solo en los agentes que lanza, así que en una
 terminal normal el hook sale al instante sin hacer nada. En Codex se mezcla en
@@ -406,8 +410,15 @@ que usar sin terminal.
 `--prompt "<texto>"` le pasa al agente su primer mensaje, en la forma que cada
 uno espera (la columna Prompt de la tabla de abajo). Equivale a ponerlo tras
 `--`, así que no se pueden usar los dos. Con `--harness` y `--project` no
-necesita terminal, y también vale con `--resume`. Si el texto empieza con `-`,
-escríbelo como `--prompt=-texto`.
+necesita terminal, y también vale con `--resume`.
+
+Si el texto empieza con guion, pásalo pegado al flag: `--prompt=<texto>`
+(por ejemplo `--prompt=-x` o `--prompt="--revisa esto"`); con un espacio,
+`--prompt -x`, bita lo tomaría por otro flag. Al agente siempre le llega como
+texto, nunca como flag ni subcomando: Claude y Codex lo reciben tras `--`, y
+OpenCode, Gemini y Antigravity pegado a su flag (`--prompt=<texto>`,
+`--prompt-interactive=<texto>`). Un prompt `resume` o `exec` en Codex es el
+mensaje, no el subcomando.
 
 ### Listar sesiones
 
@@ -421,7 +432,10 @@ bita sessions dirs --json            # directorios con sesiones, el más recient
 `bita sessions ls` filtra por el directorio actual, como el selector de
 `--resume`. `--cwd DIR` mira otro y `--all` quita el filtro (no se combinan).
 `--open` deja solo las que siguen abiertas, `--harness` filtra por agente y
-`--limit` corta la lista (50 por defecto). Con `--json`, `data` es:
+`--limit` corta la lista (50 por defecto). Antes de listar con `--open`, cierra
+las sesiones huérfanas (las de un `bita work` que ya no corre), igual que
+`bita work`. Con `--json`, la salida va en el sobre estándar
+(`{ schemaVersion, ok, command, data, generatedAt }`) y `data` es:
 
 ```json
 [{ "id": 42, "entryId": 812, "harness": "claude", "sessionId": "…", "wrapperPid": 51234,
@@ -435,7 +449,7 @@ bita sessions dirs --json            # directorios con sesiones, el más recient
 - `resumable` es `true` en la última fila terminada de cada sesión del agente,
   la que ofrece el selector de `--resume`.
 
-`bita sessions dirs [--limit 20]` devuelve
+`bita sessions dirs [--limit 20] --json` devuelve, también dentro de `data`,
 `[{ cwd, lastUsedAt, sessions, projectId, projectName }]`: un directorio por
 fila, con la hora del último uso, cuántas sesiones tuvo y el proyecto de su
 sesión más reciente que tenga uno.
@@ -449,9 +463,10 @@ lo que no tiene equivalente se descarta con un aviso
 | Agente | Flag por defecto | `-c` / `--continue` | `-r` / `--resume [id]` | Prompt |
 |---|---|---|---|---|
 | Claude | `--allow-dangerously-skip-permissions` | sin cambios | sin cambios | sin cambios |
-| OpenCode | `--auto` | `--continue` | `--session <id>` (sin id, se descarta) | `--prompt <texto>` |
-| Codex | `--dangerously-bypass-approvals-and-sandbox` | `resume --last` | `resume [id]` | posicional |
-| Gemini | `--approval-mode=yolo` | `--resume latest` | `--resume <id>` (sin id, `latest`) | `-i <texto>` |
+| OpenCode | `--auto` | `--continue` | `--session <id>` (sin id, se descarta) | `--prompt=<texto>` |
+| Codex | `--dangerously-bypass-approvals-and-sandbox` | `resume --last` | `resume [id]` | posicional, tras `--` |
+| Gemini | `--approval-mode=yolo` | `--resume latest` | `--resume <id>` (sin id, `latest`) | `--prompt-interactive=<texto>` |
+| Antigravity | `--dangerously-skip-permissions` | `-c` | `--conversation <id>` (sin id, `-c`) | `--prompt-interactive=<texto>` |
 
 Claude recibe tus argumentos sin tocar y solo antepone el flag por defecto si no
 pasaste `--allow-dangerously-skip-permissions` ni
