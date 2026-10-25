@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { openDatabase } from '../../db/open.ts'
 import { databasePath } from '../../db/paths.ts'
+import { killTree, spawnCommand } from '../../harness/process.ts'
 import { isHarnessId } from '../../harness/registry.ts'
 import type { HarnessId } from '../../harness/types.ts'
 import {
@@ -189,12 +190,19 @@ function denHookTimeoutMs(): number {
 
 function forward(command: string, args: readonly string[], input: string, log: (line: string) => void): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true })
+    const spec = spawnCommand(command, args)
+    const child = spawn(spec.command, spec.args, {
+      stdio: ['pipe', 'pipe', 'inherit'],
+      windowsHide: true,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments,
+    })
     const output: Buffer[] = []
     const timeoutMs = denHookTimeoutMs()
     let settled = false
     const kill = (): void => {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      if (child.exitCode !== null || child.signalCode !== null) return
+      if (process.platform === 'win32') killTree(child, 'SIGKILL')
+      else child.kill('SIGKILL')
     }
     const finish = (): boolean => {
       if (settled) return false
