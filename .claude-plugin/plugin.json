@@ -1,6 +1,6 @@
 {
   "name": "bita",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Cronómetro local de trabajo: skill, comandos de usuario y hooks de sesión para bita.",
   "author": {
     "name": "Jesus Enrique De Alba Gaytan"
