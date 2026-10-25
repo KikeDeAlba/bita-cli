@@ -21,7 +21,7 @@ lo fuerces si ya resuelve solo.
 ```
 bita amend --draft --title "<titulo>" --project <nombre o id>
 bita amend <id> --title "<titulo>"
-bita amend <id> --kind remote-meeting|in-person-meeting|none
+bita amend <id> --kind meeting|none
 ```
 
 La descripción no va aquí: va en la nota de la entrada con inkwell.
