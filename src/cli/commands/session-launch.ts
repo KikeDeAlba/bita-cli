@@ -363,8 +363,8 @@ async function prepare(args: ParsedArgs, deps: LaunchDeps, wrapperId: string, re
       : session && session.entryId === null && requestedProject === undefined
         ? { value: null }
         : session
-        ? await pickProject(ctx, deps, requestedProject, session.cwd, `${sessionLabel(session)} has no project; pass --project ID|NAME|0.`)
-        : await pickProject(ctx, deps, requestedProject)
+          ? await pickProject(ctx, deps, requestedProject, session.cwd, `${sessionLabel(session)} has no project; pass --project ID|NAME|0.`)
+          : await pickProject(ctx, deps, requestedProject)
     if ('interrupted' in project) return null
     const base = {
       adapter: harness.value,
