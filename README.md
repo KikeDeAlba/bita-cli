@@ -373,14 +373,18 @@ bita work --harness gemini --project Apartados --prompt "arregla el pipeline"   
    Volta, pnpm, Bun o el instalador del agente; `BITA_HARNESS_BIN_<ID>` lo fija.
 2. **Proyecto.** Lista los proyectos y preselecciona el que corresponde al
    directorio actual (el prefijo de `bita scope` o un repo de `bita project
-   repo`). `0` es **sin cronómetro**: lanza el agente y no registra nada.
+   repo`). `0` es **sin cronómetro**: lanza el agente sin abrir una entrada.
    `--project <id|nombre|0>` se salta el selector.
-3. **Cronómetro.** Arranca una entrada en ese proyecto, sin título.
+3. **Cronómetro.** Arranca una entrada en ese proyecto, sin título. Sin
+   cronómetro solo registra la sesión (directorio, agente, `wrapperPid` y, cuando
+   el hook lo informa, el id y el transcript de la sesión del agente), para que
+   salga en `bita sessions` y se pueda reanudar; al salir se cierra igual, pero
+   no se resume porque no hay entrada.
 4. **Agente.** Corre con la terminal tal cual; las señales se le reenvían.
 5. **Cierre.** Al salir, un proceso desacoplado resume la sesión (ver abajo).
 
 Si la base no se abre o el cronómetro no arranca, bita avisa y lanza el agente
-sin cronómetro.
+sin cronómetro y sin registrar la sesión.
 
 ### Reanudar una sesión
 
@@ -393,9 +397,12 @@ que usar sin terminal.
 - El agente sale de la sesión; un `--harness` distinto al de la sesión es un
   error.
 - El proyecto es el de la entrada original; `--project` lo cambia
-  (`--project 0` reanuda sin cronómetro).
-- Siempre crea una entrada **nueva**: la original, aunque ya esté subida a
-  Jira, no se toca. Al salir se resume como cualquier sesión.
+  (`--project 0` reanuda sin cronómetro). Una sesión que se lanzó sin
+  cronómetro se reanuda sin cronómetro y sin preguntar, salvo que pases
+  `--project`.
+- Siempre crea una entrada **nueva** (o, sin cronómetro, solo una sesión
+  nueva): la original, aunque ya esté subida a Jira, no se toca. Al salir se
+  resume como cualquier sesión.
 - El agente se lanza en el directorio original de la sesión, porque Claude y
   Gemini solo encuentran sus sesiones ahí.
 - Lo que va tras `--` es para el agente (por ejemplo, un prompt). Pasar tú
@@ -441,8 +448,14 @@ las sesiones huérfanas (las de un `bita work` que ya no corre), igual que
 [{ "id": 42, "entryId": 812, "harness": "claude", "sessionId": "…", "wrapperPid": 51234,
    "cwd": "/Users/ana/dev/api", "transcriptPath": null, "startedAt": "…", "endedAt": null,
    "open": true, "resumable": false,
-   "entry": { "description": "…", "projectId": 3, "projectName": "API" } }]
+   "entry": { "description": "…", "projectId": 3, "projectName": "API" } },
+ { "id": 43, "entryId": null, "harness": "codex", "sessionId": "…", "wrapperPid": 51302,
+   "cwd": "/Users/ana/dev/api", "transcriptPath": "…", "startedAt": "…", "endedAt": "…",
+   "open": false, "resumable": true, "entry": null }]
 ```
+
+- `entryId` y `entry` son `null` en las sesiones lanzadas sin cronómetro
+  (`--project 0` o «No timer»); el resto de los campos se llena igual.
 
 - `wrapperPid` es el pid del proceso `bita work` que lanzó al agente; Den une
   sus terminales con las sesiones de bita por ese número.
@@ -451,8 +464,8 @@ las sesiones huérfanas (las de un `bita work` que ya no corre), igual que
 
 `bita sessions dirs [--limit 20] --json` devuelve, también dentro de `data`,
 `[{ cwd, lastUsedAt, sessions, projectId, projectName }]`: un directorio por
-fila, con la hora del último uso, cuántas sesiones tuvo y el proyecto de su
-sesión más reciente que tenga uno.
+fila, con la hora del último uso, cuántas sesiones tuvo (con y sin cronómetro)
+y el proyecto de su sesión más reciente que tenga uno.
 
 ### Flags por agente
 
@@ -552,7 +565,7 @@ otra), `busy` (otro proceso la tiene), `already-finalized` o `not-found`.
 |---|---|
 | `BITA_HARNESS_BIN_CLAUDE`, `_OPENCODE`, `_CODEX`, `_GEMINI`, `_ANTIGRAVITY` | Ruta absoluta del ejecutable de ese agente en vez de buscarlo. Si no es ejecutable, ese agente cuenta como no instalado |
 | `KIT_HEADLESS=1` | Los hooks de bita no hacen nada: lo fija kit en los agentes que corre sin interfaz, para que esas corridas no registren sesiones |
-| `BITA_WRAPPER_ID`, `BITA_HARNESS`, `BITA_SESSION_PROJECT` | Las pone `bita work` al agente para ligar sus hooks; no las definas tú |
+| `BITA_WRAPPER_ID`, `BITA_HARNESS`, `BITA_SESSION_PROJECT` | Las pone `bita work` al agente para ligar sus hooks (`BITA_SESSION_PROJECT=0` sin cronómetro); no las definas tú |
 | `BITA_NO_HOOKS=1`, `KIT_NO_EVENTS=1` | Apagan los eventos (`start`, `stop`, …) |
 
 ### Cómo se verifica
