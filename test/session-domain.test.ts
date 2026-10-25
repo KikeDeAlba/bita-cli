@@ -366,6 +366,22 @@ test('closeWrapper ends a session without a timer and launches no finalize', asy
   }
 })
 
+test('sweepOrphans ends a dead session without a timer or transcript at its start, not at the sweep', async () => {
+  const h = await setup()
+  try {
+    const { rowId } = await timerless(h, 'w-bare-free', deadPid())
+    const start = new Date(Date.now() - 3 * 3_600_000).toISOString()
+    h.ctx.db.prepare('UPDATE entry_sessions SET started_at = ? WHERE id = ?').run(start, rowId)
+
+    assert.deepEqual(await sweepOrphans(h.ctx, h.deps), [])
+    const row = findSessionById(h.ctx.db, rowId)
+    assert.equal(row?.endReason, 'orphan')
+    assert.equal(row?.endedAt, start)
+  } finally {
+    h.ctx.db.close()
+  }
+})
+
 test('sweepOrphans closes a dead session without a timer and never relaunches it', async () => {
   const h = await setup()
   try {

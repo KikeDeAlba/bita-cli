@@ -333,13 +333,18 @@ export function wrapperAlive(
   return started <= since + PROCESS_START_SLACK_MS
 }
 
-function orphanEnd(db: DatabaseSync, row: { entryId: number | null; transcriptPath: string | null }, nowIso: string): string {
+function orphanEnd(
+  db: DatabaseSync,
+  row: { entryId: number | null; transcriptPath: string | null; startedAt: string },
+  nowIso: string,
+): string {
   if (row.transcriptPath) {
     try {
       return statSync(row.transcriptPath).mtime.toISOString()
     } catch {}
   }
-  return (row.entryId === null ? null : lastTouchAt(db, row.entryId)) ?? nowIso
+  if (row.entryId === null) return row.startedAt
+  return lastTouchAt(db, row.entryId) ?? nowIso
 }
 
 export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): Promise<number[]> {
