@@ -115,7 +115,7 @@ definida, sale con 0 sin escribir nada. Si lo está, ejecuta ese binario con
 código de salida, para que una decisión de permiso de Den llegue al agente. Si
 el binario no arranca, sale con 0 y lo anota en el log de hooks. Si Den no
 responde en 8 s (antes de los 10 s que el agente le da al hook), bita lo mata,
-sale con 0 y lo anota; `BITA_DEN_HOOK_TIMEOUT_MS` cambia ese límite. Si Den
+sale con 0 y lo anota; `BITA_DEN_HOOK_TIMEOUT_MS` solo puede bajarlo. Si Den
 termina por una señal, sale con 1 y lo anota. Si a bita le llega `SIGTERM`,
 `SIGINT` o `SIGHUP`, mata a Den antes de salir.
 

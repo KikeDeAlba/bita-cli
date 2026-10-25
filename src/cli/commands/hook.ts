@@ -184,7 +184,7 @@ const FORWARDED_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 
 function denHookTimeoutMs(): number {
   const raw = Number(process.env[DEN_HOOK_TIMEOUT_ENV])
-  return Number.isSafeInteger(raw) && raw > 0 ? raw : DEN_HOOK_TIMEOUT_MS
+  return Number.isSafeInteger(raw) && raw > 0 ? Math.min(raw, DEN_HOOK_TIMEOUT_MS) : DEN_HOOK_TIMEOUT_MS
 }
 
 function forward(command: string, args: readonly string[], input: string, log: (line: string) => void): Promise<number> {
