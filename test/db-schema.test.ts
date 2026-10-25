@@ -1,6 +1,7 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -310,4 +311,55 @@ test('version 16 on an entry_sessions table that never had a row starts the sequ
     .run('2026-10-20T10:00:00.000Z').lastInsertRowid
   assert.equal(Number(id), 1)
   db.close()
+})
+
+test('opening waits for a writer that keeps reopening the database instead of failing as locked', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bita-db-busy-'))
+  try {
+    const path = join(dir, 'bita.db')
+    const ready = join(dir, 'ready')
+    openDatabase(path).close()
+    const writer = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const { DatabaseSync } = require('node:sqlite')
+const { writeFileSync } = require('node:fs')
+const until = Date.now() + 3000
+while (Date.now() < until) {
+  const db = new DatabaseSync(${JSON.stringify(path)})
+  db.exec('PRAGMA busy_timeout = 5000')
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('CREATE TABLE IF NOT EXISTS busy_rows (n INTEGER)')
+  db.exec('BEGIN IMMEDIATE')
+  for (let i = 0; i < 100; i++) db.prepare('INSERT INTO busy_rows (n) VALUES (?)').run(i)
+  db.exec('COMMIT')
+  db.close()
+  writeFileSync(${JSON.stringify(ready)}, '')
+}`,
+      ],
+      { stdio: 'inherit' },
+    )
+    const exited = new Promise((resolve) => writer.on('exit', resolve))
+    try {
+      const waitUntil = Date.now() + 10000
+      while (!existsSync(ready) && Date.now() < waitUntil) await new Promise((resolve) => setTimeout(resolve, 10))
+      assert.ok(existsSync(ready), 'the writer never committed')
+      const errors: string[] = []
+      const until = Date.now() + 1500
+      while (Date.now() < until) {
+        try {
+          openDatabase(path).close()
+        } catch (error) {
+          errors.push(String(error))
+        }
+      }
+      assert.deepEqual(errors.slice(0, 3), [])
+    } finally {
+      writer.kill()
+      await exited
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
 })
