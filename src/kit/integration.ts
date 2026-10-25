@@ -100,8 +100,12 @@ export function denAgentHookCommand(harness: 'codex' | 'gemini'): string {
   return `bita hook den ${harness}`
 }
 
+const LEGACY_DEN_HOOK = /^\[ -z "\$DEN_AGENT_HOOK" \] \|\| "\$DEN_AGENT_HOOK" --agent-hook (?:codex|gemini)$/
+const BITA_DEN_HOOK = /^(?:\S*[/\\])?bita(?:\.cmd|\.exe)?\s+hook\s+den(?:\s|$)/
+
 export function isDenAgentHookCommand(command: string): boolean {
-  return command.includes('DEN_AGENT_HOOK') || /\bhook den\b/.test(command)
+  const trimmed = command.trim()
+  return LEGACY_DEN_HOOK.test(trimmed) || BITA_DEN_HOOK.test(trimmed)
 }
 
 export function codexHooks(editMatcher: string = CODEX_EDIT_MATCHER): HookMap {

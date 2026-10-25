@@ -716,3 +716,21 @@ test('running setup for every target twice leaves the whole tree byte-identical 
     rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
+
+test('only bita den hook commands count as Den hooks, never a user hook that looks alike', async () => {
+  const { isDenAgentHookCommand } = await import('../src/kit/integration.ts')
+  for (const command of [DEN_CODEX, DEN_GEMINI, OLD_DEN_CODEX, OLD_DEN_GEMINI, '/opt/old/bita hook den codex --legacy', 'C:\\tools\\bita.cmd hook den gemini', '  bita hook den codex  ']) {
+    assert.equal(isDenAgentHookCommand(command), true, command)
+  }
+  for (const command of [
+    'my-den hook den codex',
+    'notbita hook den codex',
+    'echo "$DEN_AGENT_HOOK" > /tmp/den.log',
+    '"$DEN_AGENT_HOOK" --agent-hook codex --my-extra',
+    'run-checks && bita hook den codex',
+    'bita hook dense',
+    'bita hook codex',
+  ]) {
+    assert.equal(isDenAgentHookCommand(command), false, command)
+  }
+})
