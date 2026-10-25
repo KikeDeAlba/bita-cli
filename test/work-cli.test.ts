@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, symlinkSync } from 'node:fs'
 import { delimiter } from 'node:path'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createFakeBin, readFakeBinCalls } from './helpers/fake-bin.ts'
+import { createFakeBin, IS_WINDOWS, readFakeBinCalls } from './helpers/fake-bin.ts'
 import { openDatabase } from '../src/db/open.ts'
 import { queryAll } from '../src/db/query.ts'
 import { runBita, seededDb, type SeededDb } from './helpers/sessions-seed.ts'
@@ -50,7 +50,8 @@ const PROMPTS = [
 ]
 
 for (const prompt of PROMPTS) {
-  test(`work --prompt=${JSON.stringify(prompt)} reaches the harness as one argument after --`, () => {
+  const skip = IS_WINDOWS && /[\r\n]/.test(prompt) && 'a fake claude.cmd runs through cmd.exe, which cuts the command line at the first line break'
+  test(`work --prompt=${JSON.stringify(prompt)} reaches the harness as one argument after --`, { skip }, () => {
     const box = seededDb()
     try {
       const here = box.dir('prompt')

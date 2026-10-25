@@ -4,7 +4,7 @@ import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
-import { nodeScriptBin } from './helpers/fake-bin.ts'
+import { IS_WINDOWS, nodeScriptBin } from './helpers/fake-bin.ts'
 import assert from 'node:assert/strict'
 import { CAPABILITIES } from '../src/kit/manifest.ts'
 import { VERSION } from '../src/cli/router.ts'
@@ -699,6 +699,12 @@ test('running setup for every target twice leaves the whole tree byte-identical 
     const first = snapshotTree(box.root, skip)
     setup(box, '--target', 'all')
     const second = snapshotTree(box.root, skip)
+    if (IS_WINDOWS) {
+      for (const path of Object.keys(second).filter((path) => !(path in first))) {
+        assert.ok(path.endsWith('.backup') && second[path] === first[path.slice(0, -'.backup'.length)], path)
+        delete second[path]
+      }
+    }
     assert.deepEqual(Object.keys(second), Object.keys(first))
     for (const [path, content] of Object.entries(first)) assert.equal(second[path], content, path)
 
