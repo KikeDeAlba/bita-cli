@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { openDatabase } from '../../db/open.ts'
 import { databasePath } from '../../db/paths.ts'
 import { isHarnessId } from '../../harness/registry.ts'
@@ -175,9 +176,38 @@ async function route(event: string, argv: readonly string[]): Promise<void> {
   if (event === 'gemini') return runAgentHook('gemini', GEMINI_EVENTS)
 }
 
+export const DEN_HOOK_ENV = 'DEN_AGENT_HOOK'
+
+function forward(command: string, args: readonly string[], input: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true })
+    const output: Buffer[] = []
+    child.stdout.on('data', (chunk: Buffer) => output.push(chunk))
+    child.stdin.on('error', () => undefined)
+    child.on('error', reject)
+    child.on('close', (code) => {
+      process.stdout.write(Buffer.concat(output), () => resolve(code ?? 0))
+    })
+    child.stdin.end(input)
+  })
+}
+
+async function runDenHook(harness: string | undefined): Promise<number> {
+  const input = await readStdin()
+  const command = process.env[DEN_HOOK_ENV]
+  if (!command || !harness) return 0
+  try {
+    return await forward(command, ['--agent-hook', harness], input)
+  } catch (error) {
+    appendHookLog(databasePath(), `hook den ${harness} failed: ${error instanceof Error ? error.message : String(error)}`)
+    return 0
+  }
+}
+
 export async function runHook(argv: string[]): Promise<number> {
   const event = argv[0] ?? 'session-start'
   if (isHeadless()) return 0
+  if (event === 'den') return runDenHook(argv[1])
   try {
     await route(event, argv.slice(1))
   } catch (error) {

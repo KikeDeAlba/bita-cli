@@ -17,7 +17,9 @@ import {
   GEMINI_EDIT_MATCHER,
   RETIRED_COMMANDS,
   claudePermissions,
+  denAgentHookCommand,
   integration,
+  isDenAgentHookCommand,
   legacyClaudeIntegration,
   manifest,
   retiredIntegration,
@@ -109,23 +111,43 @@ export function retiredCommandsPresent(homes: { opencode: string; codex: string 
   )
 }
 
-export function codexHooksStale(codexHome: string, editMatcher: string): boolean {
-  let parsed: unknown
+function readCodexHooks(codexHome: string): Record<string, unknown> | undefined {
   try {
-    parsed = JSON.parse(readFileSync(join(codexHome, 'hooks.json'), 'utf8'))
+    const parsed: unknown = JSON.parse(readFileSync(join(codexHome, 'hooks.json'), 'utf8'))
+    const hooks = (parsed as { hooks?: unknown } | null)?.hooks
+    return typeof hooks === 'object' && hooks !== null ? (hooks as Record<string, unknown>) : undefined
   } catch {
-    return false
+    return undefined
   }
-  const hooks = (parsed as { hooks?: Record<string, unknown> } | null)?.hooks
-  const ours = (group: unknown): boolean => {
-    const record = group as { hooks?: Array<{ command?: unknown }> } | null
-    return Array.isArray(record?.hooks) && record.hooks.some((hook) => hook.command === 'bita hook codex')
-  }
+}
+
+function hookCommands(group: unknown): string[] {
+  const record = group as { hooks?: Array<{ command?: unknown }> } | null
+  if (!Array.isArray(record?.hooks)) return []
+  return record.hooks.map((hook) => hook.command).filter((command): command is string => typeof command === 'string')
+}
+
+export function staleDenHookCommands(hooks: Record<string, unknown> | undefined, current: string): string[] {
+  const commands = Object.values(hooks ?? {})
+    .flatMap((groups) => (Array.isArray(groups) ? groups.flatMap(hookCommands) : []))
+    .filter((command) => isDenAgentHookCommand(command) && command !== current)
+  return [...new Set(commands)]
+}
+
+export function codexStaleDenHookCommands(codexHome: string): string[] {
+  return staleDenHookCommands(readCodexHooks(codexHome), denAgentHookCommand('codex'))
+}
+
+export function codexHooksStale(codexHome: string, editMatcher: string): boolean {
+  const hooks = readCodexHooks(codexHome)
+  if (!hooks) return false
+  const ours = (group: unknown): boolean => hookCommands(group).includes('bita hook codex')
   const groups = (event: string): unknown[] => {
-    const value = hooks?.[event]
+    const value = hooks[event]
     return Array.isArray(value) ? value : []
   }
   if (groups('UserPromptSubmit').some(ours)) return true
+  if (staleDenHookCommands(hooks, denAgentHookCommand('codex')).length > 0) return true
   return groups('PostToolUse').some((group) => ours(group) && (group as { matcher?: unknown }).matcher !== editMatcher)
 }
 
@@ -210,8 +232,10 @@ export async function runSetup(argv: string[]): Promise<number> {
       )
     }
     if (others.includes('codex') && codexHooksStale(homes.codex, codexEditMatcher)) {
+      const staleDen = codexStaleDenHookCommands(homes.codex).map((command) => ({ type: 'command' as const, command }))
+      const hooks = { ...(wanted.codex?.hooks ?? {}), ...(staleDen.length > 0 ? { StaleDen: [{ hooks: staleDen }] } : {}) }
       steps.push(
-        ...(await kit.agents.uninstallIntegration({ tool: TOOL_NAME, version: VERSION, codex: { hooks: wanted.codex?.hooks ?? {} } }, { agents: ['codex'], ctx, homes })).filter(
+        ...(await kit.agents.uninstallIntegration({ tool: TOOL_NAME, version: VERSION, codex: { hooks } }, { agents: ['codex'], ctx, homes })).filter(
           (step) => step.state === 'removed',
         ),
       )

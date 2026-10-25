@@ -110,6 +110,8 @@ Integration:
   hook session-start|session-end|touched|codex|gemini
                              Agent lifecycle hooks (installed by setup; prompt, prompt-submit
                              and checkpoint do nothing and remain for older setups)
+  hook den codex|gemini      Pass the hook input to $DEN_AGENT_HOOK --agent-hook <agent> and return
+                             its output and exit code; does nothing when DEN_AGENT_HOOK is unset
 
 Range presets:
   today, yesterday, week, last-week, month, last-month

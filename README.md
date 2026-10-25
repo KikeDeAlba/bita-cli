@@ -105,14 +105,23 @@ bita setup --target all
 herramientas que no hace nada fuera de Den:
 
 ```sh
-[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook codex   # o gemini
+bita hook den codex   # o gemini
 ```
+
+Es un subcomando de bita, no una línea de `sh`, así que funciona igual en
+Windows con `cmd`. Lee la entrada del hook; si `DEN_AGENT_HOOK` no está
+definida, sale con 0 sin escribir nada. Si lo está, ejecuta ese binario con
+`--agent-hook <agente>`, le pasa la misma entrada y devuelve su salida y su
+código de salida, para que una decisión de permiso de Den llegue al agente. Si
+el binario no arranca, sale con 0 y lo anota en el log de hooks.
 
 Den define `DEN_AGENT_HOOK` solo en los agentes que lanza, así que en una
 terminal normal el hook sale al instante sin hacer nada. En Codex se mezcla en
 `~/.codex/hooks.json` sin tocar tus hooks y sin duplicarse al repetir `setup`;
-en Gemini vive en la extensión de bita, que `setup` reescribe completa. Lo
-quita o lo actualiza `setup`, como el resto de los hooks de bita.
+si encuentra una versión anterior del hook de Den (por ejemplo la línea
+`[ -z "$DEN_AGENT_HOOK" ] || ...` de versiones previas), la reemplaza por la
+actual. En Gemini vive en la extensión de bita, que `setup` reescribe completa.
+Lo quita o lo actualiza `setup`, como el resto de los hooks de bita.
 
 ### El plugin de Claude Code
 

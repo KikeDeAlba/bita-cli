@@ -96,7 +96,11 @@ export const CLAUDE_MOD_PLUGIN = 'bita-timer'
 export const CODEX_EDIT_MATCHER = 'apply_patch|Edit|Write'
 
 export function denAgentHookCommand(harness: 'codex' | 'gemini'): string {
-  return `[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook ${harness}`
+  return `bita hook den ${harness}`
+}
+
+export function isDenAgentHookCommand(command: string): boolean {
+  return command.includes('DEN_AGENT_HOOK') || /\bhook den\b/.test(command)
 }
 
 export function codexHooks(editMatcher: string = CODEX_EDIT_MATCHER): HookMap {

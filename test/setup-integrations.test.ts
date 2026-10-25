@@ -10,8 +10,10 @@ import { CAPABILITIES } from '../src/kit/manifest.ts'
 import { VERSION } from '../src/cli/router.ts'
 
 const repo = join(import.meta.dirname, '..')
-const DEN_CODEX = '[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook codex'
-const DEN_GEMINI = '[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook gemini'
+const DEN_CODEX = 'bita hook den codex'
+const DEN_GEMINI = 'bita hook den gemini'
+const OLD_DEN_CODEX = '[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook codex'
+const OLD_DEN_GEMINI = '[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook gemini'
 const bin = join(repo, 'src', 'bin', 'bita.ts')
 
 interface Sandbox {
@@ -565,18 +567,106 @@ test('setup adds the Den tool hooks to Codex next to the user ones, once, and th
   }
 })
 
-test('the Den hook does nothing without DEN_AGENT_HOOK and calls it with --agent-hook when set', { skip: process.platform === 'win32' }, () => {
+test('setup replaces older Den hook commands in Codex instead of adding a second one', () => {
   const box = sandbox()
   try {
-    const silent = spawnSync('/bin/sh', ['-c', DEN_CODEX], { env: { PATH: '/usr/bin:/bin' }, input: '{}', encoding: 'utf8' })
-    assert.equal(silent.status, 0)
-    assert.equal(silent.stdout, '')
-    const fake = join(box.root, 'den-hook')
-    writeFileSync(fake, '#!/bin/sh\necho "$@"\n')
-    chmodSync(fake, 0o755)
-    const called = spawnSync('/bin/sh', ['-c', DEN_GEMINI], { env: { PATH: '/usr/bin:/bin', DEN_AGENT_HOOK: fake }, input: '{}', encoding: 'utf8' })
-    assert.equal(called.status, 0)
-    assert.equal(called.stdout.trim(), '--agent-hook gemini')
+    mkdirSync(box.codex, { recursive: true })
+    const mine = { matcher: 'shell', hooks: [{ type: 'command', command: 'echo pre' }] }
+    writeFileSync(
+      join(box.codex, 'hooks.json'),
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [mine, { hooks: [{ type: 'command', command: OLD_DEN_CODEX, timeout: 10 }] }],
+          PostToolUse: [
+            { matcher: 'apply_patch|Edit|Write', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] },
+            { hooks: [{ type: 'command', command: OLD_DEN_CODEX, timeout: 10 }] },
+            { hooks: [{ type: 'command', command: '/opt/old/bita hook den codex --legacy', timeout: 10 }] },
+          ],
+        },
+      }),
+    )
+    setup(box, '--target', 'codex')
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> }
+    const commands = (event: string): string[] => (codexHooks.hooks[event] ?? []).flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.deepEqual(codexHooks.hooks['PreToolUse']?.[0], mine)
+    assert.deepEqual(commands('PreToolUse'), ['echo pre', DEN_CODEX])
+    assert.deepEqual(commands('PostToolUse'), ['bita hook codex', DEN_CODEX])
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('setup rewrites the Gemini extension hooks so an older Den hook command does not survive', () => {
+  const box = sandbox()
+  try {
+    const hooksFile = join(box.gemini, 'extensions', 'bita', 'hooks', 'hooks.json')
+    mkdirSync(join(box.gemini, 'extensions', 'bita', 'hooks'), { recursive: true })
+    writeFileSync(
+      hooksFile,
+      JSON.stringify({
+        hooks: {
+          BeforeTool: [{ hooks: [{ type: 'command', name: 'den-before-tool', command: OLD_DEN_GEMINI, timeout: 10000 }] }],
+          AfterTool: [{ hooks: [{ type: 'command', name: 'den-after-tool', command: OLD_DEN_GEMINI, timeout: 10000 }] }],
+        },
+      }),
+    )
+    setup(box, '--target', 'gemini')
+    const geminiHooks = readJson(hooksFile) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    const all = Object.values(geminiHooks.hooks).flatMap((groups) => groups.flatMap((group) => group.hooks.map((hook) => hook.command)))
+    assert.equal(all.filter((command) => command.includes('DEN_AGENT_HOOK')).length, 0)
+    assert.equal(all.filter((command) => command === DEN_GEMINI).length, 2)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('bita hook den is a no-op without DEN_AGENT_HOOK', () => {
+  const box = sandbox()
+  try {
+    const run = spawnSync(process.execPath, [bin, 'hook', 'den', 'codex'], { cwd: box.root, env: box.env, input: '{"hook_event_name":"PreToolUse"}', encoding: 'utf8' })
+    assert.equal(run.status, 0)
+    assert.equal(run.stdout, '')
+    assert.equal(run.stderr, '')
+    assert.equal(existsSync(join(box.root, 'bita.db')), false)
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('bita hook den forwards stdin to DEN_AGENT_HOOK --agent-hook and returns its stdout and exit code', () => {
+  const box = sandbox()
+  try {
+    const fake = nodeScriptBin(
+      box.binDir,
+      'den-hook',
+      `const chunks = []
+process.stdin.on('data', (chunk) => chunks.push(chunk))
+process.stdin.on('end', () => {
+  process.stdout.write(JSON.stringify({ argv: process.argv.slice(2), stdin: Buffer.concat(chunks).toString('utf8') }))
+  process.exitCode = 2
+})
+`,
+    )
+    const input = '{"hook_event_name":"BeforeTool","tool_name":"run_shell_command"}'
+    const run = spawnSync(process.execPath, [bin, 'hook', 'den', 'gemini'], { cwd: box.root, env: { ...box.env, DEN_AGENT_HOOK: fake }, input, encoding: 'utf8' })
+    assert.equal(run.status, 2, run.stderr)
+    assert.deepEqual(JSON.parse(run.stdout), { argv: ['--agent-hook', 'gemini'], stdin: input })
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('bita hook den exits 0 when DEN_AGENT_HOOK cannot be started', () => {
+  const box = sandbox()
+  try {
+    const run = spawnSync(process.execPath, [bin, 'hook', 'den', 'codex'], {
+      cwd: box.root,
+      env: { ...box.env, DEN_AGENT_HOOK: join(box.root, 'missing-den') },
+      input: '{}',
+      encoding: 'utf8',
+    })
+    assert.equal(run.status, 0)
+    assert.equal(run.stdout, '')
   } finally {
     rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
