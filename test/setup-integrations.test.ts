@@ -1,6 +1,6 @@
 import './helpers/isolate.ts'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
@@ -668,6 +668,50 @@ test('bita hook den exits 0 when DEN_AGENT_HOOK cannot be started', () => {
     })
     assert.equal(run.status, 0)
     assert.equal(run.stdout, '')
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+function snapshotTree(root: string, skip: ReadonlySet<string>): Record<string, string> {
+  const files: Record<string, string> = {}
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir).sort()) {
+      const path = join(dir, name)
+      if (skip.has(path)) continue
+      const stat = lstatSync(path)
+      if (stat.isDirectory()) walk(path)
+      else files[path.slice(root.length)] = stat.isSymbolicLink() ? 'symlink' : readFileSync(path, 'utf8').replace(/"installedAt": "[^"]*"/, '"installedAt": "-"')
+    }
+  }
+  walk(root)
+  return files
+}
+
+test('running setup for every target twice leaves the whole tree byte-identical and registers each Den hook and permission once', () => {
+  const box = sandbox()
+  try {
+    fakeClaude(box)
+    mkdirSync(box.codex, { recursive: true })
+    mkdirSync(join(box.gemini, 'extensions', 'bita', 'hooks'), { recursive: true })
+    const skip = new Set([join(box.root, 'claude-argv.log'), join(box.root, 'bita.db'), join(box.root, 'bita.db-wal'), join(box.root, 'bita.db-shm')])
+    setup(box, '--target', 'all')
+    const first = snapshotTree(box.root, skip)
+    setup(box, '--target', 'all')
+    const second = snapshotTree(box.root, skip)
+    assert.deepEqual(Object.keys(second), Object.keys(first))
+    for (const [path, content] of Object.entries(first)) assert.equal(second[path], content, path)
+
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    const commands = (event: string): string[] => (codexHooks.hooks[event] ?? []).flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.equal(commands('PreToolUse').filter((command) => command === DEN_CODEX).length, 1)
+    assert.equal(commands('PostToolUse').filter((command) => command === DEN_CODEX).length, 1)
+    const geminiText = readFileSync(join(box.gemini, 'extensions', 'bita', 'hooks', 'hooks.json'), 'utf8')
+    assert.equal(geminiText.split(DEN_GEMINI).length - 1, 2)
+    const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] } }
+    const allow = settings.permissions.allow
+    assert.equal(new Set(allow).size, allow.length)
+    assert.equal(allow.filter((rule) => rule === 'Bash(bita sessions:*)').length, 1)
   } finally {
     rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
