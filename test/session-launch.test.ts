@@ -20,7 +20,7 @@ process.env['KIT_NO_EVENTS'] = '1'
 process.env['GIT_CONFIG_NOSYSTEM'] = '1'
 process.env['GIT_CONFIG_GLOBAL'] = join(root, 'gitconfig')
 
-const { mappedProjectId, runSessionLaunch, spawnHarness, splitLaunchArgv } = await import('../src/cli/commands/session-launch.ts')
+const { mappedProjectId, runSessionLaunch, spawnHarness, splitLaunchArgv, withPrompt } = await import('../src/cli/commands/session-launch.ts')
 const { openDatabase } = await import('../src/db/open.ts')
 const { insertProject, setProjectActive } = await import('../src/db/projects.ts')
 const { upsertProjectRepo } = await import('../src/db/project-repos.ts')
@@ -879,4 +879,81 @@ test('bita work does not hand the harness the session markers of another agent',
     assert.equal(spawned.env['CLAUDE_CODE_USE_BEDROCK'], '1')
   }
   assert.equal(h.spawned[1]?.env['BITA_WRAPPER_ID'], 'outer')
+})
+
+test('--resume --session ID reopens the session of that row without a terminal', async () => {
+  const h = harness()
+  const stored = mkdtempSync(join(root, 'by-row-'))
+  seed(h.dbPath, { cwd: h.dir, sessionId: 'newer', projectId: h.projects.alpha, startedAt: '2026-09-17T16:00:00Z' })
+  const picked = seed(h.dbPath, { cwd: stored, harness: 'codex', sessionId: 'row-sid', projectId: h.projects.beta })
+  const code = await h.run(['--resume', '--session', String(picked.rowId)], { tty: false })
+  assert.equal(code, 0)
+  assert.equal(h.prompts.length, 0)
+  assert.equal(h.spawned[0]?.bin, '/fake/codex')
+  assert.deepEqual(h.spawned[0]?.args, ['--codex-default', '--resume', 'row-sid'])
+  assert.equal(h.spawned[0]?.cwd, stored)
+  assert.equal(h.started[0]?.projectId, h.projects.beta)
+})
+
+test('--resume --session also takes the harness session id and picks its latest finished row', async () => {
+  const h = harness()
+  seed(h.dbPath, { cwd: h.dir, sessionId: 'abc-uuid', projectId: h.projects.alpha, startedAt: '2026-09-15T16:00:00Z' })
+  seed(h.dbPath, { cwd: h.dir, sessionId: 'abc-uuid', projectId: h.projects.beta, startedAt: '2026-09-16T16:00:00Z' })
+  seed(h.dbPath, { cwd: h.dir, sessionId: 'abc-uuid', projectId: h.projects.alpha, startedAt: '2026-09-17T16:00:00Z', ended: false })
+  await h.run(['--resume', '--session', 'abc-uuid'], { tty: false })
+  assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--resume', 'abc-uuid'])
+  assert.equal(h.started[0]?.projectId, h.projects.beta)
+})
+
+test('--session needs --resume, excludes ENTRY_ID and must point to a finished session', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'x1', projectId: h.projects.alpha })
+  const open = seed(h.dbPath, { cwd: h.dir, sessionId: 'x2', projectId: h.projects.alpha, ended: false })
+  await assert.rejects(h.run(['--session', String(picked.rowId)], { tty: false }), /pass it with --resume/)
+  await assert.rejects(h.run(['--resume', String(picked.entryId), '--session', 'x1'], { tty: false }), /not both/)
+  await assert.rejects(h.run(['--resume', '--session', ''], { tty: false }), /takes a session id/)
+  for (const ref of [String(open.rowId), 'x2', 'unknown', '424242']) {
+    await assert.rejects(h.run(['--resume', '--session', ref], { tty: false }), (error: unknown) => {
+      assert.ok(error instanceof UsageError)
+      assert.match(error.message, /No finished harness session/)
+      return true
+    })
+  }
+  assert.equal(h.spawned.length, 0)
+})
+
+test('--prompt hands the first message after -- and works without a terminal', async () => {
+  const h = harness()
+  const code = await h.run(['--harness', 'codex', '--project', 'Alpha', '--prompt', 'fix the build'], { tty: false })
+  assert.equal(code, 0)
+  assert.equal(h.prompts.length, 0)
+  assert.deepEqual(h.spawned[0]?.args, ['--codex-default', '--', 'fix the build'])
+  assert.equal(h.started.length, 1)
+})
+
+test('--prompt joins the harness arguments and the resumed session', async () => {
+  const h = harness()
+  const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'p-sid', projectId: h.projects.alpha })
+  await h.run(['--resume', '--session', String(picked.rowId), '--prompt=-continue', '--', '--model', 'opus'], { tty: false })
+  assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--resume', 'p-sid', '--model', 'opus', '--', '-continue'])
+  await assert.rejects(h.run(['--harness', 'claude', '--project', '0', '--prompt', 'a', '--', 'b'], { tty: false }), /not both/)
+  await assert.rejects(h.run(['--harness', 'claude', '--project', '0', '--prompt', '  '], { tty: false }), /--prompt takes/)
+})
+
+test('withPrompt is translated by every real harness adapter', async () => {
+  const { listAdapters } = await import('../src/harness/registry.ts')
+  const plans = Object.fromEntries(listAdapters().map((adapter) => [adapter.id, adapter.launchArgs(withPrompt(['--model', 'x'], 'hola mundo')).args]))
+  assert.deepEqual(plans['claude'], ['--allow-dangerously-skip-permissions', '--model', 'x', '--', 'hola mundo'])
+  assert.equal(plans['codex']?.at(-1), 'hola mundo')
+  assert.deepEqual(plans['opencode']?.slice(-2), ['--prompt', 'hola mundo'])
+  assert.deepEqual(plans['gemini']?.slice(-2), ['-i', 'hola mundo'])
+  assert.deepEqual(plans['antigravity']?.slice(-2), ['-i', 'hola mundo'])
+  assert.deepEqual(withPrompt(['-c', '--'], 'x'), ['-c', '--', 'x'])
+  assert.deepEqual(withPrompt(['-c'], undefined), ['-c'])
+})
+
+test('--prompt reaches the harness inside a session too', async () => {
+  const h = harness()
+  await h.run(['--prompt', 'nested'], { env: { PATH: '/usr/bin', BITA_WRAPPER_ID: 'outer' }, adapters: [fakeAdapter('claude', 'Claude')] })
+  assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--', 'nested'])
 })

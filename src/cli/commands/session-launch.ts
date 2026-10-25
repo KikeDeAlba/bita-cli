@@ -13,7 +13,7 @@ import { currentRepoIdentity } from './repo.ts'
 import { findProjectById, listProjects } from '../../db/projects.ts'
 import { findCheckoutProject } from '../../db/project-repos.ts'
 import type { ProjectRow } from '../../db/rows.ts'
-import { findResumableByEntry, listResumableSessions, type ResumableSession } from '../../db/sessions.ts'
+import { findResumableByEntry, findResumableByRow, findResumableBySessionId, listResumableSessions, type ResumableSession } from '../../db/sessions.ts'
 import { localDay } from '../../domain/timezone.ts'
 import { readRepoContext } from '../../state/git.ts'
 import { readConfig } from '../../state/config.ts'
@@ -40,6 +40,8 @@ const LAUNCH_OPTIONS = {
   harness: { type: 'string' as const },
   project: { type: 'string' as const },
   resume: { type: 'boolean' as const },
+  session: { type: 'string' as const },
+  prompt: { type: 'string' as const },
 }
 
 export interface LaunchDeps {
@@ -157,9 +159,14 @@ function isDirectory(path: string): boolean {
 
 interface ResumeRequest {
   entryId: number | null
+  session: string | null
 }
 
 function readResumeRequest(args: ParsedArgs): ResumeRequest | null {
+  const session = readString(args, 'session')
+  if (session !== undefined && !readBoolean(args, 'resume')) {
+    throw new UsageError('--session picks the session to resume; pass it with --resume: bita work --resume --session ID')
+  }
   if (!readBoolean(args, 'resume')) {
     if (args.positionals.length > 0) {
       throw new UsageError(`Unexpected argument "${args.positionals[0]}". Pass the harness arguments after --: bita work -- ${args.positionals.join(' ')}`)
@@ -170,19 +177,45 @@ function readResumeRequest(args: ParsedArgs): ResumeRequest | null {
   if (extra !== undefined) {
     throw new UsageError(`Unexpected argument "${extra}". --resume takes at most one ENTRY_ID; pass the harness arguments after --.`)
   }
-  if (raw === undefined) return { entryId: null }
+  if (session !== undefined) {
+    if (raw !== undefined) throw new UsageError('Pass either ENTRY_ID or --session ID to --resume, not both.')
+    if (session.trim() === '') throw new UsageError('--session takes a session id; see bita sessions ls.')
+    return { entryId: null, session: session.trim() }
+  }
+  if (raw === undefined) return { entryId: null, session: null }
   const entryId = Number(raw)
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(entryId) || entryId <= 0) {
     throw new UsageError(`Invalid ENTRY_ID "${raw}". Expected a positive integer.`)
   }
-  return { entryId }
+  return { entryId, session: null }
+}
+
+function findResumableBySession(ctx: LocalContext, ref: string): ResumableSession | undefined {
+  const rowId = /^\d+$/.test(ref) ? Number(ref) : Number.NaN
+  const byRow = Number.isSafeInteger(rowId) && rowId > 0 ? findResumableByRow(ctx.db, rowId) : undefined
+  return byRow ?? findResumableBySessionId(ctx.db, ref)
+}
+
+export function withPrompt(harnessArgs: readonly string[], prompt: string | undefined): string[] {
+  if (prompt === undefined) return [...harnessArgs]
+  if (prompt.trim() === '') throw new UsageError('--prompt takes the text of the first message.')
+  if (parseClaudeArgs(harnessArgs).prompt !== null) {
+    throw new UsageError('Pass the first message either with --prompt or after --, not both.')
+  }
+  return harnessArgs.includes('--') ? [...harnessArgs, prompt] : [...harnessArgs, '--', prompt]
 }
 
 function harnessLabel(deps: LaunchDeps, harness: HarnessId): string {
   return deps.adapters.find((adapter) => adapter.id === harness)?.label ?? harness
 }
 
-async function pickResumable(ctx: LocalContext, deps: LaunchDeps, requested: number | null): Promise<Choice<ResumableSession>> {
+async function pickResumable(ctx: LocalContext, deps: LaunchDeps, request: ResumeRequest): Promise<Choice<ResumableSession>> {
+  if (request.session !== null) {
+    const session = findResumableBySession(ctx, request.session)
+    if (!session) throw new UsageError(`No finished harness session "${request.session}" to resume; see bita sessions ls.`)
+    return { value: session }
+  }
+  const requested = request.entryId
   if (requested !== null) {
     const session = findResumableByEntry(ctx.db, requested)
     if (!session) throw new UsageError(`Entry #${requested} has no finished harness session to resume.`)
@@ -311,7 +344,7 @@ async function prepare(args: ParsedArgs, deps: LaunchDeps, wrapperId: string, re
     } catch (error) {
       writeErr(`bita: could not close orphan sessions: ${errorMessage(error)}`)
     }
-    const target = resume ? await pickResumable(ctx, deps, resume.entryId) : null
+    const target = resume ? await pickResumable(ctx, deps, resume) : null
     if (target && 'interrupted' in target) return null
     const session = target?.value ?? null
     const harness: Choice<HarnessAdapter> = session
@@ -409,13 +442,14 @@ export async function runSessionLaunch(argv: string[], overrides: Partial<Launch
   const { own, harnessArgs } = splitLaunchArgv(argv)
   const args = parseCommandArgs(own, LAUNCH_OPTIONS, BASE_OPTIONS)
   const resume = readResumeRequest(args)
+  const launchArgs = withPrompt(harnessArgs, readString(args, 'prompt'))
   if (resume && parseClaudeArgs(harnessArgs).resume.kind !== 'none') {
     throw new UsageError('--resume already picks the session; drop -r/--resume/-c/--continue from the harness arguments.')
   }
 
   if (isNested(deps.env)) {
     if (resume) throw new UsageError('Already inside a bita session; run bita work --resume from a regular terminal.')
-    return launchNested(args, deps, harnessArgs)
+    return launchNested(args, deps, launchArgs)
   }
 
   const wrapperId = randomUUID()
@@ -423,7 +457,7 @@ export async function runSessionLaunch(argv: string[], overrides: Partial<Launch
   if (!prepared) return EXIT_INTERRUPTED
 
   const { adapter, project, entryId, databasePath, resumeSessionId, cwd } = prepared
-  const plan = adapter.launchArgs(resumeSessionId === null ? harnessArgs : ['--resume', resumeSessionId, ...harnessArgs])
+  const plan = adapter.launchArgs(resumeSessionId === null ? launchArgs : ['--resume', resumeSessionId, ...launchArgs])
   for (const warning of plan.warnings) writeErr(warning)
   const bin = adapter.resolveBin(deps.env) ?? adapter.bin
   const env = withBinOnPath(withoutHarnessSession(deps.env), bin)
