@@ -89,7 +89,7 @@ function launchArgs(userArgs: readonly string[]): LaunchPlan {
         ? ['--conversation', parsed.resume.id]
         : ['-c']
       : []
-  const prompt = parsed.prompt !== null ? ['-i', parsed.prompt] : []
+  const prompt = parsed.prompt !== null ? [`--prompt-interactive=${parsed.prompt}`] : []
   return {
     args: [SKIP_FLAG, ...parsed.extra, ...resume, ...prompt],
     warnings: parsed.extraFlags.map((flag) => droppedWarning(LABEL, flag)),

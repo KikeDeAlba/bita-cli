@@ -22,7 +22,7 @@ function launchArgs(userArgs: readonly string[]): LaunchPlan {
     if (parsed.resume.id) resume.push('--session', parsed.resume.id)
     else warnings.push(droppedWarning(LABEL, '--resume'))
   }
-  const prompt = parsed.prompt !== null ? ['--prompt', parsed.prompt] : []
+  const prompt = parsed.prompt !== null ? [`--prompt=${parsed.prompt}`] : []
   warnings.push(...parsed.extraFlags.map((flag) => droppedWarning(LABEL, flag)))
   return { args: [DEFAULT_FLAG, ...resume, ...prompt], warnings }
 }

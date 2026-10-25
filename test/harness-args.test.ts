@@ -45,13 +45,13 @@ test('codex translates continue, resume and the prompt', () => {
   const flag = '--dangerously-bypass-approvals-and-sandbox'
   assert.deepEqual(plan('codex', []), { args: [flag], warnings: [] })
   assert.deepEqual(plan('codex', ['-c']).args, ['resume', '--last', flag])
-  assert.deepEqual(plan('codex', ['--continue', 'sigue']).args, ['resume', '--last', flag, 'sigue'])
+  assert.deepEqual(plan('codex', ['--continue', 'sigue']).args, ['resume', '--last', flag, '--', 'sigue'])
   assert.deepEqual(plan('codex', ['-r', 'abc']).args, ['resume', 'abc', flag])
   assert.deepEqual(plan('codex', ['--resume=abc']).args, ['resume', 'abc', flag])
   assert.deepEqual(plan('codex', ['-r']).args, ['resume', flag])
   assert.deepEqual(plan('codex', ['-r', '--verbose']).args, ['resume', flag])
-  assert.deepEqual(plan('codex', ['update', 'the', 'docs']).args, [flag, 'update the docs'])
-  assert.deepEqual(plan('codex', ['--dangerously-skip-permissions', 'x']), { args: [flag, 'x'], warnings: [] })
+  assert.deepEqual(plan('codex', ['update', 'the', 'docs']).args, [flag, '--', 'update the docs'])
+  assert.deepEqual(plan('codex', ['--dangerously-skip-permissions', 'x']), { args: [flag, '--', 'x'], warnings: [] })
 })
 
 test('gemini translates and keeps its own approval flags', () => {
@@ -59,10 +59,10 @@ test('gemini translates and keeps its own approval flags', () => {
   assert.deepEqual(plan('gemini', ['-c']).args, ['--approval-mode=yolo', '--resume', 'latest'])
   assert.deepEqual(plan('gemini', ['-r']).args, ['--approval-mode=yolo', '--resume', 'latest'])
   assert.deepEqual(plan('gemini', ['--resume', 'abc']).args, ['--approval-mode=yolo', '--resume', 'abc'])
-  assert.deepEqual(plan('gemini', ['arregla', 'el', 'bug']).args, ['--approval-mode=yolo', '-i', 'arregla el bug'])
-  assert.deepEqual(plan('gemini', ['--yolo', 'x']).args, ['--yolo', '-i', 'x'])
+  assert.deepEqual(plan('gemini', ['arregla', 'el', 'bug']).args, ['--approval-mode=yolo', '--prompt-interactive=arregla el bug'])
+  assert.deepEqual(plan('gemini', ['--yolo', 'x']).args, ['--yolo', '--prompt-interactive=x'])
   assert.deepEqual(plan('gemini', ['-y']).args, ['-y'])
-  assert.deepEqual(plan('gemini', ['--approval-mode', 'auto_edit', 'x']).args, ['--approval-mode=auto_edit', '-i', 'x'])
+  assert.deepEqual(plan('gemini', ['--approval-mode', 'auto_edit', 'x']).args, ['--approval-mode=auto_edit', '--prompt-interactive=x'])
   assert.deepEqual(plan('gemini', ['--approval-mode=plan']).args, ['--approval-mode=plan'])
   assert.deepEqual(plan('gemini', ['--allow-dangerously-skip-permissions']).warnings, [])
 })
@@ -71,7 +71,7 @@ test('opencode translates continue, resume with id and the prompt', () => {
   assert.deepEqual(plan('opencode', []), { args: ['--auto'], warnings: [] })
   assert.deepEqual(plan('opencode', ['-c']).args, ['--auto', '--continue'])
   assert.deepEqual(plan('opencode', ['-r', 'ses_1']).args, ['--auto', '--session', 'ses_1'])
-  assert.deepEqual(plan('opencode', ['hola', 'mundo']).args, ['--auto', '--prompt', 'hola mundo'])
+  assert.deepEqual(plan('opencode', ['hola', 'mundo']).args, ['--auto', '--prompt=hola mundo'])
   assert.deepEqual(plan('opencode', ['-r']), { args: ['--auto'], warnings: ['bita: OpenCode has no equivalent for --resume; dropped.'] })
 })
 
@@ -87,7 +87,7 @@ test('unknown flags are dropped with one warning each and consume their values',
     ])
     assert.ok(!result.args.includes('opus'))
     assert.ok(!result.args.includes('/tmp/x'))
-    assert.ok(result.args.some((arg) => arg === 'prompt'))
+    assert.ok(result.args.some((arg) => arg === 'prompt' || arg.endsWith('=prompt')))
   }
 })
 
@@ -117,7 +117,7 @@ test('every claude flag that takes a value consumes it instead of becoming the p
 })
 
 test('tokens after a literal -- are positional', () => {
-  assert.deepEqual(plan('codex', ['--', '-c', 'texto']).args, ['--dangerously-bypass-approvals-and-sandbox', '-c texto'])
+  assert.deepEqual(plan('codex', ['--', '-c', 'texto']).args, ['--dangerously-bypass-approvals-and-sandbox', '--', '-c texto'])
 })
 
 test('resolveBin finds an agent installed with nvm when PATH does not have it', { skip: POSIX_ONLY }, () => {
@@ -142,12 +142,35 @@ test('antigravity always skips permissions once and maps resume, continue and th
   const skip = '--dangerously-skip-permissions'
   assert.deepEqual(plan('antigravity', []), { args: [skip], warnings: [] })
   assert.deepEqual(plan('antigravity', [skip]).args, [skip])
-  assert.deepEqual(plan('antigravity', ['--allow-dangerously-skip-permissions', skip, 'x']).args, [skip, '-i', 'x'])
+  assert.deepEqual(plan('antigravity', ['--allow-dangerously-skip-permissions', skip, 'x']).args, [skip, '--prompt-interactive=x'])
   assert.deepEqual(plan('antigravity', ['-c']).args, [skip, '-c'])
-  assert.deepEqual(plan('antigravity', ['--continue', 'sigue']).args, [skip, '-c', '-i', 'sigue'])
+  assert.deepEqual(plan('antigravity', ['--continue', 'sigue']).args, [skip, '-c', '--prompt-interactive=sigue'])
   assert.deepEqual(plan('antigravity', ['--resume', 'abc']).args, [skip, '--conversation', 'abc'])
   assert.deepEqual(plan('antigravity', ['-r']).args, [skip, '-c'])
-  assert.deepEqual(plan('antigravity', ['arregla', 'el', 'bug']).args, [skip, '-i', 'arregla el bug'])
-  assert.deepEqual(plan('antigravity', ['--model', 'gemini-3.8-flash-high', '--mode=plan', 'x']).args, [skip, '--model=gemini-3.8-flash-high', '--mode=plan', '-i', 'x'])
+  assert.deepEqual(plan('antigravity', ['arregla', 'el', 'bug']).args, [skip, '--prompt-interactive=arregla el bug'])
+  assert.deepEqual(plan('antigravity', ['--model', 'gemini-3.8-flash-high', '--mode=plan', 'x']).args, [skip, '--model=gemini-3.8-flash-high', '--mode=plan', '--prompt-interactive=x'])
   assert.deepEqual(plan('antigravity', ['--permission-mode', 'plan']).warnings, ['bita: Antigravity has no equivalent for --permission-mode; dropped.'])
+})
+
+test('a prompt that looks like a flag or a subcommand always reaches the agent as text', async () => {
+  const { withPrompt } = await import('../src/cli/commands/session-launch.ts')
+  const hostile = ['-x', '--x', '--dangerously-bypass-approvals-and-sandbox', 'resume', 'exec']
+  const expected: Record<HarnessId, (text: string) => string[]> = {
+    claude: (text) => ['--', text],
+    codex: (text) => ['--', text],
+    opencode: (text) => [`--prompt=${text}`],
+    gemini: (text) => [`--prompt-interactive=${text}`],
+    antigravity: (text) => [`--prompt-interactive=${text}`],
+  }
+  for (const adapter of listAdapters()) {
+    const tail = expected[adapter.id]
+    for (const text of hostile) {
+      for (const resume of [[], ['-c'], ['-r', 'abc']]) {
+        const args = adapter.launchArgs(withPrompt(resume, text)).args
+        const want = tail(text)
+        assert.deepEqual(args.slice(-want.length), want, `${adapter.id} ${resume.join(' ')} ${text}`)
+        assert.deepEqual(args.slice(0, -want.length), adapter.launchArgs(resume).args, `${adapter.id} ${resume.join(' ')} ${text}`)
+      }
+    }
+  }
 })
