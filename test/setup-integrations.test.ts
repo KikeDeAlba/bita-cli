@@ -10,6 +10,8 @@ import { CAPABILITIES } from '../src/kit/manifest.ts'
 import { VERSION } from '../src/cli/router.ts'
 
 const repo = join(import.meta.dirname, '..')
+const DEN_CODEX = '[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook codex'
+const DEN_GEMINI = '[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook gemini'
 const bin = join(repo, 'src', 'bin', 'bita.ts')
 
 interface Sandbox {
@@ -187,6 +189,8 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     assert.equal(codexHooks.hooks['UserPromptSubmit'], undefined)
     assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
     assert.match(codexHooks.hooks['PostToolUse']?.[0]?.matcher ?? '', /apply_patch/)
+    assert.deepEqual(codexHooks.hooks['PreToolUse'], [{ hooks: [{ type: 'command', command: DEN_CODEX, timeout: 10 }] }])
+    assert.deepEqual(codexHooks.hooks['PostToolUse']?.[1], { hooks: [{ type: 'command', command: DEN_CODEX, timeout: 10 }] })
     assert.ok(existsSync(join(box.codex, 'prompts', 'bita-start.md')))
     assert.equal(existsSync(join(box.codex, 'config.toml')), false)
 
@@ -199,6 +203,10 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
     assert.equal(geminiHooks.hooks['SessionStart']?.[0]?.hooks[0]?.command, 'bita hook gemini')
     assert.equal(geminiHooks.hooks['SessionEnd']?.[0]?.hooks[0]?.command, 'bita hook gemini')
     assert.equal(geminiHooks.hooks['BeforeAgent'], undefined)
+    assert.equal(geminiHooks.hooks['BeforeTool']?.[0]?.matcher, undefined)
+    assert.equal(geminiHooks.hooks['BeforeTool']?.[0]?.hooks[0]?.command, DEN_GEMINI)
+    assert.equal(geminiHooks.hooks['AfterTool']?.[1]?.matcher, undefined)
+    assert.equal(geminiHooks.hooks['AfterTool']?.[1]?.hooks[0]?.command, DEN_GEMINI)
     const geminiManifest = readJson(join(extension, 'gemini-extension.json'))
     assert.equal(geminiManifest['mcpServers'], undefined)
   } finally {
@@ -311,7 +319,7 @@ test('setup narrows an older catch-all Codex PostToolUse hook to the edit tools'
     )
     setup(box, '--target', 'codex')
     const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string }>> }
-    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 2)
     assert.notEqual(codexHooks.hooks['PostToolUse']?.[0]?.matcher, '.*')
   } finally {
     rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
@@ -341,7 +349,7 @@ test('setup drops the old Codex UserPromptSubmit hook and keeps the user ones', 
     assert.deepEqual(prompt, ['echo mine'])
     assert.equal(codexHooks.hooks['SessionStart']?.length, 1)
     assert.equal(codexHooks.hooks['SessionEnd']?.length, 1)
-    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 2)
   } finally {
     rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
@@ -360,7 +368,8 @@ test('running setup twice keeps the settings and hooks without duplicates', () =
     const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
     assert.equal(codexHooks.hooks['Stop']?.[0]?.hooks[0]?.command, 'echo keep')
     assert.equal(codexHooks.hooks['SessionStart']?.length, 1)
-    assert.equal(codexHooks.hooks['PostToolUse']?.length, 1)
+    assert.equal(codexHooks.hooks['PostToolUse']?.length, 2)
+    assert.equal(codexHooks.hooks['PreToolUse']?.length, 1)
     const settings = readJson(join(box.claude, 'settings.json')) as { permissions: { allow: string[] }; hooks?: Record<string, unknown[]> }
     assert.equal(settings.permissions.allow.filter((rule) => rule === 'Bash(bita start:*)').length, 1)
     assert.equal(settings.hooks, undefined)
@@ -532,5 +541,43 @@ test('the main skill is a short user reference the model never invokes and never
   }
   for (const dir of ['bita', 'bita-start', 'bita-stop', 'bita-log', 'bita-amend', 'bita-timers', 'bita-init']) {
     assert.doesNotMatch(readFileSync(join(repo, 'skills', dir, 'SKILL.md'), 'utf8'), /rovo/i)
+  }
+})
+
+test('setup adds the Den tool hooks to Codex next to the user ones, once, and the stale cleanup puts them back once', () => {
+  const box = sandbox()
+  try {
+    mkdirSync(box.codex, { recursive: true })
+    const mine = { matcher: 'shell', hooks: [{ type: 'command', command: 'echo pre' }] }
+    writeFileSync(
+      join(box.codex, 'hooks.json'),
+      JSON.stringify({ hooks: { PreToolUse: [mine], PostToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: 'bita hook codex', timeout: 10 }] }] } }),
+    )
+    setup(box, '--target', 'codex')
+    setup(box, '--target', 'codex')
+    const codexHooks = readJson(join(box.codex, 'hooks.json')) as { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> }
+    assert.deepEqual(codexHooks.hooks['PreToolUse']?.[0], mine)
+    const commands = (event: string): string[] => (codexHooks.hooks[event] ?? []).flatMap((group) => group.hooks.map((hook) => hook.command))
+    assert.deepEqual(commands('PreToolUse'), ['echo pre', DEN_CODEX])
+    assert.deepEqual(commands('PostToolUse'), ['bita hook codex', DEN_CODEX])
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+  }
+})
+
+test('the Den hook does nothing without DEN_AGENT_HOOK and calls it with --agent-hook when set', { skip: process.platform === 'win32' }, () => {
+  const box = sandbox()
+  try {
+    const silent = spawnSync('/bin/sh', ['-c', DEN_CODEX], { env: { PATH: '/usr/bin:/bin' }, input: '{}', encoding: 'utf8' })
+    assert.equal(silent.status, 0)
+    assert.equal(silent.stdout, '')
+    const fake = join(box.root, 'den-hook')
+    writeFileSync(fake, '#!/bin/sh\necho "$@"\n')
+    chmodSync(fake, 0o755)
+    const called = spawnSync('/bin/sh', ['-c', DEN_GEMINI], { env: { PATH: '/usr/bin:/bin', DEN_AGENT_HOOK: fake }, input: '{}', encoding: 'utf8' })
+    assert.equal(called.status, 0)
+    assert.equal(called.stdout.trim(), '--agent-hook gemini')
+  } finally {
+    rmSync(box.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
