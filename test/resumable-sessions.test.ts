@@ -10,7 +10,7 @@ import type { HarnessId } from '../src/harness/types.ts'
 const { openDatabase } = await import('../src/db/open.ts')
 const { insertProject } = await import('../src/db/projects.ts')
 const { insertEntry } = await import('../src/db/entries.ts')
-const { findResumableByEntry, insertEntrySession, linkSession, listResumableSessions, markSessionEnded } = await import('../src/db/sessions.ts')
+const { findResumableByEntry, findResumableByRow, insertEntrySession, listSessions, linkSession, listResumableSessions, markSessionEnded } = await import('../src/db/sessions.ts')
 
 const root = mkdtempSync(join(tmpdir(), 'bita-resumable-'))
 test.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))
@@ -156,5 +156,20 @@ test('findResumableByEntry returns the row of that entry even when a later resum
   const original = add({ sessionId: 'dup', startedAt: '2026-09-10T10:00:00Z', description: 'original' })
   add({ sessionId: 'dup', startedAt: '2026-09-11T10:00:00Z', description: 'later' })
   assert.equal(findResumableByEntry(db, original.entryId)?.description, 'original')
+  db.close()
+})
+
+test('findResumableByRow only resumes a row that sessions ls marks resumable', () => {
+  const { db, add } = setup()
+  const older = add({ sessionId: 'dup', startedAt: '2026-09-10T10:00:00Z' })
+  const latest = add({ sessionId: 'dup', startedAt: '2026-09-11T10:00:00Z' })
+  const running = add({ sessionId: 'run', startedAt: '2026-09-12T10:00:00Z', ended: false })
+  const unlinked = add({ sessionId: null, startedAt: '2026-09-13T10:00:00Z' })
+  const listed = new Map(listSessions(db, { cwd: null, open: false, harness: null, limit: 50 }).map((row) => [row.id, row.resumable]))
+  for (const row of [older, latest, running, unlinked]) {
+    assert.equal(findResumableByRow(db, row.rowId) !== undefined, listed.get(row.rowId), `row ${row.rowId}`)
+  }
+  assert.equal(findResumableByRow(db, older.rowId), undefined)
+  assert.equal(findResumableByRow(db, latest.rowId)?.entryId, latest.entryId)
   db.close()
 })

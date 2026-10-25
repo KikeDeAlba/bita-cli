@@ -274,7 +274,7 @@ export function listResumableSessions(db: DatabaseSync, cwd: string, limit = 50)
 
 export function findResumableByRow(db: DatabaseSync, rowId: number): ResumableSession | undefined {
   const raw = queryOne<RawResumableSession>(
-    db.prepare(`${RESUMABLE_SELECT} WHERE s.id = ? AND s.session_id IS NOT NULL AND s.ended_at IS NOT NULL`),
+    db.prepare(`${RESUMABLE_SELECT} WHERE s.id = ? AND ${LATEST_RESUMABLE}`),
     rowId,
   )
   return raw ? toResumable(raw) : undefined
