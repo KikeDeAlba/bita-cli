@@ -90,11 +90,18 @@ Sessions:
   work --resume [ENTRY_ID] [--harness ID] [--project ID|NAME|0] [-- ARGS...]
                              Pick a finished session of this directory (or the one of ENTRY_ID)
                              and reopen it in its harness, with a new entry on its project
+  work --resume --session ID Reopen that session (its id in sessions ls, or the harness session id)
+                             without asking, even without a terminal
+  work --prompt "<text>"     Hand the agent its first message, in the form each harness expects
+  sessions [ls]              Agent sessions of this directory, newest first (--open, --cwd DIR,
+                             --all, --harness ID, --limit N, --json)
+  sessions dirs              Directories with sessions, most recently used first (--limit N, --json)
   session [-- ARGS...]       Alias of work
   session finalize <id>      Fill and stop the entry of a finished session (run by the hooks)
 
 Integration:
-  setup                      Register bita and install the integration for Claude Code, OpenCode, Codex, Gemini CLI and Antigravity
+  setup                      Register bita and install the integration for Claude Code, OpenCode, Codex, Gemini CLI and Antigravity;
+                             for Codex and Gemini it also adds the Den tool hook, which does nothing outside Den
   capabilities               What this bita offers to the other tools (--json)
   doctor                     Which sibling tools (inkwell, tally, atl, recap) kit found
   hooks [list]               Commands run on start, stop, cancel, amend, delete and merge, plus the installed tools subscribed to them
@@ -117,7 +124,8 @@ Common options:
 
 Timer options:
   --project ID|NAME          Project; otherwise inferred from the repository
-  --kind KIND                With start or log, the kind of work (remote-meeting, in-person-meeting, ...)
+  --kind KIND                With start or log, the kind of work (meeting, ...); meeting is the one
+                             kind for meetings, remote-meeting and in-person-meeting still count as one
   --jira | --no-jira         With start, ask tally to open (or never open) the Jira card of the timer
   --at HH:MM                 Start or stop at this time instead of now
   --all                      stop or cancel every running timer
@@ -160,6 +168,8 @@ Hooks options:
 Work options:
   --harness ID               claude, opencode, codex, gemini or antigravity, instead of asking
   --project ID|NAME|0        Project of the timer, instead of asking; 0 launches without a timer
+  --prompt "<text>"          First message for the agent; with --harness and --project it needs no terminal
+  --session ID               With --resume, the session to reopen: the id of sessions ls or the harness session id
   -- ARGS                    Arguments for the agent; Claude flags are translated for the others
 
 Setup options:

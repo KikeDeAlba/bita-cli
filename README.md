@@ -79,7 +79,9 @@ bita setup
 1. **Registra bita** en el registro de kit
    (`~/.config/kikedealba/tools.d/bita.json`, o `KIT_REGISTRY_DIR`), con la
    línea de comando absoluta, sus capacidades (`time.entries.read`,
-   `time.entries.write`, `time.events`, `time.report.read`) y los eventos que emite (`start`,
+   `time.entries.write`, `time.events`, `time.report.read`, `sessions.list`,
+   `sessions.dirs`, `work.resume.session`, `work.prompt`, `timer.kind.meeting`,
+   `setup.den-agent-hooks`) y los eventos que emite (`start`,
    `stop`, `cancel`, `amend`, `delete`, `merge`). Así lo encuentran recap,
    inkwell, tally y Den sin depender del `PATH`. `--no-register` se lo salta.
 2. **Instala la integración** con los agentes de código que encuentre: Claude
@@ -95,9 +97,22 @@ bita setup --target all
 |---|---|
 | Claude Code | El plugin `bita` del marketplace `bita` (este repositorio): skill, skills de usuario y hooks. En `settings.json` solo quedan los permisos de `bita` |
 | OpenCode | `~/.config/opencode/skills/bita`, `commands` y `plugins/bita.*` |
-| Codex | `~/.agents/skills/bita`, `~/.codex/prompts` y `~/.codex/hooks.json` (el `PostToolUse` solo para las herramientas que editan) |
-| Gemini CLI | La extensión `~/.gemini/extensions/bita`: skill, comandos y hooks (`bita hook gemini`) |
+| Codex | `~/.agents/skills/bita`, `~/.codex/prompts` y `~/.codex/hooks.json` (el `PostToolUse` de bita solo para las herramientas que editan, más el hook de Den en `PreToolUse` y `PostToolUse`) |
+| Gemini CLI | La extensión `~/.gemini/extensions/bita`: skill, comandos y hooks (`bita hook gemini`, más el hook de Den en `BeforeTool` y `AfterTool`) |
 | Antigravity CLI | Un plugin de `agy` con la skill y una regla `always_on` corta (`rules/antigravity.md`). `agy` no admite hooks: la sesión la liga `bita work` al salir, con `~/.gemini/antigravity-cli/history.jsonl` |
+
+**El hook de Den.** Para Codex y Gemini, `setup` agrega además un hook de
+herramientas que no hace nada fuera de Den:
+
+```sh
+[ -z "$DEN_AGENT_HOOK" ] || "$DEN_AGENT_HOOK" --agent-hook codex   # o gemini
+```
+
+Den define `DEN_AGENT_HOOK` solo en los agentes que lanza, así que en una
+terminal normal el hook sale al instante sin hacer nada. En Codex se mezcla en
+`~/.codex/hooks.json` sin tocar tus hooks y sin duplicarse al repetir `setup`;
+en Gemini vive en la extensión de bita, que `setup` reescribe completa. Lo
+quita o lo actualiza `setup`, como el resto de los hooks de bita.
 
 ### El plugin de Claude Code
 
@@ -330,6 +345,8 @@ bita work -- "arregla el pipeline"   # lo que va tras -- es para el agente
 bita work --harness codex --project Apartados -- "arregla el pipeline"
 bita work --resume                   # selector de sesiones terminadas en este directorio
 bita work --resume 123 -- "sigue con los tests"   # reanuda la sesión de la entrada #123
+bita work --resume --session 42      # reanuda la sesión 42 de bita sessions ls, sin preguntar
+bita work --harness gemini --project Apartados --prompt "arregla el pipeline"   # sin terminal
 ```
 
 1. **Agente.** Si hay más de uno instalado (Claude, OpenCode, Codex, Gemini,
@@ -366,6 +383,49 @@ que usar sin terminal.
   Gemini solo encuentran sus sesiones ahí.
 - Lo que va tras `--` es para el agente (por ejemplo, un prompt). Pasar tú
   `--resume` o `--continue` ahí es un error.
+- `--session ID` elige la sesión sin selector y sin terminal. `ID` es el `id`
+  de `bita sessions ls` o el id de la sesión del agente (`sessionId`); con este
+  último se toma su fila terminada más reciente. Va siempre con `--resume` y no
+  se combina con `ENTRY_ID`.
+
+### El primer mensaje
+
+`--prompt "<texto>"` le pasa al agente su primer mensaje, en la forma que cada
+uno espera (la columna Prompt de la tabla de abajo). Equivale a ponerlo tras
+`--`, así que no se pueden usar los dos. Con `--harness` y `--project` no
+necesita terminal, y también vale con `--resume`. Si el texto empieza con `-`,
+escríbelo como `--prompt=-texto`.
+
+### Listar sesiones
+
+```sh
+bita sessions                        # las de este directorio (igual que bita sessions ls)
+bita sessions ls --open --all --json # las abiertas en cualquier directorio
+bita sessions ls --cwd ~/dev/api --harness codex --limit 10
+bita sessions dirs --json            # directorios con sesiones, el más reciente primero
+```
+
+`bita sessions ls` filtra por el directorio actual, como el selector de
+`--resume`. `--cwd DIR` mira otro y `--all` quita el filtro (no se combinan).
+`--open` deja solo las que siguen abiertas, `--harness` filtra por agente y
+`--limit` corta la lista (50 por defecto). Con `--json`, `data` es:
+
+```json
+[{ "id": 42, "entryId": 812, "harness": "claude", "sessionId": "…", "wrapperPid": 51234,
+   "cwd": "/Users/ana/dev/api", "transcriptPath": null, "startedAt": "…", "endedAt": null,
+   "open": true, "resumable": false,
+   "entry": { "description": "…", "projectId": 3, "projectName": "API" } }]
+```
+
+- `wrapperPid` es el pid del proceso `bita work` que lanzó al agente; Den une
+  sus terminales con las sesiones de bita por ese número.
+- `resumable` es `true` en la última fila terminada de cada sesión del agente,
+  la que ofrece el selector de `--resume`.
+
+`bita sessions dirs [--limit 20]` devuelve
+`[{ cwd, lastUsedAt, sessions, projectId, projectName }]`: un directorio por
+fila, con la hora del último uso, cuántas sesiones tuvo y el proyecto de su
+sesión más reciente que tenga uno.
 
 ### Flags por agente
 
@@ -472,6 +532,7 @@ otra), `busy` (otro proceso la tiene), `already-finalized` o `not-found`.
 ```sh
 bita session finalize <id> --json   # status: summarized, o fallback con el motivo en error
 tail hooks.log                      # junto a la base de datos: una línea por paso del cierre
+BITA_DB_PATH=/tmp/copia.db bita sessions ls --all --json   # contra una copia, nunca la base real
 pnpm test
 ```
 
@@ -480,12 +541,16 @@ pnpm test
 Una entrada puede llevar un **tipo** (`kind`), texto libre en minúsculas con
 guiones. bita no le da significado; sirve para que otras herramientas reaccionen.
 [recap](https://github.com/KikeDeAlba/recap) graba la reunión mientras corre el
-contador:
+contador.
+
+Las reuniones usan un solo tipo, `meeting`, sea en línea o presencial.
+`remote-meeting` e `in-person-meeting` siguen valiendo y cuentan como reunión,
+así que el historial no cambia. Quien filtre reuniones debe aceptar los tres:
+`meeting`, `remote-meeting` e `in-person-meeting`.
 
 ```sh
-bita start "Planeación sprint 42" --kind remote-meeting
-bita start "1:1 con Ana" --kind in-person-meeting
-bita amend 812 --kind remote-meeting     # a uno que ya corre
+bita start "Planeación sprint 42" --kind meeting
+bita amend 812 --kind meeting            # a uno que ya corre
 bita amend 812 --kind none               # quitarlo
 ```
 
@@ -501,7 +566,7 @@ cancela (`cancel`), cambia de título, proyecto o tipo (`amend`), se borra
 - **Hooks manuales** en `~/.config/bita/config.json`:
 
 ```sh
-bita hooks add --on start,stop --kind remote-meeting -- /ruta/absoluta/comando
+bita hooks add --on start,stop --kind meeting,remote-meeting,in-person-meeting -- /ruta/absoluta/comando
 bita hooks             # los manuales y los suscriptores del registro
 bita hooks remove 1
 ```
@@ -529,6 +594,8 @@ bita hooks remove 1
 
 ```sh
 bita capabilities --json       # nombre, versión, sobre, capacidades y eventos
+bita sessions ls --open --all --json   # sesiones de agentes abiertas, con wrapperPid
+bita sessions dirs --json      # directorios con sesiones, el más reciente primero
 bita entries --json            # entradas de un rango, con sus segmentos
 bita entries get <id> --json   # { id, description, kind, projectId, projectName, startedAt, stoppedAt, durationSeconds, mergedInto, jiraIssue, segments, touched }
 bita repo which --json         # { slug, projectId, projectName } del repo actual, o null si no tiene proyecto
