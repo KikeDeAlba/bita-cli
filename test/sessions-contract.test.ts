@@ -1,5 +1,6 @@
 import './helpers/isolate.ts'
 import { strict as assert } from 'node:assert'
+import { spawnSync } from 'node:child_process'
 import { symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -103,12 +104,12 @@ test('sessions ls combines --open, --cwd, --harness and --limit', () => {
   try {
     const a = box.dir('combo-a')
     const b = box.dir('combo-b')
-    const oldA = box.add({ cwd: a, harness: 'codex', ended: false, sessionId: null, startedAt: '2026-09-10T10:00:00Z' })
-    const midA = box.add({ cwd: a, harness: 'codex', ended: false, sessionId: null, startedAt: '2026-09-11T10:00:00Z' })
-    const newA = box.add({ cwd: a, harness: 'codex', ended: false, sessionId: null, startedAt: '2026-09-12T10:00:00Z' })
-    const claudeA = box.add({ cwd: a, harness: 'claude', ended: false, sessionId: null, startedAt: '2026-09-13T10:00:00Z' })
-    const doneA = box.add({ cwd: a, harness: 'codex', startedAt: '2026-09-14T10:00:00Z' })
-    const openB = box.add({ cwd: b, harness: 'codex', ended: false, sessionId: null, startedAt: '2026-09-15T10:00:00Z' })
+    const oldA = box.add({ cwd: a, harness: 'codex', ended: false, sessionId: null, wrapperPid: process.pid, startedAt: '2099-09-10T10:00:00Z' })
+    const midA = box.add({ cwd: a, harness: 'codex', ended: false, sessionId: null, wrapperPid: process.pid, startedAt: '2099-09-11T10:00:00Z' })
+    const newA = box.add({ cwd: a, harness: 'codex', ended: false, sessionId: null, wrapperPid: process.pid, startedAt: '2099-09-12T10:00:00Z' })
+    const claudeA = box.add({ cwd: a, harness: 'claude', ended: false, sessionId: null, wrapperPid: process.pid, startedAt: '2099-09-13T10:00:00Z' })
+    const doneA = box.add({ cwd: a, harness: 'codex', startedAt: '2099-09-14T10:00:00Z' })
+    const openB = box.add({ cwd: b, harness: 'codex', ended: false, sessionId: null, wrapperPid: process.pid, startedAt: '2099-09-15T10:00:00Z' })
     const ls = (...args: string[]) => runBita(box, a, ['sessions', 'ls', ...args, '--json'])
 
     assert.deepEqual(ids(ls('--open', '--cwd', a, '--harness', 'codex')), [newA.rowId, midA.rowId, oldA.rowId])
@@ -188,6 +189,26 @@ test('sessions ls keeps the envelope of a failure when the harness is unknown', 
     assert.equal(run.status, 2)
     assert.equal(run.json['ok'], false)
     assert.match(String((run.json['error'] as Row)['message']), /Unknown harness "nope"/)
+  } finally {
+    box.cleanup()
+  }
+})
+
+test('sessions ls --open closes orphaned sessions first and lists only live ones', () => {
+  const box = seededDb()
+  try {
+    const here = box.dir('orphans')
+    const gone = spawnSync(process.execPath, ['-e', '']).pid as number
+    const orphan = box.add({ cwd: here, ended: false, sessionId: null, wrapperPid: gone, startedAt: '2026-09-10T10:00:00Z' })
+    const live = box.add({ cwd: here, ended: false, sessionId: null, wrapperPid: process.pid, startedAt: '2099-09-10T10:00:00Z' })
+    const open = runBita(box, here, ['sessions', 'ls', '--open', '--json'])
+    assert.equal(open.status, 0, open.stderr)
+    assert.deepEqual(ids(open), [live.rowId])
+    const all = runBita(box, here, ['sessions', 'ls', '--json'])
+    const rows = all.json['data'] as Array<{ id: number; open: boolean; endedAt: string | null }>
+    const swept = rows.find((row) => row.id === orphan.rowId)
+    assert.equal(swept?.open, false)
+    assert.notEqual(swept?.endedAt, null)
   } finally {
     box.cleanup()
   }

@@ -2,11 +2,13 @@ import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { UsageError } from '../../errors.ts'
 import { BASE_OPTIONS, parseCommandArgs, readBoolean, readInteger, readString, type ParsedArgs } from '../args.ts'
-import { withLocalContext } from '../local-context.ts'
-import { successEnvelope, writeJson, writeOut } from '../output.ts'
+import { createLocalContext, withLocalContext } from '../local-context.ts'
+import { successEnvelope, writeErr, writeJson, writeOut } from '../output.ts'
 import { renderTable } from '../table.ts'
 import { listSessionDirectories, listSessions, type SessionListing } from '../../db/sessions.ts'
+import { sweepOrphans } from '../../domain/session.ts'
 import { toLocalIso } from '../../domain/timezone.ts'
+import { errorMessage } from '../../harness/process.ts'
 import { isHarnessId } from '../../harness/registry.ts'
 import { HARNESS_IDS, type HarnessId } from '../../harness/types.ts'
 
@@ -60,11 +62,19 @@ function state(session: SessionListing): string {
   return session.resumable ? 'resumable' : 'ended'
 }
 
-function runList(argv: string[], cwd: string): number {
+async function runList(argv: string[], cwd: string): Promise<number> {
   const args = parseCommandArgs(argv, LS_OPTIONS, BASE_OPTIONS)
   if (args.positionals.length > 0) throw new UsageError(USAGE)
   const filter = { cwd: readCwdFilter(args, cwd), open: readBoolean(args, 'open'), harness: readHarness(args), limit: readLimit(args, 50) }
-  return withLocalContext(args, (ctx) => {
+  const ctx = createLocalContext(args)
+  try {
+    if (filter.open) {
+      try {
+        await sweepOrphans(ctx)
+      } catch (error) {
+        writeErr(`bita: could not close orphan sessions: ${errorMessage(error)}`)
+      }
+    }
     const sessions = listSessions(ctx.db, filter)
     if (readBoolean(args, 'json')) {
       writeJson(successEnvelope('sessions ls', sessions))
@@ -89,7 +99,9 @@ function runList(argv: string[], cwd: string): number {
       ),
     )
     return 0
-  })
+  } finally {
+    ctx.db.close()
+  }
 }
 
 function runDirs(argv: string[]): number {
@@ -122,7 +134,7 @@ function runDirs(argv: string[]): number {
   })
 }
 
-export function runSessions(argv: string[], cwd: string = process.cwd()): number {
+export function runSessions(argv: string[], cwd: string = process.cwd()): number | Promise<number> {
   const [subcommand = 'ls', ...rest] = argv
   if (subcommand === 'ls' || subcommand === 'list') return runList(rest, cwd)
   if (subcommand === 'dirs') return runDirs(rest)
