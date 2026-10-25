@@ -134,8 +134,9 @@ test('bita hook den kills a Den that hangs past its limit, exits 0 and logs it',
     assert.equal(run.status, 0, run.stderr)
     assert.equal(run.stdout, '')
     assert.ok(Date.now() - started < 10000)
-    assert.match(hooksLog(root), /hook den codex: Den did not answer within 500 ms; killed it/)
-    const pid = Number(readFileSync(pidFile, 'utf8'))
+    const logged = /hook den codex: Den did not answer within 500 ms; killed it \(pid (\d+)\)/.exec(hooksLog(root))
+    assert.ok(logged, hooksLog(root))
+    const pid = Number(logged[1])
     assert.ok(await waitFor(() => !alive(pid)), `Den ${pid} is still running`)
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
