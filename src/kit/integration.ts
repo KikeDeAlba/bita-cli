@@ -34,6 +34,7 @@ export const CLAUDE_ALLOW = [
   'Bash(bita scope which:*)',
   'Bash(bita capabilities:*)',
   'Bash(bita doctor:*)',
+  'Bash(bita sessions:*)',
   'Bash(bita --version)',
 ]
 

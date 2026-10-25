@@ -181,7 +181,11 @@ las de usuario. Para OpenCode, Codex y Gemini CLI, kit convierte las de usuario
 en sus comandos y prompts. **Después de actualizar bita, vuelve a correr `bita
 setup`** para que los agentes lean lo nuevo.
 
-`--no-settings` omite los permisos de Claude y no toca su `settings.json`.
+Los permisos que agrega a Claude Code dejan correr sin preguntar los comandos
+de lectura y de cronómetro de bita (`bita entries`, `bita sessions`, `bita
+current`, `bita start`, `bita stop`, entre otros); `bita cancel` siempre
+pregunta. `--no-settings` omite los permisos de Claude y no toca su
+`settings.json`.
 `--no-atlassian`, `--no-docs-git`, `--no-drawio` y `--no-recap` se aceptan y se
 ignoran con un aviso.
 

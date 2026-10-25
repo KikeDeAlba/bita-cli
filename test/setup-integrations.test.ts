@@ -169,6 +169,7 @@ test('setup installs the Claude Code plugin and the skill, commands and hooks in
       hooks?: Record<string, unknown>
     }
     assert.ok(settings.permissions.allow.includes('Bash(bita start:*)'))
+    assert.ok(settings.permissions.allow.includes('Bash(bita sessions:*)'))
     assert.ok(settings.permissions.ask.includes('Bash(bita cancel:*)'))
     assert.equal(settings.hooks, undefined)
 
