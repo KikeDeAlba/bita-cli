@@ -49,14 +49,14 @@ const UNVERIFIABLE_WRAPPER_MS = 24 * 60 * 60_000
 export interface WrapperEnv {
   wrapperId: string
   harness: HarnessId
-  projectId: number
+  projectId: number | null
 }
 
 export interface StartSessionInput {
   wrapperId: string
   wrapperPid: number
   harness: HarnessId
-  projectId: number
+  projectId: number | null
   cwd: string
   sessionId?: string | null
   transcriptPath?: string | null
@@ -79,7 +79,7 @@ export interface SessionStartInput {
 
 export interface SessionStartResult {
   action: 'linked' | 'rotated' | 'same' | 'ignored'
-  entryId?: number
+  entryId?: number | null
   endedEntryIds: number[]
 }
 
@@ -105,7 +105,9 @@ export function wrapperEnv(env: NodeJS.ProcessEnv = process.env): WrapperEnv | n
   if (!wrapperId) return null
   const harness = env[HARNESS_ENV]
   if (!isHarnessId(harness)) return null
-  const projectId = Number(env[SESSION_PROJECT_ENV])
+  const raw = env[SESSION_PROJECT_ENV]
+  if (raw === '0') return { wrapperId, harness, projectId: null }
+  const projectId = Number(raw)
   if (!Number.isInteger(projectId) || projectId <= 0) return null
   return { wrapperId, harness, projectId }
 }
@@ -129,16 +131,24 @@ function immediate<T>(db: DatabaseSync, run: () => T): T {
   }
 }
 
-function insertSessionEntry(db: DatabaseSync, input: StartSessionInput, nowIso: string): { entryId: number; rowId: number } {
-  const entry = insertEntry(db, {
-    description: '',
-    projectId: input.projectId,
-    startedAt: nowIso,
-    source: 'session',
-    now: nowIso,
-  })
+export interface StartedSession {
+  entryId: number | null
+  rowId: number
+}
+
+function insertSessionEntry(db: DatabaseSync, input: StartSessionInput, nowIso: string): StartedSession {
+  const entryId =
+    input.projectId === null
+      ? null
+      : insertEntry(db, {
+          description: '',
+          projectId: input.projectId,
+          startedAt: nowIso,
+          source: 'session',
+          now: nowIso,
+        }).id
   const row = insertEntrySession(db, {
-    entryId: entry.id,
+    entryId,
     wrapperId: input.wrapperId,
     wrapperPid: input.wrapperPid,
     harness: input.harness,
@@ -147,7 +157,7 @@ function insertSessionEntry(db: DatabaseSync, input: StartSessionInput, nowIso: 
     cwd: input.cwd,
     startedAt: nowIso,
   })
-  return { entryId: entry.id, rowId: row.id }
+  return { entryId, rowId: row.id }
 }
 
 async function emitStart(ctx: LocalContext, entryId: number): Promise<void> {
@@ -157,13 +167,16 @@ async function emitStart(ctx: LocalContext, entryId: number): Promise<void> {
   await emitHooks(ctx, [payload])
 }
 
-export async function startSessionEntry(ctx: LocalContext, input: StartSessionInput): Promise<{ entryId: number; rowId: number }> {
+export async function startSessionEntry(ctx: LocalContext, input: StartSessionInput & { projectId: number }): Promise<StartedSession & { entryId: number }>
+export async function startSessionEntry(ctx: LocalContext, input: StartSessionInput): Promise<StartedSession>
+export async function startSessionEntry(ctx: LocalContext, input: StartSessionInput): Promise<StartedSession> {
   const created = immediate(ctx.db, () => insertSessionEntry(ctx.db, input, new Date().toISOString()))
-  await emitStart(ctx, created.entryId)
+  if (created.entryId !== null) await emitStart(ctx, created.entryId)
   return created
 }
 
-function launch(ctx: LocalContext, deps: SessionDeps, entryId: number, cwd: string): void {
+function launch(ctx: LocalContext, deps: SessionDeps, entryId: number | null, cwd: string): void {
+  if (entryId === null) return
   const spawner = deps.spawnFinalize ?? spawnFinalize
   spawner(entryId, { cwd, databasePath: ctx.databasePath })
 }
@@ -177,7 +190,7 @@ export async function handleSessionStart(
   if (input.harness !== env.harness || input.source === 'compact') return { action: 'ignored', endedEntryIds: [] }
 
   const nowIso = new Date().toISOString()
-  const outcome = immediate(ctx.db, (): SessionStartResult & { ended: { entryId: number; cwd: string }[] } => {
+  const outcome = immediate(ctx.db, (): SessionStartResult & { ended: { entryId: number | null; cwd: string }[] } => {
     const open = findOpenByWrapper(ctx.db, env.wrapperId)
 
     const same = open.find((row) => row.sessionId === input.sessionId)
@@ -213,13 +226,13 @@ export async function handleSessionStart(
     return {
       action: 'rotated',
       entryId: created.entryId,
-      endedEntryIds: endedRows.map((row) => row.entryId),
+      endedEntryIds: endedRows.flatMap((row) => (row.entryId === null ? [] : [row.entryId])),
       ended: endedRows,
     }
   })
 
   for (const row of outcome.ended) launch(ctx, deps, row.entryId, row.cwd)
-  if (outcome.action === 'rotated' && outcome.entryId !== undefined) await emitStart(ctx, outcome.entryId)
+  if (outcome.action === 'rotated' && outcome.entryId !== undefined && outcome.entryId !== null) await emitStart(ctx, outcome.entryId)
 
   return {
     action: outcome.action,
@@ -254,7 +267,7 @@ export async function closeWrapper(ctx: LocalContext, wrapperId: string, deps: S
     return findUnfinalizedByWrapper(ctx.db, wrapperId)
   })
   for (const row of pending) launch(ctx, deps, row.entryId, row.cwd)
-  return pending.map((row) => row.entryId)
+  return pending.flatMap((row) => (row.entryId === null ? [] : [row.entryId]))
 }
 
 export function attachExitSession(ctx: LocalContext, wrapperId: string, session: { sessionId: string; transcriptPath: string | null }): boolean {
@@ -320,13 +333,13 @@ export function wrapperAlive(
   return started <= since + PROCESS_START_SLACK_MS
 }
 
-function orphanEnd(db: DatabaseSync, row: { entryId: number; transcriptPath: string | null }, nowIso: string): string {
+function orphanEnd(db: DatabaseSync, row: { entryId: number | null; transcriptPath: string | null }, nowIso: string): string {
   if (row.transcriptPath) {
     try {
       return statSync(row.transcriptPath).mtime.toISOString()
     } catch {}
   }
-  return lastTouchAt(db, row.entryId) ?? nowIso
+  return (row.entryId === null ? null : lastTouchAt(db, row.entryId)) ?? nowIso
 }
 
 export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): Promise<number[]> {
@@ -342,7 +355,7 @@ export async function sweepOrphans(ctx: LocalContext, deps: SessionDeps = {}): P
       new Date(now - STALE_CLAIM_MS).toISOString(),
     )
     const byEntry = new Map<number, string>()
-    for (const row of [...orphans, ...stale]) byEntry.set(row.entryId, row.cwd)
+    for (const row of [...orphans, ...stale]) if (row.entryId !== null) byEntry.set(row.entryId, row.cwd)
     return [...byEntry.entries()]
   })
   for (const [entryId, cwd] of pending) launch(ctx, deps, entryId, cwd)

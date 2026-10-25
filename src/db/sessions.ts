@@ -7,7 +7,7 @@ export type SessionOutcome = 'summarized' | 'fallback' | 'skipped'
 
 export interface EntrySessionRow {
   id: number
-  entryId: number
+  entryId: number | null
   wrapperId: string
   wrapperPid: number
   harness: HarnessId
@@ -25,7 +25,7 @@ export interface EntrySessionRow {
 
 interface RawEntrySession {
   id: number
-  entry_id: number
+  entry_id: number | null
   wrapper_id: string
   wrapper_pid: number
   harness: string
@@ -62,7 +62,7 @@ function toRow(raw: RawEntrySession): EntrySessionRow {
 }
 
 export interface NewEntrySession {
-  entryId: number
+  entryId: number | null
   wrapperId: string
   wrapperPid: number
   harness: HarnessId
@@ -130,7 +130,7 @@ export function findLatestByWrapper(db: DatabaseSync, wrapperId: string): EntryS
 
 export function findUnfinalizedByWrapper(db: DatabaseSync, wrapperId: string): EntrySessionRow[] {
   return queryAll<RawEntrySession>(
-    db.prepare('SELECT * FROM entry_sessions WHERE wrapper_id = ? AND finalized_at IS NULL ORDER BY id'),
+    db.prepare('SELECT * FROM entry_sessions WHERE wrapper_id = ? AND entry_id IS NOT NULL AND finalized_at IS NULL ORDER BY id'),
     wrapperId,
   ).map(toRow)
 }
@@ -143,7 +143,7 @@ export function listUnfinalizedEnded(db: DatabaseSync, endedBeforeIso: string, s
   return queryAll<RawEntrySession>(
     db.prepare(
       `SELECT * FROM entry_sessions
-       WHERE ended_at IS NOT NULL AND ended_at < ? AND finalized_at IS NULL
+       WHERE entry_id IS NOT NULL AND ended_at IS NOT NULL AND ended_at < ? AND finalized_at IS NULL
          AND (claimed_at IS NULL OR claimed_at < ?)
        ORDER BY id`,
     ),
@@ -206,7 +206,7 @@ export function completeFinalize(
 
 export interface ResumableSession {
   rowId: number
-  entryId: number
+  entryId: number | null
   harness: HarnessId
   sessionId: string
   cwd: string
@@ -219,13 +219,13 @@ export interface ResumableSession {
 
 interface RawResumableSession {
   id: number
-  entry_id: number
+  entry_id: number | null
   harness: string
   session_id: string
   cwd: string
   started_at: string
   ended_at: string
-  description: string
+  description: string | null
   project_id: number | null
   project_name: string | null
 }
@@ -239,7 +239,7 @@ function toResumable(raw: RawResumableSession): ResumableSession {
     cwd: raw.cwd,
     startedAt: raw.started_at,
     endedAt: raw.ended_at,
-    description: raw.description,
+    description: raw.description ?? '',
     projectId: raw.project_id,
     projectName: raw.project_name,
   }
@@ -248,7 +248,7 @@ function toResumable(raw: RawResumableSession): ResumableSession {
 const RESUMABLE_SELECT = `SELECT s.id, s.entry_id, s.harness, s.session_id, s.cwd, s.started_at, s.ended_at,
          e.description, e.project_id, p.name AS project_name
        FROM entry_sessions s
-       JOIN entries e ON e.id = s.entry_id
+       LEFT JOIN entries e ON e.id = s.entry_id
        LEFT JOIN projects p ON p.id = e.project_id`
 
 const LATEST_RESUMABLE = `s.session_id IS NOT NULL AND s.ended_at IS NOT NULL
@@ -300,9 +300,15 @@ export interface SessionFilter {
   limit: number
 }
 
+export interface SessionListingEntry {
+  description: string
+  projectId: number | null
+  projectName: string | null
+}
+
 export interface SessionListing {
   id: number
-  entryId: number
+  entryId: number | null
   harness: HarnessId
   sessionId: string | null
   wrapperPid: number
@@ -312,12 +318,12 @@ export interface SessionListing {
   endedAt: string | null
   open: boolean
   resumable: boolean
-  entry: { description: string; projectId: number | null; projectName: string | null }
+  entry: SessionListingEntry | null
 }
 
 interface RawSessionListing {
   id: number
-  entry_id: number
+  entry_id: number | null
   harness: string
   session_id: string | null
   wrapper_pid: number
@@ -326,7 +332,7 @@ interface RawSessionListing {
   started_at: string
   ended_at: string | null
   resumable: number
-  description: string
+  description: string | null
   project_id: number | null
   project_name: string | null
 }
@@ -349,7 +355,7 @@ export function listSessions(db: DatabaseSync, filter: SessionFilter): SessionLi
          CASE WHEN ${LATEST_RESUMABLE} THEN 1 ELSE 0 END AS resumable,
          e.description, e.project_id, p.name AS project_name
        FROM entry_sessions s
-       JOIN entries e ON e.id = s.entry_id
+       LEFT JOIN entries e ON e.id = s.entry_id
        LEFT JOIN projects p ON p.id = e.project_id
        ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY s.started_at DESC, s.id DESC
@@ -370,7 +376,10 @@ export function listSessions(db: DatabaseSync, filter: SessionFilter): SessionLi
     endedAt: raw.ended_at,
     open: raw.ended_at === null,
     resumable: raw.resumable === 1,
-    entry: { description: raw.description, projectId: raw.project_id, projectName: raw.project_name },
+    entry:
+      raw.entry_id === null
+        ? null
+        : { description: raw.description ?? '', projectId: raw.project_id, projectName: raw.project_name },
   }))
 }
 

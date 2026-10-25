@@ -213,15 +213,57 @@ test('the cursor starts on Claude even when it is not first', async () => {
   assert.equal(h.spawned[0]?.bin, '/fake/claude')
 })
 
-test('No timer launches without a timer and without BITA_* in the env', async () => {
+test('No timer records the session without a project and hands the child project 0', async () => {
   const h = harness()
   const code = await h.run(['--', 'x'], { picks: ['initial', 0], mapped: h.projects.alpha, exitCode: 2, env: { PATH: '/usr/bin' } })
   assert.equal(code, 2)
   assert.equal(h.prompts[1]?.labels[0], 'No timer')
-  assert.equal(h.started.length, 0)
-  assert.equal(h.closed.length, 0)
+  assert.equal(h.started.length, 1)
+  const started = h.started[0]!
+  assert.equal(started.projectId, null)
+  assert.equal(started.harness, 'claude')
+  assert.equal(started.wrapperPid, process.pid)
+  assert.equal(started.cwd, h.dir)
   const env = h.spawned[0]!.env
-  assert.deepEqual(Object.keys(env).filter((key) => key.startsWith('BITA_')), [])
+  assert.equal(env['BITA_WRAPPER_ID'], started.wrapperId)
+  assert.equal(env['BITA_HARNESS'], 'claude')
+  assert.equal(env['BITA_SESSION_PROJECT'], '0')
+  assert.equal(env['BITA_DB_PATH'], h.dbPath)
+  assert.deepEqual(h.closed, [started.wrapperId])
+})
+
+test('a session without a timer that cannot be recorded still launches, without BITA_* in the env', async () => {
+  const h = harness()
+  const errors = captureStderr()
+  let code: number
+  try {
+    code = await runSessionLaunch(['--db-path', h.dbPath, '--harness', 'codex', '--project', '0'], {
+      env: { PATH: '/usr/bin' },
+      cwd: h.dir,
+      ...TTY,
+      adapters: ALL,
+      select: async () => null,
+      spawnHarness: async (spawnBin, args, env) => {
+        h.spawned.push({ bin: spawnBin, args, env })
+        return 0
+      },
+      startEntry: async () => {
+        throw new Error('locked')
+      },
+      closeWrapper: async (_ctx: LocalContext, wrapperId: string) => {
+        h.closed.push(wrapperId)
+        return []
+      },
+      sweepOrphans: async () => [],
+      projectForCwd: async () => null,
+    })
+  } finally {
+    errors.restore()
+  }
+  assert.equal(code, 0)
+  assert.equal(h.closed.length, 0)
+  assert.deepEqual(Object.keys(h.spawned[0]!.env).filter((key) => key.startsWith('BITA_')), [])
+  assert.match(errors.text(), /could not record the session, launching without it: locked/)
 })
 
 test('without a mapping the project cursor starts on the first project, not on No timer', async () => {
@@ -285,7 +327,7 @@ test('without projects the cursor stays on No timer and the hint to add one is s
   }
   assert.equal(code, 0)
   assert.deepEqual(prompts, [{ title: 'Project', labels: ['No timer'], initial: 0 }])
-  assert.equal(spawned[0]?.env['BITA_WRAPPER_ID'], undefined)
+  assert.equal(spawned[0]?.env['BITA_SESSION_PROJECT'], '0')
   assert.match(errors.text(), /bita project add/)
 })
 
@@ -302,7 +344,7 @@ test('cancelling a picker exits with 130 and launches nothing', async () => {
   }
 })
 
-test('--harness and --project skip the pickers, and --project 0 skips the timer', async () => {
+test('--harness and --project skip the pickers, and --project 0 skips the timer but records the session', async () => {
   const h = harness()
   await h.run(['--harness', 'gemini', '--project', 'Beta'], {})
   assert.equal(h.prompts.length, 0)
@@ -311,8 +353,12 @@ test('--harness and --project skip the pickers, and --project 0 skips the timer'
 
   const none = harness()
   await none.run(['--harness', 'codex', '--project', '0'], {})
-  assert.equal(none.started.length, 0)
+  assert.equal(none.prompts.length, 0)
+  assert.equal(none.started[0]?.projectId, null)
+  assert.equal(none.started[0]?.harness, 'codex')
   assert.equal(none.spawned[0]?.bin, '/fake/codex')
+  assert.equal(none.spawned[0]?.env['BITA_SESSION_PROJECT'], '0')
+  assert.deepEqual(none.closed, [none.started[0]?.wrapperId])
 
   const missing = harness()
   await assert.rejects(missing.run(['--harness', 'gemini'], { adapters: [fakeAdapter('claude', 'Claude'), fakeAdapter('gemini', 'Gemini', false)] }), /not installed/)
@@ -625,7 +671,7 @@ test('--resume accepts the entry id before the flag too', async () => {
   assert.deepEqual(h.spawned[0]?.args, ['--claude-default', '--resume', 'sid-2'])
 })
 
-test('--resume with --project overrides the project and --project 0 skips the timer', async () => {
+test('--resume with --project overrides the project and --project 0 skips the timer but records the session', async () => {
   const h = harness()
   const picked = seed(h.dbPath, { cwd: h.dir, sessionId: 'sid-3', projectId: h.projects.alpha })
   await h.run(['--resume', String(picked.entryId), '--project', 'Beta'], { tty: false })
@@ -636,11 +682,12 @@ test('--resume with --project overrides the project and --project 0 skips the ti
   const other = seed(none.dbPath, { cwd: none.dir, sessionId: 'sid-4', projectId: none.projects.alpha })
   const code = await none.run(['--resume', String(other.entryId), '--project', '0'], { tty: false, exitCode: 6 })
   assert.equal(code, 6)
-  assert.equal(none.started.length, 0)
-  assert.equal(none.closed.length, 0)
+  assert.equal(none.started[0]?.projectId, null)
+  assert.equal(none.started[0]?.cwd, none.dir)
+  assert.deepEqual(none.closed, [none.started[0]?.wrapperId])
   assert.deepEqual(none.spawned[0]?.args, ['--claude-default', '--resume', 'sid-4'])
   assert.equal(none.spawned[0]?.cwd, none.dir)
-  assert.deepEqual(Object.keys(none.spawned[0]!.env).filter((key) => key.startsWith('BITA_')), [])
+  assert.equal(none.spawned[0]?.env['BITA_SESSION_PROJECT'], '0')
 })
 
 test('--resume of an entry without project asks for the project', async () => {

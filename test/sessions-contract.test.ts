@@ -213,3 +213,37 @@ test('sessions ls --open closes orphaned sessions first and lists only live ones
     box.cleanup()
   }
 })
+
+test('sessions ls --json gives a session without a timer a null entryId and a null entry, and sessions dirs counts it', () => {
+  const box = seededDb()
+  try {
+    const here = box.dir('no-timer')
+    const timed = box.add({ cwd: here, startedAt: '2026-09-10T10:00:00Z' })
+    const free = box.addTimerless({ cwd: here, sessionId: 'free-1', transcriptPath: '/t/free.jsonl', wrapperPid: 33, startedAt: '2026-09-11T10:00:00Z' })
+    const live = box.addTimerless({ cwd: here, sessionId: null, ended: false, wrapperPid: process.pid, startedAt: '2099-09-11T10:00:00Z' })
+    const result = runBita(box, here, ['sessions', 'ls', '--json'])
+    assert.equal(result.status, 0, result.stderr)
+    const data = result.json['data'] as Row[]
+    assert.deepEqual(data.map((row) => row['id']), [live.rowId, free.rowId, timed.rowId])
+    for (const row of data) assert.deepEqual(Object.keys(row).sort(), LS_KEYS)
+    const [open, finished] = data as [Row, Row]
+    assert.deepEqual(shape(finished), {
+      id: 'number', entryId: 'null', harness: 'string', sessionId: 'string', wrapperPid: 'number', cwd: 'string',
+      transcriptPath: 'string', startedAt: 'string', endedAt: 'string', open: 'boolean', resumable: 'boolean', entry: 'null',
+    })
+    assert.equal(finished['resumable'], true)
+    assert.equal(finished['wrapperPid'], 33)
+    assert.equal(open['entry'], null)
+    assert.equal(open['open'], true)
+    assert.deepEqual(ids(runBita(box, here, ['sessions', 'ls', '--open', '--json'])), [live.rowId])
+
+    const dirs = runBita(box, here, ['sessions', 'dirs', '--json'])
+    assert.deepEqual(dirs.json['data'], [{ cwd: here, lastUsedAt: '2099-09-11T10:00:00.000Z', sessions: 3, projectId: box.alpha, projectName: 'Alpha' }])
+
+    const table = runBita(box, here, ['sessions', 'ls'])
+    assert.equal(table.status, 0, table.stderr)
+    assert.match(table.stdout, /\(no timer\)/)
+  } finally {
+    box.cleanup()
+  }
+})

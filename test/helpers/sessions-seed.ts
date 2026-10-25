@@ -29,6 +29,7 @@ export interface SeededDb {
   beta: number
   dir(name: string): string
   add(seed: SeedSession): { entryId: number; rowId: number }
+  addTimerless(seed: Omit<SeedSession, 'description' | 'projectId'>): { rowId: number }
   cleanup(): void
 }
 
@@ -40,6 +41,20 @@ export function seededDb(): SeededDb {
   const beta = insertProject(db, { name: 'Beta', clientName: null, createdAt: '2026-09-01T00:00:00Z' }).id
   db.close()
   let counter = 0
+  const record = (handle: ReturnType<typeof openDatabase>, seed: SeedSession, entryId: number | null): number => {
+    const row = insertEntrySession(handle, {
+      entryId,
+      wrapperId: `w-${counter}`,
+      wrapperPid: seed.wrapperPid ?? 4000 + counter,
+      harness: seed.harness ?? 'claude',
+      cwd: seed.cwd,
+      startedAt: seed.startedAt,
+    })
+    const sessionId = seed.sessionId === undefined ? `s-${counter}` : seed.sessionId
+    if (sessionId !== null) linkSession(handle, row.id, sessionId, seed.transcriptPath ?? null)
+    if (seed.ended !== false) markSessionEnded(handle, row.id, seed.startedAt, 'exit')
+    return row.id
+  }
   return {
     root,
     dbPath,
@@ -62,18 +77,16 @@ export function seededDb(): SeededDb {
           source: 'session',
           now: seed.startedAt,
         })
-        const row = insertEntrySession(handle, {
-          entryId: entry.id,
-          wrapperId: `w-${counter}`,
-          wrapperPid: seed.wrapperPid ?? 4000 + counter,
-          harness: seed.harness ?? 'claude',
-          cwd: seed.cwd,
-          startedAt: seed.startedAt,
-        })
-        const sessionId = seed.sessionId === undefined ? `s-${counter}` : seed.sessionId
-        if (sessionId !== null) linkSession(handle, row.id, sessionId, seed.transcriptPath ?? null)
-        if (seed.ended !== false) markSessionEnded(handle, row.id, seed.startedAt, 'exit')
-        return { entryId: entry.id, rowId: row.id }
+        return { entryId: entry.id, rowId: record(handle, seed, entry.id) }
+      } finally {
+        handle.close()
+      }
+    },
+    addTimerless(seed) {
+      counter += 1
+      const handle = openDatabase(dbPath)
+      try {
+        return { rowId: record(handle, seed, null) }
       } finally {
         handle.close()
       }

@@ -239,3 +239,42 @@ test('version 15 lets antigravity sessions in and keeps the sessions already rec
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [])
   db.close()
 })
+
+test('version 16 lets a session have no entry and keeps the sessions already recorded', () => {
+  const db = databaseAt(15)
+  const at = '2026-10-20T10:00:00.000Z'
+  const end = '2026-10-20T11:00:00.000Z'
+  const entry = (description: string) =>
+    Number(
+      db
+        .prepare(`INSERT INTO entries (description, started_at, source, created_at, updated_at) VALUES (?, ?, 'session', ?, ?)`)
+        .run(description, at, at, at).lastInsertRowid,
+    )
+  const first = entry('one')
+  const second = entry('two')
+  const insert = db.prepare(
+    `INSERT INTO entry_sessions (entry_id, wrapper_id, wrapper_pid, harness, session_id, transcript_path, cwd, started_at, ended_at, end_reason, finalized_at, outcome, error)
+     VALUES (?, ?, 42, ?, ?, ?, '/repo', ?, ?, ?, ?, ?, ?)`,
+  )
+  insert.run(first, 'w1', 'claude', 's1', '/t/s1.jsonl', at, end, 'exit', end, 'summarized', null)
+  insert.run(second, 'w2', 'antigravity', null, null, at, null, null, null, null, null)
+  assert.throws(() => insert.run(null, 'w3', 'codex', null, null, at, null, null, null, null, null), /NOT NULL/)
+  const before = db.prepare('SELECT * FROM entry_sessions ORDER BY id').all()
+
+  assert.equal(migrate(db), LATEST_VERSION)
+  assert.ok(LATEST_VERSION >= 16)
+  assert.deepEqual(db.prepare('SELECT * FROM entry_sessions ORDER BY id').all(), before)
+  const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'entry_sessions' AND sql IS NOT NULL ORDER BY name").all() as { name: string }[]).map((row) => row.name)
+  assert.deepEqual(indexes, ['entry_sessions_open', 'entry_sessions_session', 'entry_sessions_wrapper'])
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'entry_sessions_next'").get() as { n: number }).n, 0)
+
+  insert.run(null, 'w3', 'codex', 'free-1', null, at, null, null, null, null, null)
+  insert.run(null, 'w4', 'gemini', null, null, at, null, null, null, null, null)
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions WHERE entry_id IS NULL').get() as { n: number }).n, 2)
+  assert.throws(() => insert.run(second, 'w5', 'claude', null, null, at, null, null, null, null, null), /UNIQUE/)
+  assert.throws(() => insert.run(null, 'w6', 'cursor', null, null, at, null, null, null, null, null), /CHECK/)
+  db.prepare('DELETE FROM entries WHERE id = ?').run(first)
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM entry_sessions WHERE entry_id = ?').get(first) as { n: number }).n, 0)
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), [])
+  db.close()
+})

@@ -187,3 +187,78 @@ test('work --resume --session combined with --prompt keeps both, in order', () =
     box.cleanup()
   }
 })
+
+interface StoredSession {
+  id: number
+  entry_id: number | null
+  harness: string
+  wrapper_pid: number
+  cwd: string
+  session_id: string | null
+  ended_at: string | null
+  end_reason: string | null
+}
+
+function storedSessions(box: SeededDb): StoredSession[] {
+  const db = openDatabase(box.dbPath)
+  try {
+    return queryAll<StoredSession>(db.prepare('SELECT id, entry_id, harness, wrapper_pid, cwd, session_id, ended_at, end_reason FROM entry_sessions ORDER BY id'))
+  } finally {
+    db.close()
+  }
+}
+
+test('work --project 0 records a session without an entry, hands the agent project 0 and closes it on exit', () => {
+  const box = seededDb()
+  try {
+    const here = box.dir('no-timer')
+    const run = runBita(box, here, ['work', '--harness', 'claude', '--project', '0'], launchEnv(box))
+    assert.equal(run.status, 0, run.stderr)
+    assert.equal(entryCount(box), 0)
+    const [row, extra] = storedSessions(box)
+    assert.equal(extra, undefined)
+    assert.equal(row?.entry_id, null)
+    assert.equal(row?.harness, 'claude')
+    assert.equal(row?.cwd, here)
+    assert.ok(Number.isInteger(row?.wrapper_pid) && row?.wrapper_pid !== process.pid)
+    assert.notEqual(row?.ended_at, null)
+    assert.equal(row?.end_reason, 'exit')
+    const [call] = readFakeBinCalls(join(box.root, 'calls.jsonl'))
+    assert.equal(call?.env['BITA_SESSION_PROJECT'], '0')
+    assert.equal(call?.env['BITA_HARNESS'], 'claude')
+    assert.ok(call?.env['BITA_WRAPPER_ID'])
+
+    const ls = runBita(box, here, ['sessions', 'ls', '--json'])
+    const listed = ls.json['data'] as Array<{ id: number; entryId: number | null; entry: unknown; open: boolean }>
+    assert.deepEqual(listed.map((item) => [item.id, item.entryId, item.entry, item.open]), [[row?.id, null, null, false]])
+    const dirs = runBita(box, here, ['sessions', 'dirs', '--json'])
+    assert.deepEqual(dirs.json['data'], [{ cwd: here, lastUsedAt: row?.ended_at, sessions: 1, projectId: null, projectName: null }])
+  } finally {
+    box.cleanup()
+  }
+})
+
+test('work --resume --session of a session without a timer resumes it without asking, in its cwd, and again without an entry', () => {
+  const box = seededDb()
+  try {
+    const stored = box.dir('free-stored')
+    const { rowId } = box.addTimerless({ cwd: stored, sessionId: 'free-conv', startedAt: '2026-09-10T10:00:00Z' })
+    const run = runBita(box, box.dir('free-elsewhere'), ['work', '--resume', '--session', String(rowId)], launchEnv(box))
+    assert.equal(run.status, 0, run.stderr)
+    const [call] = readFakeBinCalls(join(box.root, 'calls.jsonl'))
+    assert.deepEqual(call?.argv.slice(-2), ['--resume', 'free-conv'])
+    assert.equal(call?.cwd, stored)
+    assert.equal(call?.env['BITA_SESSION_PROJECT'], '0')
+    assert.equal(entryCount(box), 0)
+    const rows = storedSessions(box)
+    assert.equal(rows.length, 2)
+    assert.equal(rows[1]?.entry_id, null)
+    assert.equal(rows[1]?.cwd, stored)
+
+    const withTimer = runBita(box, box.dir('free-elsewhere-2'), ['work', '--resume', '--session', 'free-conv', '--project', String(box.beta)], launchEnv(box))
+    assert.equal(withTimer.status, 0, withTimer.stderr)
+    assert.equal(entryCount(box), 1)
+  } finally {
+    box.cleanup()
+  }
+})

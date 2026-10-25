@@ -89,12 +89,12 @@ async function runList(argv: string[], cwd: string): Promise<number> {
         [{ header: 'ID', align: 'right' }, { header: 'ENTRY', align: 'right' }, { header: 'HARNESS' }, { header: 'STATE' }, { header: 'STARTED' }, { header: 'PROJECT' }, { header: 'TITLE' }],
         sessions.map((session) => [
           String(session.id),
-          String(session.entryId),
+          session.entryId === null ? '-' : String(session.entryId),
           session.harness,
           state(session),
           toLocalIso(session.startedAt, ctx.timezone).slice(0, 16).replace('T', ' '),
-          session.entry.projectName ?? '-',
-          session.entry.description.trim() || '(untitled)',
+          session.entry?.projectName ?? '-',
+          session.entry ? session.entry.description.trim() || '(untitled)' : '(no timer)',
         ]),
       ),
     )

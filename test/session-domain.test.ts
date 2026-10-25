@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import type { LocalContext } from '../src/cli/local-context.ts'
 import { findEntryById, listRunning } from '../src/db/entries.ts'
-import { findSessionByEntry } from '../src/db/sessions.ts'
+import { findSessionByEntry, findSessionById, listSessions } from '../src/db/sessions.ts'
 import { recordTouch } from '../src/db/touches.ts'
 import {
   childEnv,
@@ -25,7 +25,7 @@ import {
 
 interface Harnessed {
   ctx: LocalContext
-  env: WrapperEnv
+  env: WrapperEnv & { projectId: number }
   spawned: number[]
   deps: SessionDeps
 }
@@ -59,13 +59,16 @@ function deadPid(): number {
   return Number(child.stdout)
 }
 
-test('wrapperEnv needs a wrapper id, a known harness and a project, and never inside a child', () => {
+test('wrapperEnv needs a wrapper id, a known harness and a project or 0 for no timer, and never inside a child', () => {
   const base = { BITA_WRAPPER_ID: 'w', BITA_HARNESS: 'codex', BITA_SESSION_PROJECT: '3' }
   assert.deepEqual(wrapperEnv(base), { wrapperId: 'w', harness: 'codex', projectId: 3 })
   assert.equal(wrapperEnv({ ...base, BITA_CHILD: '1' }), null)
   assert.notEqual(wrapperEnv({ ...base, BITA_CHILD: '0' }), null)
   assert.equal(wrapperEnv({ ...base, BITA_HARNESS: 'cursor' }), null)
-  assert.equal(wrapperEnv({ ...base, BITA_SESSION_PROJECT: '0' }), null)
+  assert.deepEqual(wrapperEnv({ ...base, BITA_SESSION_PROJECT: '0' }), { wrapperId: 'w', harness: 'codex', projectId: null })
+  assert.equal(wrapperEnv({ ...base, BITA_SESSION_PROJECT: '' }), null)
+  assert.equal(wrapperEnv({ ...base, BITA_SESSION_PROJECT: '-1' }), null)
+  assert.equal(wrapperEnv({ BITA_WRAPPER_ID: 'w', BITA_HARNESS: 'codex' }), null)
   assert.equal(wrapperEnv({ BITA_HARNESS: 'claude', BITA_SESSION_PROJECT: '3' }), null)
   const child = childEnv({ ...base, CLAUDECODE: '1', KEEP: 'x' })
   assert.equal(child['BITA_CHILD'], '1')
@@ -294,6 +297,89 @@ test('sweepOrphans relaunches rows ended long ago that nobody finalized', async 
     h.ctx.db.prepare('UPDATE entry_sessions SET ended_at = started_at, end_reason = ? WHERE entry_id = ?').run('exit', recent)
 
     assert.deepEqual(await sweepOrphans(h.ctx, { ...h.deps, isAlive: () => true }), [entryId])
+  } finally {
+    h.ctx.db.close()
+  }
+})
+
+async function timerless(h: Harnessed, wrapperId = 'w-free', wrapperPid = process.pid): Promise<{ env: WrapperEnv; rowId: number }> {
+  const env: WrapperEnv = { wrapperId, harness: 'claude', projectId: null }
+  const { entryId, rowId } = await startSessionEntry(h.ctx, { wrapperId, wrapperPid, harness: 'claude', projectId: null, cwd: '/tmp/free' })
+  assert.equal(entryId, null)
+  return { env, rowId }
+}
+
+test('a session without a timer records its row and no entry', async () => {
+  const h = await setup()
+  try {
+    const { env, rowId } = await timerless(h)
+    const row = findSessionById(h.ctx.db, rowId)
+    assert.equal(row?.entryId, null)
+    assert.equal(row?.wrapperId, 'w-free')
+    assert.equal(row?.wrapperPid, process.pid)
+    assert.equal(row?.cwd, '/tmp/free')
+    assert.equal(row?.endedAt, null)
+    assert.equal(listRunning(h.ctx.db).length, 0)
+    assert.equal(currentSessionEntryId(h.ctx.db, env), null)
+    const [listed] = listSessions(h.ctx.db, { cwd: null, open: true, harness: null, limit: 10 })
+    assert.equal(listed?.id, rowId)
+    assert.equal(listed?.entryId, null)
+    assert.equal(listed?.entry, null)
+  } finally {
+    h.ctx.db.close()
+  }
+})
+
+test('session hooks link, rotate and end a session without a timer and never finalize it', async () => {
+  const h = await setup()
+  try {
+    const { env, rowId } = await timerless(h)
+    const input = { harness: 'claude' as const, sessionId: 's1', transcriptPath: '/tmp/s1.jsonl', cwd: '/tmp/free', source: 'startup' }
+    assert.deepEqual(await handleSessionStart(h.ctx, env, input, h.deps), { action: 'linked', entryId: null, endedEntryIds: [] })
+    assert.equal(findSessionById(h.ctx.db, rowId)?.sessionId, 's1')
+    assert.equal(findSessionById(h.ctx.db, rowId)?.transcriptPath, '/tmp/s1.jsonl')
+
+    const rotated = await handleSessionStart(h.ctx, env, { ...input, sessionId: 's2', transcriptPath: null, source: 'clear' }, h.deps)
+    assert.deepEqual(rotated, { action: 'rotated', entryId: null, endedEntryIds: [] })
+    assert.equal(findSessionById(h.ctx.db, rowId)?.endReason, 'rotated')
+    assert.equal(listRunning(h.ctx.db).length, 0)
+
+    assert.equal(await handleSessionEnd(h.ctx, env, { harness: 'claude', sessionId: 's2', reason: 'other' }, h.deps), null)
+    const rows = listSessions(h.ctx.db, { cwd: '/tmp/free', open: false, harness: null, limit: 10 })
+    assert.deepEqual(rows.map((row) => [row.sessionId, row.open, row.entry]), [['s2', false, null], ['s1', false, null]])
+    assert.deepEqual(h.spawned, [])
+  } finally {
+    h.ctx.db.close()
+  }
+})
+
+test('closeWrapper ends a session without a timer and launches no finalize', async () => {
+  const h = await setup()
+  try {
+    const { rowId } = await timerless(h)
+    assert.deepEqual(await closeWrapper(h.ctx, 'w-free', h.deps), [])
+    assert.equal(findSessionById(h.ctx.db, rowId)?.endReason, 'exit')
+    assert.equal(findSessionById(h.ctx.db, rowId)?.finalizedAt, null)
+    assert.deepEqual(h.spawned, [])
+  } finally {
+    h.ctx.db.close()
+  }
+})
+
+test('sweepOrphans closes a dead session without a timer and never relaunches it', async () => {
+  const h = await setup()
+  try {
+    const dead = await timerless(h, 'w-dead', deadPid())
+    const old = await timerless(h, 'w-old')
+    const long = new Date(Date.now() - 60 * 60_000).toISOString()
+    h.ctx.db.prepare('UPDATE entry_sessions SET started_at = ?, ended_at = ?, end_reason = ? WHERE id = ?').run(long, long, 'exit', old.rowId)
+    const live = await timerless(h, 'w-live')
+
+    assert.deepEqual(await sweepOrphans(h.ctx, { ...h.deps, isAlive: (pid) => pid === process.pid }), [])
+    assert.equal(findSessionById(h.ctx.db, dead.rowId)?.endReason, 'orphan')
+    assert.equal(findSessionById(h.ctx.db, live.rowId)?.endedAt, null)
+    assert.equal(findSessionById(h.ctx.db, old.rowId)?.endReason, 'exit')
+    assert.deepEqual(h.spawned, [])
   } finally {
     h.ctx.db.close()
   }
